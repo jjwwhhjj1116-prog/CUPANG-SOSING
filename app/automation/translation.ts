@@ -1,5 +1,5 @@
 import {validateKnownSeoResponse,validateCurrentSeoDraftShape,currentSeoValidationInstructions,seoCurrentRequestNotice} from '@/app/seo-current-validation';
-import {parseSeoOptionResultShape,validateSeoOptionResults,type SeoOptionTranslation,type SeoOptionTarget} from '@/app/seo-option-results';
+import {assertGeneratedSeoQuality,parseSeoOptionResultShape,validateSeoOptionResults,type SeoOptionTranslation,type SeoOptionTarget} from '@/app/seo-option-results';
 import type {SeoCompositionContext} from '@/app/seo-composition-context';
 import {SeoFactEmptyError,normalizeSeoQuantityNumbers,validateSeoCompositionPolicy,currentSeoInput,currentSeoInstructions,guardCurrentSeoDraft,type SeoCompositionPolicy} from '@/app/seo-current-policy';
 import {cleanSeoKeywordCandidates} from '@/app/seo-keyword-text';
@@ -326,7 +326,7 @@ export function validateQwenTranslationDraft(value:unknown,source:TranslationSou
   if(revision!==undefined&&!['couplus-typed-seo-v1','couplus-typed-seo-v2','couplus-typed-seo-v3','couplus-typed-seo-v4'].includes(revision)||(revision==='couplus-typed-seo-v3'||revision==='couplus-typed-seo-v4')&&(!composition||!compositionContext))throw new TranslationError('UNSUPPORTED_INSTRUCTIONS','SEO 재질 검토 범위를 확인해주세요.');
   if(revision==='couplus-typed-seo-v4'){const raw=object(value,['title','keywords','description','attributes','warnings']);if(raw.description!==''||!Array.isArray(raw.attributes)||raw.attributes.length)throw new TranslationError('INVALID_MODEL_OUTPUT','SEO 전용 결과에 설명 또는 일반 속성이 포함되었습니다.',true);}
   if(revision==='couplus-typed-seo-v3')assertTypedMaterialDraft(value,source);
-  const draft=validateTranslationDraft(value,source,'sourceflow-translation-v6',scope,WORKERS_QWEN_MODEL,keywordPolicy,composition,compositionContext);
+  const draft=validateTranslationDraft(value,source,'sourceflow-translation-v6',scope,WORKERS_QWEN_MODEL,keywordPolicy,composition,compositionContext,revision==='couplus-typed-seo-v4');
   if(policy==='commerce-exact-option-colors-v6')for(const attribute of draft.attributes){
     const expected=qwenExactOptionColor(source.attributes[attribute.sourceIndex]);
     if(expected!==null&&attribute.value!==expected)throw new TranslationError('QWEN_OPTION_COLOR_MISMATCH',`Qwen 옵션 색상 번역이 원문과 다릅니다. 위치 sourceIndex ${attribute.sourceIndex}.value. 원문과 기존 수정값을 유지하며 이 결과를 적용하지 않았습니다. 자동 재시도하지 않았습니다.`,true);
@@ -356,7 +356,7 @@ function validatePartialQwenTranslationDraft(value:unknown,source:TranslationSou
     }
   }
 }
-export function validateTranslationDraft(value: unknown, source: TranslationSource, instructionsVersion: TranslationReview['instructionsVersion'] = 'sourceflow-translation-v1', scope:'all'|'options'='all',providerModel?:string,keywordPolicy?:TranslationReview['seoKeywordPolicy'],composition?:SeoCompositionPolicy,compositionContext?:SeoCompositionContext): TranslationDraft {
+export function validateTranslationDraft(value: unknown, source: TranslationSource, instructionsVersion: TranslationReview['instructionsVersion'] = 'sourceflow-translation-v1', scope:'all'|'options'='all',providerModel?:string,keywordPolicy?:TranslationReview['seoKeywordPolicy'],composition?:SeoCompositionPolicy,compositionContext?:SeoCompositionContext,seoOnly=false): TranslationDraft {
   const draft = object(value, ['title', 'keywords', 'description', 'attributes', 'warnings']);
   const title = text(draft.title, 500, true), description = text(draft.description, 20000, true);
   if (scope!=='options' && !title && !description) throw new TranslationError('EMPTY_MODEL_OUTPUT', '모델이 상품 번역 초안을 만들지 못했습니다.'+(providerModel===WORKERS_QWEN_MODEL?' 위치 title. 진단 '+qwenTitleDiagnostic(title)+'.':''), true);
@@ -391,7 +391,7 @@ export function validateTranslationDraft(value: unknown, source: TranslationSour
     if(foreignNumbers)result.warnings.unshift(`같은 상품 속성·옵션 원문에 없는 숫자를 반환한 ${foreignNumbers}개는 적용하지 않았습니다. 다른 항목의 숫자를 옮기지 않고 해당 원문과 기존 값을 유지했습니다.`);
     if(invalidOptions)result.warnings.unshift(`옵션명 500자·색상/사이즈 200자 이내의 한 줄 입력 규격과 맞지 않는 번역 ${invalidOptions}개는 적용하지 않았습니다. 해당 원문과 기존 값을 유지하고 정상 상품명·설명·다른 번역은 초안으로 보존했습니다.`);
     const coverage=translationAttributeCoverage(source,result);if(compositionContext){coverage.missingSourceIndexes=coverage.missingSourceIndexes.filter(index=>!workersRecoveryOptionMetadataLabel(source.attributes[index].name));coverage.expected=source.attributes.filter(value=>!workersRecoveryOptionMetadataLabel(value.name)).length;coverage.returned=coverage.expected-coverage.missingSourceIndexes.length;}
-    if(coverage.missingSourceIndexes.length)result.warnings.unshift(`상품 속성·옵션 ${coverage.expected}개 중 ${coverage.returned}개를 번역 초안으로 받았습니다. 누락 ${coverage.missingSourceIndexes.length}개는 원문에 보존했으며 번역 완료로 처리하지 않았습니다. SEO·옵션·표시사항에서 확인하고 수정해주세요.`);
+    if(!seoOnly&&coverage.missingSourceIndexes.length)result.warnings.unshift(`상품 속성·옵션 ${coverage.expected}개 중 ${coverage.returned}개를 번역 초안으로 받았습니다. 누락 ${coverage.missingSourceIndexes.length}개는 원문에 보존했으며 번역 완료로 처리하지 않았습니다. SEO·옵션·표시사항에서 확인하고 수정해주세요.`);
   }
   if (keywordPolicy!=='couplus-generated-v1' && (instructionsVersion === 'sourceflow-translation-v3' || instructionsVersion === 'sourceflow-translation-v4' || instructionsVersion === 'sourceflow-translation-v5' || instructionsVersion === 'sourceflow-translation-v6') && (result.keywords.some(word => word.length > QUOTATION_TAG_ITEM_LIMIT || /[\n,]/u.test(word)) || result.keywords.join(', ').length > QUOTATION_TAG_TOTAL_LIMIT)) {
     throw new TranslationError('INVALID_QUOTATION_KEYWORDS', '번역 검색어가 견적서의 전체 150자·태그별 20자 기준을 초과하거나 구분자를 포함합니다. 결과를 자동 적용하지 않았으며 자동 재요청하지 않습니다.', true);
@@ -523,11 +523,17 @@ export async function executeTranslation(review: TranslationReview, config: Tran
     if(!first)throw new TranslationError('EMPTY_MODEL_OUTPUT','첫 SEO 배치가 비어 있습니다.',true);
     const original={...first,seoOptions,draft:{...first.draft,warnings:[...new Set(warnings)].slice(0,50)}};
     const validationRequest=buildTranslationRequest(review,{targets,examples:[],optionOnly:false}),validationSource=JSON.parse(validationRequest.input[0].content[0].text);
-    return validateKnownSeoResponse(review,original,async draft=>{
+    try{const final=await validateKnownSeoResponse(review,original,async draft=>{
       const seoOnly=review.typedSeoPromptRevision==='couplus-typed-seo-v4';
       if(!config.ai)throw Error('validation binding');const response=await config.ai.run(config.model,{messages:[{role:'system',content:seoOnly?typedSeoOnlyValidationInstructions:currentSeoValidationInstructions()},{role:'user',content:'Translate the Chinese product data below into Korean.\n\nPRODUCT_SOURCE_JSON:\n'+JSON.stringify({...validationSource,validationDraft:seoOnly?{title:draft.title,keywords:draft.keywords,seoOptions:draft.seoOptions}:draft})+'\n/no_think'}],max_tokens:review.maxOutputTokens,stream:false,temperature:0,response_format:{type:'json_schema',json_schema:validationRequest.text.format.schema}});
       const value=parseWorkersQwenTranslationJson(response).value;return seoOnly?typedSeoOnlyBridge(value):value;
-    },raw=>{const checked=validateSeoOptionResults(raw.seoOptions,targets,review),{seoOptions:ignored,...legacy}=raw;void ignored;const prepared=review.typedSeoPromptRevision==='couplus-typed-seo-v3'?normalizeTypedMaterialDraft(validateCurrentSeoDraftShape(legacy,review),review.source):legacy;const draft=validatePartialQwenTranslationDraft(prepared,review.source,review.qwenTranslationPolicy,review.seoKeywordPolicy,review.seoComposition,review.seoCompositionContext,review.typedSeoPromptRevision);draft.warnings=[...new Set([...draft.warnings,...checked.warnings])].slice(0,50);return {...original,seoOptions:checked.values,draft};});
+    },raw=>{const checked=validateSeoOptionResults(raw.seoOptions,targets,review),{seoOptions:ignored,...legacy}=raw;void ignored;const prepared=review.typedSeoPromptRevision==='couplus-typed-seo-v3'?normalizeTypedMaterialDraft(validateCurrentSeoDraftShape(legacy,review),review.source):legacy;const draft=validatePartialQwenTranslationDraft(prepared,review.source,review.qwenTranslationPolicy,review.seoKeywordPolicy,review.seoComposition,review.seoCompositionContext,review.typedSeoPromptRevision);draft.warnings=[...new Set([...draft.warnings,...checked.warnings])].slice(0,50);const result={...original,seoOptions:checked.values,draft};assertGeneratedSeoQuality(review,result);return result;});
+    assertGeneratedSeoQuality(review,final);return final;
+    }catch(error){
+      if(error instanceof SeoFactEmptyError)throw new TranslationError(error.code,error.message,true);
+      if(error instanceof Error&&error.message.startsWith('SEO_OPTION_'))throw new TranslationError(error.message.split(':')[0],error.message,true);
+      throw error;
+    }
   }
   const request = buildTranslationRequest(review,continuation);
   if (config.provider === 'workers-ai') {

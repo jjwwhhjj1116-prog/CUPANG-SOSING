@@ -4,10 +4,11 @@ export type FreeImageRole=typeof FREE_IMAGE_ROLES[number];
 export type FreeImageQuotationTarget={kind:'quotation';profileId:string|null;optionId:string;input:'mainImage'|'additionalImages'|'detailImages'|'labelImages';fieldKey:string;slotIndex:number;
  revision:number;inputFingerprint:string;optionRevision:number;bindingSha256:string;value:string};
 export type FreeImageWorkspaceTarget={kind:'detail-workspace';profileId:string|null;optionId:string;photoId:string;revision:number;digest:string;bindingSha256:string};
+export type FreeImageAdditionalDraftTarget={kind:'additional-draft';profileId:string|null;optionId:string|null;revision:number;inputFingerprint:string;optionRevision:number;bindingSha256:string};
 export type FreeImageSource={productId:string;productVersion:string;contentRevision:number;sourceKey:string;sourceSha256:string;role:FreeImageRole;width:number;height:number;
  optionImages?:{revision:number;optionIds:string[];commonAssigned?:false};quotationTarget?:FreeImageQuotationTarget;
- workspaceTarget?:FreeImageWorkspaceTarget;
- editorSource?:{resultKey:string;resultSha256:string;documentSha256:string;anchorPolicy?:'current-target-v1'|'current-role-v1'}};
+ workspaceTarget?:FreeImageWorkspaceTarget; additionalDraftTarget?:FreeImageAdditionalDraftTarget;
+ editorSource?:{resultKey:string;resultSha256:string;documentSha256:string;anchorPolicy?:'current-target-v1'|'current-role-v1'|'current-pool-v1'}};
 export type ImageTextRegion={id:string;text:string};
 export type ImageTextTranslation={id:string;original:string;translated:string|null;issue:string|null};
 export const MAX_OCR_PIXELS=12000000;
@@ -17,7 +18,7 @@ export function validFreeImageRole(value:unknown):value is FreeImageRole{return 
 export function validateFreeImageSource(value:unknown):FreeImageSource{
  if(!value||typeof value!=='object'||Array.isArray(value))throw Error('이미지 원본 정보를 확인해주세요.');
  const source=value as Record<string,unknown>;
- if(Object.keys(source).some(key=>!['productId','productVersion','contentRevision','sourceKey','sourceSha256','role','width','height','optionImages','quotationTarget','workspaceTarget','editorSource'].includes(key))
+ if(Object.keys(source).some(key=>!['productId','productVersion','contentRevision','sourceKey','sourceSha256','role','width','height','optionImages','quotationTarget','workspaceTarget','additionalDraftTarget','editorSource'].includes(key))
   ||typeof source.productId!=='string'||!/^[a-zA-Z0-9_-]{1,80}$/.test(source.productId)
   ||typeof source.productVersion!=='string'||!Number.isFinite(Date.parse(source.productVersion))
   ||!Number.isSafeInteger(source.contentRevision)||(source.contentRevision as number)<0
@@ -35,12 +36,20 @@ export function validateFreeImageSource(value:unknown):FreeImageSource{
  }
  if(source.editorSource!==undefined){
   const editor=source.editorSource as Record<string,unknown>;
+  const poolEditor=editor&&typeof editor==='object'&&editor.anchorPolicy==='current-pool-v1'&&source.additionalDraftTarget!==undefined;
   const roleEditor=editor&&typeof editor==='object'&&editor.anchorPolicy==='current-role-v1'&&source.quotationTarget===undefined&&source.workspaceTarget===undefined&&['main','additional','detail'].includes(String(source.role));
-  if(source.quotationTarget===undefined&&source.workspaceTarget===undefined&&!roleEditor||!editor||typeof editor!=='object'||Array.isArray(editor)||![3,4].includes(Object.keys(editor).length)
+  if(source.quotationTarget===undefined&&source.workspaceTarget===undefined&&!roleEditor&&!poolEditor||!editor||typeof editor!=='object'||Array.isArray(editor)||![3,4].includes(Object.keys(editor).length)
    ||Object.keys(editor).some(key=>!['resultKey','resultSha256','documentSha256','anchorPolicy'].includes(key))
-   ||Object.hasOwn(editor,'anchorPolicy')&&!roleEditor&&(editor.anchorPolicy!=='current-target-v1'||source.workspaceTarget!==undefined)
+   ||Object.hasOwn(editor,'anchorPolicy')&&!roleEditor&&!poolEditor&&(editor.anchorPolicy!=='current-target-v1'||source.workspaceTarget!==undefined)
    ||typeof editor.resultKey!=='string'||!editor.resultKey||editor.resultKey.length>512||editor.resultKey===source.sourceKey
    ||![editor.resultSha256,editor.documentSha256].every(value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value)))throw Error('저장한 이미지 편집 결과와 문서 증거를 확인해주세요.');
+ }
+ if(source.additionalDraftTarget!==undefined){
+  const target=source.additionalDraftTarget as FreeImageAdditionalDraftTarget;
+  if(!target||typeof target!=='object'||Array.isArray(target)||Object.keys(target).sort().join(',')!=='bindingSha256,inputFingerprint,kind,optionId,optionRevision,profileId,revision'
+   ||target.kind!=='additional-draft'||source.role!=='additional'||source.quotationTarget!==undefined||source.workspaceTarget!==undefined||source.optionImages!==undefined
+   ||target.profileId!==null&&(typeof target.profileId!=='string'||!/^[A-Za-z0-9_-]{1,100}$/.test(target.profileId))||target.optionId!==null&&(typeof target.optionId!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(target.optionId))
+   ||![target.revision,target.optionRevision].every(n=>Number.isSafeInteger(n)&&n>=0)||![target.inputFingerprint,target.bindingSha256].every(v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v)))throw Error('추가 이미지 초안의 현재 상품·옵션·저장 기준을 확인해주세요.');
  }
  if(source.workspaceTarget!==undefined){
   const target=source.workspaceTarget as Record<string,unknown>;
@@ -77,12 +86,13 @@ export function freeImageSourceIdentity(source:FreeImageSource){
    revision:target.revision,inputFingerprint:target.inputFingerprint,optionRevision:target.optionRevision,bindingSha256:target.bindingSha256,value:target.value}}:{}),
   ...(source.workspaceTarget?{workspaceTarget:{kind:source.workspaceTarget.kind,profileId:source.workspaceTarget.profileId,optionId:source.workspaceTarget.optionId,
    photoId:source.workspaceTarget.photoId,revision:source.workspaceTarget.revision,digest:source.workspaceTarget.digest,bindingSha256:source.workspaceTarget.bindingSha256}}:{}),
+  ...(source.additionalDraftTarget?{additionalDraftTarget:{kind:source.additionalDraftTarget.kind,profileId:source.additionalDraftTarget.profileId,optionId:source.additionalDraftTarget.optionId,revision:source.additionalDraftTarget.revision,inputFingerprint:source.additionalDraftTarget.inputFingerprint,optionRevision:source.additionalDraftTarget.optionRevision,bindingSha256:source.additionalDraftTarget.bindingSha256}}:{}),
   ...(source.editorSource?{editorSource:{resultKey:source.editorSource.resultKey,resultSha256:source.editorSource.resultSha256,documentSha256:source.editorSource.documentSha256,
    ...(source.editorSource.anchorPolicy?{anchorPolicy:source.editorSource.anchorPolicy}:{})}}:{})});
 }
 export function validateFreeImageOptionIds(source:FreeImageSource,value:unknown):string[]{
  if(!Array.isArray(value)||value.length>200||value.some(id=>typeof id!=='string'||!/^[a-zA-Z0-9_-]{1,80}$/.test(id))||new Set(value).size!==value.length
-  ||(source.quotationTarget||source.workspaceTarget)&&value.length>0||value.some(id=>source.role!=='main'||!source.optionImages?.optionIds.includes(id)))throw Error('이 원본을 대표 이미지로 사용하는 옵션만 선택해주세요.');
+  ||(source.quotationTarget||source.workspaceTarget||source.additionalDraftTarget)&&value.length>0||value.some(id=>source.role!=='main'||!source.optionImages?.optionIds.includes(id)))throw Error('이 원본을 대표 이미지로 사용하는 옵션만 선택해주세요.');
  return [...value].sort() as string[];
 }
 export function freeImageApplyIdentity(source:FreeImageSource,optionImageIds:readonly string[]=[],crop?:FreeImageCrop,editDocumentSha256?:string){
@@ -96,7 +106,7 @@ export function freeImageApplyIdentity(source:FreeImageSource,optionImageIds:rea
 /** Generic role documents use a separate identity; historical quote/workspace bytes stay unchanged. */
 export function freeImageRoleEditApplyIdentity(source:FreeImageSource,optionImageIds:readonly string[],crop:FreeImageCrop|undefined,editDocumentSha256:string){
  validateFreeImageSource(source);
- if(source.quotationTarget||source.workspaceTarget||source.editorSource&&source.editorSource.anchorPolicy!=='current-role-v1'||!['main','additional','detail'].includes(source.role)
+ if(source.quotationTarget||source.workspaceTarget||source.editorSource&&source.editorSource.anchorPolicy!==(source.additionalDraftTarget?'current-pool-v1':'current-role-v1')||!['main','additional','detail'].includes(source.role)
   ||!/^[a-f0-9]{64}$/.test(editDocumentSha256))throw Error('이미지 역할 편집 문서의 저장 범위를 확인해주세요.');
  const ids=validateFreeImageOptionIds(source,[...optionImageIds]);
  if(source.optionImages?.commonAssigned===false&&!ids.length)throw Error('이 개별 사진을 반영할 옵션을 한 개 이상 선택해주세요. 공통 대표 이미지는 변경하지 않습니다.');

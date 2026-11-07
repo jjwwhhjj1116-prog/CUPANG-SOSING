@@ -1,5 +1,5 @@
 import {seoCompositionContext} from '@/app/seo-composition-context';
-import {validateSeoOptionResults} from '@/app/seo-option-results';
+import {assertGeneratedSeoQuality,validateSeoOptionResults} from '@/app/seo-option-results';
 import type {TranslationJob} from '@/app/automation/translation';
 import type {ProductContent} from '@/app/product-content';
 import type {ProductOptions} from '@/app/product-options';
@@ -36,6 +36,7 @@ export function createSeoGeneratedDraft(input:{ownerId?:string;productVersion:st
   ||job.status!=='completed'||!job.result||job.error||job.result.model!==job.review.model||!/^[a-f0-9]{64}$/u.test(job.review.fingerprint)
   ||!Number.isSafeInteger(content.revision)||!Number.isSafeInteger(options.revision))throw Error('현재 상품·원문·옵션에 연결된 완료 SEO 초안을 확인해주세요.');
  if(job.review.seoCompositionContext&&(job.review.seoCompositionContext.optionRevision!==options.revision||JSON.stringify(job.review.seoCompositionContext.selectedOptions)!==JSON.stringify(seoCompositionContext(options).selectedOptions)))throw Error('SEO 생성 이후 선택 옵션·사용자 입력이 변경되었습니다.');
+ assertGeneratedSeoQuality(job.review,job.result,job.review.seoComposition?.memo.brand??input.memo?.brand??input.brand);
  const values:SeoWorkspaceDraft={seo:{},optionNames:{}},draft=job.result.draft,warnings=[...draft.warnings];
  const eligible=(field:'title'|'keywords'|'description')=>input.replaceSaved||content.seo[field].provenance!=='manual'||field==='keywords'&&untouchedIntakeKeywords(content,job);
  const memo=input.memo?{...input.memo,brand:input.memo.brand.split(',')[0].trim()}:null;

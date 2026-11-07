@@ -1,5 +1,6 @@
 import type { QuotationField } from '@/app/quotation-schema';
 import { isQuotationAutomaticLegalNotice, quotationNoticeInput } from '@/app/quotation-notice-inputs';
+import { quotationIndependentOptionalOsrp } from '@/app/quotation-price-targets';
 
 // Exact resolver bindings only. A category name is never an input mapping.
 const links: Readonly<Record<string, string>> = {
@@ -26,7 +27,8 @@ const links: Readonly<Record<string, string>> = {
   noticeSpecifications: '6단계 상품별 세부 사양', yoga_noticeSpecifications: '6단계 상품별 세부 사양', brace_noticeSpecifications: '6단계 상품별 세부 사양', glove_noticeSpecifications: '6단계 상품별 세부 사양',
   noticeQualityAssurance: '6단계 품질보증기준', noticeServiceContact: '6단계 연락처 → 기본설정 A/S 연락처',
 };
-export function quotationInputLink(field: QuotationField): string | null {
+export function quotationInputLink(field: QuotationField, fields?: readonly QuotationField[]): string | null {
+  if (fields && quotationIndependentOptionalOsrp(fields)?.id === field.id) return '공식 판매처의 실제 판매가격 직접 입력 · 확인된 양식 기본값';
   if (isQuotationAutomaticLegalNotice(field) && field.label === '세탁방법 및 취급시 주의사항') return '6단계 세탁·취급 주의사항 → 기본설정 세탁방법·취급시 주의사항';
   if (isQuotationAutomaticLegalNotice(field) && ['출시년월', '제조년월'].includes(field.label)) return '6단계 출시년월 → 기본설정 전월 자동 입력';
   const content = field.contentField ?? (field.id === 'storageMaterial' ? 'material' : undefined);

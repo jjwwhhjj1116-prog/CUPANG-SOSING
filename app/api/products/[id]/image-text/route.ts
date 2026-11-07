@@ -147,6 +147,49 @@ async function reopenedSource(owner: string, id: string, resultKey: string, role
   if (source.sourceSha256 !== record.source.sourceSha256 || source.width !== record.source.width || source.height !== record.source.height) throw changed();
   return { source, editDocument: record.document };
 }
+type DraftSelection = { profileId: string | null; optionId: string | null };
+async function draftBinding(saved: QuotationSnapshot, owner: string, outputKey?: string) {
+  return digest(new TextEncoder().encode(JSON.stringify([await quotationBinding(saved, 'additionalImages', outputKey), await editorCompany(owner)])));
+}
+async function draftOriginal(owner: string, id: string, key: string, current: Awaited<ReturnType<typeof state>>, selection: DraftSelection) {
+  const saved = await stableQuotationFieldsView(owner, id, selection.profileId), view = saved.view;
+  const target = exactPrimaryQuotationTarget(view.resolved.schema.fields, 'additionalImages');
+  if (view.productVersion !== current.product.updated_at || view.contentRevision !== current.content.revision || target.fields.some(field => field.readOnly)
+    || selection.optionId !== null && view.resolved.rows.filter(row => row.optionId === selection.optionId).length !== 1) throw changed();
+  const base = await original(owner, id, key, 'additional', current, false);
+  return validateFreeImageSource({ ...base, additionalDraftTarget: { kind: 'additional-draft', ...selection, revision: view.revision,
+    inputFingerprint: view.inputFingerprint, optionRevision: view.optionRevision, bindingSha256: await draftBinding(saved, owner) } });
+}
+async function reopenedDraftSource(owner: string, id: string, key: string, current: Awaited<ReturnType<typeof state>>, selection: DraftSelection) {
+  const anchor = await draftOriginal(owner, id, key, current, selection);
+  if (!env.FILES) throw changed();
+  const stored = await readFreeImageEditRecord(env.FILES, owner, id, key), record = stored.record;
+  const saved = await stableQuotationFieldsView(owner, id, selection.profileId), context = saved.view.categoryContext;
+  const sameContext = JSON.stringify(record.context) === JSON.stringify(context)
+    || record.format === 'free-image-role-edit-record-v1' && record.context.profileId === context.profileId && record.context.categoryId === context.categoryId
+      && JSON.stringify(record.context.categoryPath) === JSON.stringify(context.categoryPath) && record.context.source === 'collection' && context.source === 'profile' && context.profileId === selection.profileId;
+  // The current owned pool anchor authorizes this document, including legacy
+  // role/quotation sidecars. Its original provenance remains immutable; no
+  // historical quotation slot is claimed by the new draft source.
+  if (!sameContext || JSON.stringify(record.company) !== JSON.stringify(await editorCompany(owner))
+    || anchor.sourceSha256 !== record.result.sha256 || anchor.width !== record.result.width || anchor.height !== record.result.height) throw changed();
+  const base = await original(owner, id, record.source.sourceKey, 'additional', current, false);
+  if (base.sourceSha256 !== record.source.sourceSha256 || base.width !== record.source.width || base.height !== record.source.height) throw changed();
+  return { source: validateFreeImageSource({ ...base, additionalDraftTarget: anchor.additionalDraftTarget,
+    editorSource: { resultKey: key, resultSha256: record.result.sha256, documentSha256: stored.documentSha256, anchorPolicy: 'current-pool-v1' } }), editDocument: record.document };
+}
+async function draftReplay(owner: string, id: string, source: FreeImageSource, key: string, sha256: string, size: number, crop?: FreeImageCrop, editDocument?: FreeImageEditDocument) {
+  const target = source.additionalDraftTarget!, current = await state(owner, id);
+  if (!current.keys.includes(key)) return null;
+  const saved = await stableQuotationFieldsView(owner, id, target.profileId), view = saved.view;
+  if (view.revision !== target.revision || view.contentRevision !== source.contentRevision || view.optionRevision !== target.optionRevision
+    || Date.parse(view.productVersion) <= Date.parse(source.productVersion) || await draftBinding(saved, owner, key) !== target.bindingSha256) return null;
+  const observed = await original(owner, id, source.sourceKey, 'additional', current, false);
+  if (observed.sourceSha256 !== source.sourceSha256 || observed.width !== source.width || observed.height !== source.height
+    || !await storedOutput(key, source, [], sha256, size, crop, editDocument)) return null;
+  return response({ source, key, productVersion: view.productVersion, contentRevision: view.contentRevision, applied: true, replayed: true,
+    ...(crop ? { crop } : {}), ...(editDocument ? { editDocumentSha256: await freeImageEditDigest(freeImageEditDocumentBytes(editDocument)) } : {}) });
+}
 async function reopenedRoleSource(owner: string, id: string, resultKey: string, role: FreeImageSource['role'], current: Awaited<ReturnType<typeof state>>) {
   if (!['main', 'additional', 'detail'].includes(role) || !env.FILES) throw changed();
   const anchor = await original(owner, id, resultKey, role, current, true, true), stored = await readFreeImageEditRecord(env.FILES, owner, id, resultKey), record = stored.record;
@@ -165,8 +208,9 @@ async function freshSource(owner: string, id: string, source: FreeImageSource, r
   if (source.productId !== id) throw new ImageTextError(400, '번역한 상품과 저장할 상품이 다릅니다.');
   const current = await state(owner, id);
   if (current.product.updated_at !== source.productVersion || current.content.revision !== source.contentRevision) throw changed();
-  const observed = source.editorSource?.anchorPolicy === 'current-role-v1' ? (await reopenedRoleSource(owner, id, source.editorSource.resultKey, source.role, current)).source
-    : source.editorSource ? (await reopenedSource(owner, id, source.editorSource.resultKey, source.role, current, source.quotationTarget!, source.editorSource.anchorPolicy, readOnlyRecovery)).source
+  const observed = source.additionalDraftTarget ? source.editorSource ? (await reopenedDraftSource(owner, id, source.editorSource.resultKey, current, source.additionalDraftTarget)).source : await draftOriginal(owner, id, source.sourceKey, current, source.additionalDraftTarget)
+    : source.editorSource?.anchorPolicy === 'current-role-v1' ? (await reopenedRoleSource(owner, id, source.editorSource.resultKey, source.role, current)).source
+    : source.editorSource ? (await reopenedSource(owner, id, source.editorSource.resultKey, source.role, current, source.quotationTarget!, source.editorSource.anchorPolicy === 'current-target-v1' ? 'current-target-v1' : undefined, readOnlyRecovery)).source
     : source.quotationTarget ? await quotationOriginal(owner, id, source.sourceKey, source.role, current, source.quotationTarget, readOnlyRecovery)
     : await original(owner, id, source.sourceKey, source.role, current, true, source.optionImages !== undefined);
   if (freeImageSourceIdentity(observed) !== freeImageSourceIdentity(source)) throw changed();
@@ -206,7 +250,7 @@ async function storedOutput(key: string, source: FreeImageSource, optionImageIds
       || saved.record.result.sha256 !== sha256 || saved.record.result.bytes !== size
       || saved.record.format === 'free-image-role-edit-record-v1' && JSON.stringify(saved.record.optionImageIds) !== ids) throw changed();
     if (saved.record.format === 'free-image-role-edit-record-v1') {
-      const owner = source.sourceKey.split('/')[0], current = await stableQuotationFieldsView(owner, source.productId, null);
+      const owner = source.sourceKey.split('/')[0], current = await stableQuotationFieldsView(owner, source.productId, source.additionalDraftTarget?.profileId ?? null);
       if (JSON.stringify(saved.record.context) !== JSON.stringify(current.view.categoryContext)
         || JSON.stringify(saved.record.company) !== JSON.stringify(await editorCompany(owner))) throw changed();
     }
@@ -214,6 +258,7 @@ async function storedOutput(key: string, source: FreeImageSource, optionImageIds
   return true;
 }
 async function replay(owner: string, id: string, source: FreeImageSource, optionImageIds: string[], key: string, sha256: string, size: number, crop?: FreeImageCrop, editDocument?: FreeImageEditDocument) {
+  if (source.additionalDraftTarget) return draftReplay(owner, id, source, key, sha256, size, crop, editDocument);
   if (source.quotationTarget) return quotationReplay(owner, id, source, key, sha256, size, crop, editDocument);
   const current = await state(owner, id);
   const role = current.content.assets[source.role].value;
@@ -431,11 +476,12 @@ export async function GET(request: Request, context: Context) {
         || options && (await readProductOptions(owner, id)).revision !== options.revision) throw changed();
       return response({ productId: id, productVersion: current.product.updated_at, contentRevision: current.content.revision, role, keys });
     }
+    const draft = params.get('target') === 'additional-draft';
     const quotation = params.get('target') === 'quotation';
-    const allowed = quotation ? ['sourceKey', 'role', 'target', 'profileId', 'optionId', 'fieldKey', 'slotIndex', 'editor'] : ['sourceKey', 'role', 'editor'];
+    const allowed = draft ? ['sourceKey', 'role', 'target', 'profileId', 'optionId', 'editor'] : quotation ? ['sourceKey', 'role', 'target', 'profileId', 'optionId', 'fieldKey', 'slotIndex', 'editor'] : ['sourceKey', 'role', 'editor'];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1) || params.getAll('sourceKey').length !== 1 || params.getAll('role').length !== 1
       || !validFreeImageRole(params.get('role')) || params.get('role') === 'label' && !quotation
-      || params.has('editor') && !(quotation ? ['saved', 'saved-current-target-v1'] : ['saved-current-role-v1']).includes(params.get('editor')!)) throw new ImageTextError(400, '원본 이미지와 역할을 선택해주세요.');
+      || params.has('editor') && !(draft ? ['saved-current-pool-v1'] : quotation ? ['saved', 'saved-current-target-v1'] : ['saved-current-role-v1']).includes(params.get('editor')!)) throw new ImageTextError(400, '원본 이미지와 역할을 선택해주세요.');
     const current = await state(owner, id), role = params.get('role') as FreeImageSource['role'];
     let selection: QuotationSelection | undefined;
     if (quotation) {
@@ -445,10 +491,12 @@ export async function GET(request: Request, context: Context) {
         || slotIndex === null || !/^(?:0|[1-9][0-9]?)$/.test(slotIndex) || Number(slotIndex) > 29 || role === 'main' && Number(slotIndex) !== 0) throw new ImageTextError(400, '최종 견적 이미지의 옵션과 선택 위치를 확인해주세요.');
       selection = { profileId, optionId, fieldKey, slotIndex: Number(slotIndex), input: role === 'main' ? 'mainImage' : role === 'additional' ? 'additionalImages' : role === 'label' ? 'labelImages' : 'detailImages' };
     }
-    const editor = params.has('editor') ? selection ? await reopenedSource(owner, id, params.get('sourceKey')!, role, current, selection,
+    const draftSelection = { profileId: params.get('profileId'), optionId: params.get('optionId') };
+    if (draft && (role !== 'additional' || draftSelection.profileId !== null && !/^[A-Za-z0-9_-]{1,100}$/.test(draftSelection.profileId) || draftSelection.optionId !== null && !/^[A-Za-z0-9_-]{1,80}$/.test(draftSelection.optionId))) throw changed();
+    const editor = params.has('editor') ? draft ? await reopenedDraftSource(owner, id, params.get('sourceKey')!, current, draftSelection) : selection ? await reopenedSource(owner, id, params.get('sourceKey')!, role, current, selection,
       params.get('editor') === 'saved-current-target-v1' ? 'current-target-v1' : undefined)
       : await reopenedRoleSource(owner, id, params.get('sourceKey')!, role, current) : undefined;
-    const source = editor?.source ?? (selection ? await quotationOriginal(owner, id, params.get('sourceKey')!, role, current, selection)
+    const source = editor?.source ?? (draft ? await draftOriginal(owner, id, params.get('sourceKey')!, current, draftSelection) : selection ? await quotationOriginal(owner, id, params.get('sourceKey')!, role, current, selection)
       : await original(owner, id, params.get('sourceKey')!, role, current, true, true));
     // Never return a snapshot whose source/version changed while R2 was read.
     await freshSource(owner, id, source);
@@ -666,13 +714,13 @@ export async function POST(request: Request, context: Context) {
     if (!quotation && !optionOnly && Object.entries(current.content.assets).some(([role, field]) => role !== source.role && field.value.includes(key))) throw changed();
     const now = new Date(Math.max(Date.now(), Date.parse(source.productVersion) + 1)).toISOString();
     let next;
-    try { next = quotation || optionOnly ? current.content : applyContentPatch(current.content, { assets: { [source.role]: current.content.assets[source.role].value.map(value => value === previousKey ? key : value) } }, now); }
+    try { next = quotation || source.additionalDraftTarget || optionOnly ? current.content : applyContentPatch(current.content, { assets: { [source.role]: current.content.assets[source.role].value.map(value => value === previousKey ? key : value) } }, now); }
     catch { throw new ImageTextError(409, '이미지 역할이 중복되어 있습니다. 원본 역할을 확인한 후 다시 적용해주세요.'); }
     const finalOverrides = quotation ? quotationOverrides(quotation, source, key) : null;
     const quotationOverridesSha256 = finalOverrides ? await digest(new TextEncoder().encode(JSON.stringify(finalOverrides))) : undefined;
     let editRecord: PreparedFreeImageEditRecord | undefined, roleSnapshot: QuotationSnapshot | undefined;
     if (editDocument) {
-      const snapshot = quotation ?? (roleSnapshot = await stableQuotationFieldsView(owner, id, null));
+      const snapshot = quotation ?? (roleSnapshot = await stableQuotationFieldsView(owner, id, source.additionalDraftTarget?.profileId ?? null));
       if (!snapshot.view.categoryContext.categoryId || !env.FILES || snapshot.view.productVersion !== source.productVersion || snapshot.view.contentRevision !== source.contentRevision) throw changed();
       const company = await editorCompany(owner), result = { key, sha256, bytes: bytes.length, width: dimensions.width, height: dimensions.height };
       editRecord = quotation ? await prepareFreeImageEditRecord(source, editDocument, snapshot.view.categoryContext, company, result)
@@ -703,7 +751,7 @@ export async function POST(request: Request, context: Context) {
     if (quotationOverridesSha256 && (await env.FILES.get(key))?.customMetadata?.freeImageQuotationOverridesSha256 !== quotationOverridesSha256) throw changed();
     await freshSource(owner, id, source);
     if (roleSnapshot) {
-      const currentSnapshot = await stableQuotationFieldsView(owner, id, null);
+      const currentSnapshot = await stableQuotationFieldsView(owner, id, source.additionalDraftTarget?.profileId ?? null);
       if (JSON.stringify(currentSnapshot.source) !== JSON.stringify(roleSnapshot.source)
         || JSON.stringify(currentSnapshot.view.categoryContext) !== JSON.stringify(editRecord?.record.context)
         || JSON.stringify(await editorCompany(owner)) !== JSON.stringify(editRecord?.record.company)) throw changed();
@@ -731,7 +779,7 @@ export async function POST(request: Request, context: Context) {
       const common = { productId: id, expectedVersion: source.productVersion, expectedContentRevision: source.contentRevision,
         previousImageKeys: current.product.image_keys, imageKeys, content: next, productVersion: now };
       const saved = options ? await applyProductImageTranslation(owner, { ...common, contentMutated: !optionOnly, options, optionImageIds, sourceKey: previousKey, outputKey: key })
-        : await attachProductDocument(owner, { ...common, contentMutated: true, ...(source.optionImages ? { expectedOptionRevision: source.optionImages.revision } : {}) });
+        : await attachProductDocument(owner, { ...common, contentMutated: !source.additionalDraftTarget, ...(source.optionImages ? { expectedOptionRevision: source.optionImages.revision } : {}) });
       if (saved) return response({ source, key, productVersion: saved.productVersion, contentRevision: saved.content.revision, applied: true,
         ...(options ? { optionRevision: options.revision + 1, optionImageIds } : {}), ...(crop ? { crop } : {}), ...(editDocumentSha256 ? { editDocumentSha256 } : {}) });
       const committed = await replay(owner, id, source, optionImageIds, key, sha256, bytes.length, crop, editDocument);

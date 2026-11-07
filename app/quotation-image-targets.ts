@@ -132,3 +132,13 @@ export function verifyOptionImageRecovery(before: QuotationFieldsView, confirmed
       throw Error('이미지 저장 응답과 최신 저장본이 다릅니다. 입력은 유지했습니다.');
   }
 }
+
+/** Optional stage-four producer contract. The capture is one editor incarnation,
+ * never a saved quotation slot. accept proves a pool-only change before adopting. */
+export type AdditionalImageDraftCapture = {
+  view: QuotationFieldsView; keys: string[]; target: { profileId: string | null; optionId: string | null; revision: number; inputFingerprint: string; optionRevision: number };
+  readable: () => boolean; verify: (after: QuotationFieldsView, addedKeys: readonly string[]) => boolean;
+  replace: (keys: string[]) => boolean; current: () => boolean; root: () => HTMLElement | null;
+  accept: (after: QuotationFieldsView, keys: string[], addedKeys: readonly string[]) => boolean;
+};
+export type AdditionalImageDraftTools = { capture: () => AdditionalImageDraftCapture | null };

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {fileURLToPath} from 'node:url';
+import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-price-basis.mjs';
 import path from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
@@ -11,6 +13,13 @@ import {hubSchemaSnapshot,schemaCompanies,schemaPath} from './helpers/hub-schema
 import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
 import {readPackageZip} from '../extensions/supplier-hub/package.mjs';
 
+// Read-only runtime overlay lets the identical repaired fixtures audit sealed 9c.
+const fixtureFs=new Proxy(fs,{get(target,key){if(key!=='readFileSync')return target[key];return(file,...args)=>{
+ const before=process.env.ADDITIONAL_DRAFT_BEFORE;
+ if(before){const original=file instanceof URL?fileURLToPath(file):path.resolve(String(file)),relative=path.relative(fileURLToPath(new URL('../',import.meta.url)),original),mirror=path.join(before,relative);
+  if(!relative.startsWith('..')&&fs.existsSync(mirror))return fs.readFileSync(mirror,...args);}
+ return fs.readFileSync(file,...args);
+};}});
 const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
 // Existing real component hooks/API fixtures only; no test registrations or
 // older suite after-hooks are imported. Fixture transforms add the new props
@@ -24,7 +33,7 @@ function declarations(file,expose,transform=source=>source){
   parts.push(statement.getText(ast));
  }
  return vm.runInNewContext(transform(parts.join('\n')).replaceAll('import.meta.url',JSON.stringify(url.href))+'\n({'+expose+'})',
-  {assert,fs,path,vm,ts,createRequire,deflateSync,mobileIntakeHarness,hubSchemaSnapshot,schemaCompanies,schemaPath,quotationWorkbook,readPackageZip,nodes,
+  {assert,fs:fixtureFs,path,vm,ts,process,pageSourcePriceBasis,createRequire,deflateSync,mobileIntakeHarness,hubSchemaSnapshot,schemaCompanies,schemaPath,quotationWorkbook,readPackageZip,nodes,
    URL,URLSearchParams,Blob,File,FormData,Response,Request,Headers,AbortController,DOMException,TextEncoder,TextDecoder,Uint8Array,DataView,Buffer,Date,JSON,structuredClone,crypto,console,setTimeout,clearTimeout,setImmediate});
 }
 function replaceOnce(source,before,after){assert.equal(source.split(before).length-1,1,'existing fixture declaration: '+before);return source.replace(before,after);}

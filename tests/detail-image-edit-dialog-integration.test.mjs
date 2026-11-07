@@ -17,7 +17,7 @@ function dashboard() {
     if (cache.has(file)) return cache.get(file); const exports = {}; cache.set(file, exports); let source = fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8');
     if (file.endsWith('dashboard-client.tsx')) source += '\nexport {DetailPanel};';
     vm.runInNewContext(ts.transpileModule(source, { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
-      { exports, AbortController, TextEncoder, crypto, fetch() { requests++; throw Error('External request forbidden'); }, require(name) { if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name==='@/app/registration-ui-reads')return load('app/registration-ui-reads.tsx'); if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
+      { exports, AbortController, TextEncoder, crypto, structuredClone, fetch() { requests++; throw Error('External request forbidden'); }, require(name) { if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name==='@/app/registration-ui-reads')return load('app/registration-ui-reads.tsx'); if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
         if (name.startsWith('@/app/components/')) return new Proxy({}, { get: (_, key) => component(name + ':' + String(key)) }); return name.startsWith('@/') ? load(name.slice(2) + '.ts') : native(name); } }); return exports;
   }
   const Detail = load('app/components/dashboard-client.tsx').DetailPanel;
@@ -43,7 +43,7 @@ test('focused main and additional editing embed the same retained editor and hid
  }finally{h.close();}
 });
 
-for (const [tab,role] of [['대표 이미지','main'],['추가 이미지','additional'],['상세 이미지','detail']]) test(`${tab}: generic entry explicitly carries its stage role without choosing an original or quotation slot`, () => {
+for (const [tab,role] of [['대표 이미지','main'],['상세 이미지','detail']]) test(`${tab}: generic entry explicitly carries its stage role without choosing an original or quotation slot`, () => {
   const h=dashboard();try{
     h.render({tab});h.editor().props.onCloseGuard(()=>true);h.genericEntry().props.onClick();h.render();
     assert.equal(h.dialog().props.open,true);assert.equal(h.editor().props.active,true);assert.equal(h.editor().props.editorEntry.role,role);
@@ -168,4 +168,17 @@ test('workspace photo editing uses the same modal and preserves the existing liv
     child.props.onBusyChange(false); child.props.onCloseGuard(() => false); oldClose(); h.render(); assert.ok(editor());
     child.props.onCloseGuard(() => true); oldClose(); await h.idle(); assert.equal(editor(), undefined); assert.equal(h.adopted.length, 0); assert.equal(f.calls.filter(call => call.method !== 'GET').length, writes);
   } finally { h.close(); }
+});
+
+test('registration additional entry delivers the exact current draft occurrence instead of a saved-slot or generic role claim',()=>{
+ const h=dashboard();try{
+  h.render({tab:'추가 이미지',focusedOptionId:undefined});
+  const common=h.child('ProductContentEditor');assert.equal(common.props.additionalDraft,true);
+  let current=true;const capture={current:()=>current,keys:['owner/a.png'],root:()=>null,target:{profileId:'profile',optionId:null},view:{},accept(){throw Error('opening cannot store');},replace(){throw Error('opening cannot replace');}};
+  common.props.onDraftReady({capture:()=>capture});h.render();h.genericEntry().props.onClick();h.render();
+  const editor=nodes(h.render()).find(node=>Object.hasOwn(node.props??{},'onCloseGuard'));
+  assert.equal(h.dialog().props.open,true);assert.equal(editor.props.translationTarget.role,'additional');assert.equal(editor.props.translationTarget.sourceKey,'owner/a.png');
+  assert.equal(editor.props.translationTarget.quotationTarget,undefined);assert.equal(editor.props.translationTarget.additionalDraft.capture,capture);assert.equal(editor.props.translationTarget.additionalDraft.index,0);assert.equal(h.requests,0);
+  editor.props.onCloseGuard(()=>true);h.dialog().props.onClose();h.render();current=false;h.genericEntry().props.onClick();h.render();assert.equal(h.dialog().props.open,false);
+ }finally{h.close();}
 });

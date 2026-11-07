@@ -12,7 +12,7 @@ export function CategoryQuotationPreview({ schema }: { schema: QuotationSchema }
   const normalized=query.trim().toLocaleLowerCase();
   const visibleFields=schema.fields.filter(field=>{
     const known=couplusQuotationDefault(schema.categoryId,field)!==undefined;
-    return (filter==='all'||filter==='required'&&field.required||filter==='known'&&known||filter==='unknown'&&!known||filter==='linked'&&quotationInputLink(field)!==null)
+    return (filter==='all'||filter==='required'&&field.required||filter==='known'&&known||filter==='unknown'&&!known||filter==='linked'&&quotationInputLink(field,schema.fields)!==null)
       && (!normalized||[field.label,field.id,field.help??'',...(field.choices?.map(choice=>choice.label)??[])].some(value=>value.toLocaleLowerCase().includes(normalized)));
   });
   const observedDefaults = schema.fields.filter(field => couplusQuotationDefault(schema.categoryId, field) !== undefined).length;
@@ -41,7 +41,7 @@ export function CategoryQuotationPreview({ schema }: { schema: QuotationSchema }
               <td>{field.required ? '필수' : field.workbookWire?.requirement==='conditional' ? '조건부 필수' : '선택'} · {field.readOnly ? '연동값' : field.type === 'select' ? '선택형' : field.type === 'images' ? '이미지' : field.type === 'number' ? '숫자' : '직접 입력'}{field.unit ? ` · ${field.unit}` : ''}
                 {field.choices && <details><summary>허용 선택지 {field.choices.length}개</summary><ul>{field.choices.map((item,index) => <li key={index}>{item.label}{item.value === '' ? ' (저장값: 공란)' : item.label !== item.value ? ` (저장값: ${item.value})` : ''}</li>)}</ul></details>}
                 {field.help && <small>{field.help}</small>}</td>
-              <td>{quotationInputLink(field) ?? '직접 입력 또는 확인된 양식 기본값'}</td>
+              <td>{quotationInputLink(field,schema.fields) ?? '직접 입력 또는 확인된 양식 기본값'}</td>
               <td>{value === undefined ? '미확인 · 임의 기본값 없음' : <><strong>{quotationFieldDisplay(field, {value, source:'couplus-default'}, '(공란)')}</strong>{value === '' ? ' (저장값: 공란)' : choice && choice.label !== value ? ` (저장값: ${value})` : ''}<small>쿠플러스 초안 기본값</small></>}</td>
             </tr>;
           })}</tbody></table></div>

@@ -40,7 +40,7 @@ test('the complete wire path prevents same labels and dotted property names from
   const field=schema.fields.find(field=>JSON.stringify(field.hubWire?.path)===JSON.stringify(path));assert.match(field.id,/^live_991234_/);assert.equal(field.hubInput,undefined);
  }
 });
-test('MSRP and OSRP share the stage price source while retaining separate final editable fields independent of property order',()=>{
+test('MSRP and OSRP retain separate final editable fields independent of property order',()=>{
  for(const reverse of [false,true]){const schema=schemaFor(snapshot(schemaCompanies[0],raw=>{
   const fields=raw.properties.productPage.properties.commonAttributes.properties;
   fields.msrp.title=fields.osrp.title='권장가';if(reverse)raw.properties.productPage.properties.commonAttributes.properties={osrp:fields.osrp,...fields};
@@ -70,9 +70,11 @@ test('an OSRP-only schema retains the shared stage price source without a duplic
  assert.equal(schema.status,'observed');assert.equal(at(schema,'productPage.commonAttributes.osrp').id,'msrp');
  assert.equal(schema.fields.filter(field=>field.id==='msrp').length,1);
 });
-test('input links describe the captured source even for a separate OSRP field',()=>{
+test('input links distinguish an independent optional OSRP while preserving legacy callers',()=>{
  const schema=schemaFor(snapshot()),links=h.load('app/quotation-input-links.ts');
  assert.match(links.quotationInputLink(at(schema,'productPage.commonAttributes.osrp')),/2단계/);
+ assert.doesNotMatch(links.quotationInputLink(at(schema,'productPage.commonAttributes.osrp'),schema.fields),/2단계|권장소비자/);
+ assert.match(links.quotationInputLink(at(schema,'productPage.commonAttributes.osrp'),schema.fields),/실제 판매가격/);
  assert.match(links.quotationInputLink(at(schema,'productPage.modelNumber')),/6단계/);
 });
 test('stage-five HTML keeps its editor capacity and respects an explicit captured limit',()=>{
@@ -112,7 +114,8 @@ for(const company of schemaCompanies)test(`stage content and final wire cells re
   assert.equal(option.fields.mainImage.value,images[4]);assert.equal(option.fields.additionalImages.value,images.slice(1,3).join('\n'));assert.equal(option.fields.detailImages.value,images[3]);
   assert.equal(option.fields.detailHtml.value,'<p>'+description+'</p>');assert.equal(option.fields.detailHtml.validationIssues.length,0);
   assert.ok(Number(option.fields.supplyPrice.value)>0);assert.equal(option.fields.supplyPrice.source,'pricing');
-  assert.equal(option.fields[osrp.id].value,option.fields.msrp.value);assert.equal(option.fields[osrp.id].source,'pricing');
+  assert.ok(Number(option.fields.msrp.value)>0);assert.equal(option.fields.msrp.source,'pricing');
+  for(const row of view.resolved.rows){assert.equal(row.fields[osrp.id].value,'');assert.equal(row.fields[osrp.id].source,'empty');}
   view=await json(await local.route(f.base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[
    {fieldKey:'supplyPrice',optionId:option.optionId,value:'17920'},{fieldKey:'salePrice',optionId:option.optionId,value:'29870'},
    {fieldKey:'msrp',optionId:option.optionId,value:'38830'},{fieldKey:osrp.id,optionId:option.optionId,value:''},

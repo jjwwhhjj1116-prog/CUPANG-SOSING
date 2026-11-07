@@ -1,39 +1,80 @@
 'use client';
 import {useCallback,useEffect,useLayoutEffect,useRef,useState,type ChangeEvent} from 'react';
 import {PRODUCT_IMAGE_POOL_LIMIT} from '@/app/image-pool-limit';
+import type {AdditionalImageDraftTools,AdditionalImageDraftCapture} from '@/app/quotation-image-targets';
+import type {UiMutation} from '@/app/registration-ui-reads';
 import type {ImageUploadTarget} from '@/app/image-upload-link';
 import './product-image-upload-queue.css';
 import {prepareProductImageFiles,readProductImageUploadBasis,sameProductImageUploadBasis,uploadProductImageQueueItem,recoverProductImageQueueItem,type ProductImageUploadItem,type ProductImageUploadBasis} from '@/app/product-image-upload-queue';
 
 type Props={productId:string;ownerId:string;version:string;storedCount:number;stage:'main'|'additional'|'detail';target?:ImageUploadTarget;active?:boolean;disabled?:boolean;immediate?:boolean;compact?:boolean;
- beforeUpload?:()=>boolean;onSaved?:()=>void;onBusyChange?:(busy:boolean)=>void};
+ additionalDraft?:AdditionalImageDraftTools;onBeginSourceWrite?:()=>UiMutation|undefined;beforeUpload?:(owner?:HTMLElement|null,producer?:HTMLElement|null)=>boolean;onSaved?:()=>void;onBusyChange?:(busy:boolean)=>void};
+type PendingDraftDelivery={identity:string;basis:ProductImageUploadBasis;capture:AdditionalImageDraftCapture};
 const labels={pending:'대기',uploading:'업로드 중',uploaded:'파일 보관 · 연결 대기',attaching:'상품 연결 중',done:'추가 완료',failed:'확인 필요','uncertain-upload':'업로드 결과 확인 불가','uncertain-attachment':'연결 결과 확인 필요'};
-export function ProductImageUploadQueue({productId,ownerId,version,storedCount,stage,target,active=true,disabled=false,immediate=false,compact=stage==='main'&&immediate,beforeUpload,onSaved,onBusyChange}:Props){
+export function ProductImageUploadQueue({productId,ownerId,version,storedCount,stage,target,active=true,disabled=false,immediate=false,compact=stage==='main'&&immediate,beforeUpload,onSaved,onBusyChange,additionalDraft,onBeginSourceWrite}:Props){
+ const queueRoot=useRef<HTMLElement|null>(null),draftCapture=useRef<AdditionalImageDraftCapture|null>(null),uiMutation=useRef<UiMutation|null>(null);
+ const pendingDelivery=useRef<PendingDraftDelivery|null>(null),[deliveryPending,setDeliveryPending]=useState(false);
+ const sourceFetch:typeof fetch=(url,init)=>{if((init?.method??'GET')!=='GET')uiMutation.current??=onBeginSourceWrite?.()??null;return fetch(url,init);};
  const identity=JSON.stringify([ownerId,productId,stage,target===undefined?'pool':target.optionId,target?.profileId??null]),live=useRef({identity,version,active,disabled,mounted:true}),request=useRef<AbortController|null>(null);
  const [items,setItems]=useState<ProductImageUploadItem[]>([]),itemsRef=useRef<ProductImageUploadItem[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
- const callbacks=useRef({beforeUpload,onSaved,onBusyChange}),busyCallback=useRef<((busy:boolean)=>void)|null>(null),basisRef=useRef<ProductImageUploadBasis|null>(null);
+ const callbacks=useRef({beforeUpload,onSaved,onBusyChange,additionalDraft}),busyCallback=useRef<((busy:boolean)=>void)|null>(null),basisRef=useRef<ProductImageUploadBasis|null>(null);
  const update=useCallback((next:ProductImageUploadItem[]|((before:ProductImageUploadItem[])=>ProductImageUploadItem[]))=>{itemsRef.current=typeof next==='function'?next(itemsRef.current):next;setItems(itemsRef.current);},[]);
- useLayoutEffect(()=>{callbacks.current={beforeUpload,onSaved,onBusyChange};},[beforeUpload,onSaved,onBusyChange]);
+ useLayoutEffect(()=>{callbacks.current={beforeUpload,onSaved,onBusyChange,additionalDraft};},[beforeUpload,onSaved,onBusyChange,additionalDraft]);
  const stop=useCallback(()=>{
   request.current?.abort();request.current=null;busyCallback.current?.(false);busyCallback.current=null;
   update(before=>before.map(item=>item.phase==='uploading'?{...item,phase:'uncertain-upload',error:'화면이 변경되어 업로드 응답을 확인하지 못했습니다. 자동 재업로드하지 않습니다.'}:item.phase==='attaching'?{...item,phase:'uncertain-attachment',error:'화면이 변경되어 연결 응답을 확인하지 못했습니다. 저장 결과를 조회해주세요.'}:item));setBusy(false);
  },[update]);
  useLayoutEffect(()=>{
   const previous=live.current;live.current={identity,version,active,disabled,mounted:true};
-  if(previous.identity!==identity){stop();update([]);basisRef.current=null;setError('');setMessage('');}
+  if(previous.identity!==identity){stop();update([]);basisRef.current=null;pendingDelivery.current=null;setDeliveryPending(false);setError('');setMessage('');}
   else if((previous.active&&!active||previous.version!==version||!previous.disabled&&disabled)&&request.current)stop();
  },[identity,version,active,disabled,stop,update]);
  useEffect(()=>()=>{live.current.mounted=false;request.current?.abort();request.current=null;busyCallback.current?.(false);busyCallback.current=null;},[]);
  const allowed=()=>live.current.mounted&&live.current.identity===identity&&live.current.active&&!live.current.disabled&&!request.current;
  useLayoutEffect(()=>{live.current.disabled=disabled;},[disabled]);
- const begin=()=>{
-  if(!allowed()||stage==='main'&&(!target?.optionId)||callbacks.current.beforeUpload?.()===false)return null;
+ const begin=(purpose:'write'|'delivery'|'attachment-recovery'='write')=>{
+  const delivery=pendingDelivery.current;
+  // Pending delivery blocks new writes, not proof of an original attachment.
+  if(delivery&&(purpose==='write'||delivery.identity!==identity)||purpose==='delivery'&&!delivery)return null;
+  if(delivery)draftCapture.current=delivery.capture;
+  else if(!draftCapture.current || !itemsRef.current.some(item=>item.phase==='uncertain-attachment'))draftCapture.current=callbacks.current.additionalDraft?.capture()??null;
+  if(callbacks.current.additionalDraft&&!draftCapture.current)return null;
+  const authorized=()=>!draftCapture.current||(purpose==='write'?draftCapture.current.current():draftCapture.current.readable?.()??draftCapture.current.current());
+  if(!authorized())return null;
+  if(!allowed()||stage==='main'&&(!target?.optionId)||callbacks.current.beforeUpload?.(draftCapture.current?.root(),queueRoot.current)===false)return null;
   const controller=new AbortController(),capturedVersion=live.current.version;request.current=controller;setBusy(true);setError('');setMessage('');busyCallback.current=callbacks.current.onBusyChange??null;busyCallback.current?.(true);
-  return {controller,current:()=>!controller.signal.aborted&&live.current.mounted&&live.current.identity===identity&&live.current.active&&!live.current.disabled&&live.current.version===capturedVersion&&callbacks.current.beforeUpload?.()!==false};
+  return {controller,current:()=>authorized()&&!controller.signal.aborted&&live.current.mounted&&live.current.identity===identity&&live.current.active&&!live.current.disabled&&live.current.version===capturedVersion&&callbacks.current.beforeUpload?.(draftCapture.current?.root(),queueRoot.current)!==false};
  };
  const finish=(controller:AbortController)=>{if(request.current!==controller)return;request.current=null;busyCallback.current?.(false);busyCallback.current=null;if(live.current.mounted){setBusy(false);}};
+ async function notifyPoolSaved(basis:ProductImageUploadBasis,current:()=>boolean,signal:AbortSignal){
+  let delivery=pendingDelivery.current;
+  const capture=delivery?.capture??draftCapture.current;
+  if(capture){
+   // Attachment completion and delivery acknowledgment are separate. Retain
+   // this exact capture/basis before starting the fallible quotation read.
+   if(!delivery){delivery={identity,basis,capture};pendingDelivery.current=delivery;setDeliveryPending(true);}
+   if(!current()||delivery.identity!==identity)throw Error('원래 추가 이미지 초안의 연결 결과를 확인해주세요.');
+   const profileId=capture.target.profileId,response=await fetch('/api/products/'+encodeURIComponent(productId)+'/quotation-fields'+(profileId?'?profileId='+encodeURIComponent(profileId):''),{cache:'no-store',signal});
+   const after=await response.json() as import('@/app/quotation-schema').QuotationFieldsView;
+   if(!current()||pendingDelivery.current!==delivery)throw Error('원래 추가 이미지 초안의 연결 결과를 확인해주세요.');
+   const added=delivery.basis.imageKeys.filter(key=>!capture.view.imageKeys.includes(key));
+   if(!response.ok||!(capture.current()?capture.accept(after,[...capture.keys,...added],added):capture.verify(after,added)))throw Error('업로드한 파일의 초안 연결을 확인하지 못했습니다. 저장 결과를 확인해주세요.');
+   pendingDelivery.current=null;setDeliveryPending(false);
+  }
+  // A proven earlier file cannot acknowledge another unconfirmed attempt,
+  // including an unchanged attachment read waiting for an explicit retry.
+  if(!itemsRef.current.some(item=>item.phase==='uncertain-upload'||item.phase==='uncertain-attachment'||item.phase==='uploaded'&&!!item.attachmentBasis&&item.retryAttach===true)){uiMutation.current?.confirm();uiMutation.current=null;}
+  callbacks.current.onSaved?.();
+ }
+ async function retryDelivery(){
+  const operation=begin('delivery');if(!operation)return;
+  const {controller,current}=operation,delivery=pendingDelivery.current!;
+  try{await notifyPoolSaved(delivery.basis,current,controller.signal);}
+  catch(cause){if(current())setError(cause instanceof Error?cause.message:'원래 추가 이미지 초안 연결 결과를 확인하지 못했습니다.');}
+  finally{if(request.current===controller&&!current())stop();else finish(controller);}
+ }
  async function run(onlyId?:string){
-  const operation=begin();if(!operation)return;const {controller,current}=operation,controls={current,fetcher:fetch,signal:controller.signal,onItem:(item:ProductImageUploadItem)=>{if(current())update(previous=>previous.map(value=>value.id===item.id?item:value));}};let completed=0;
+  const operation=begin();if(!operation)return;const {controller,current}=operation,controls={current,fetcher:sourceFetch,signal:controller.signal,onItem:(item:ProductImageUploadItem)=>{if(current())update(previous=>previous.map(value=>value.id===item.id?item:value));}};let completed=0;
   try{
    let basis=await readProductImageUploadBasis(productId,ownerId,controls,target===undefined?undefined:{target,stage});
    const retained=basisRef.current;
@@ -47,7 +88,7 @@ export function ProductImageUploadQueue({productId,ownerId,version,storedCount,s
     basis=result.basis;basisRef.current=basis;if(result.item.phase==='done')completed++;
     if(result.stop)break;
    }
-   if(current()){setMessage(completed?stage==='main'?'선택 옵션의 대표이미지와 견적서 연결을 저장했습니다.':`${completed}개 이미지를 선택한 순서로 추가했습니다.${target===undefined?' 추가·상세 이미지에서 사용할 파일을 선택해주세요.':target.optionId===null?' 상품 공통 이미지에 연결했습니다.':' 선택한 옵션 이미지에 연결했습니다.'}`:'대기 파일의 처리 결과를 확인해주세요.');if(completed)callbacks.current.onSaved?.();}
+   if(current()){setMessage(completed?stage==='main'?'선택 옵션의 대표이미지와 견적서 연결을 저장했습니다.':`${completed}개 이미지를 선택한 순서로 추가했습니다.${target===undefined?' 추가·상세 이미지에서 사용할 파일을 선택해주세요.':target.optionId===null?' 상품 공통 이미지에 연결했습니다.':' 선택한 옵션 이미지에 연결했습니다.'}`:'대기 파일의 처리 결과를 확인해주세요.');if(completed)await notifyPoolSaved(basis,current,controller.signal);}
   }catch(cause){if(current())setError(cause instanceof Error?cause.message:'이미지를 추가하지 못했습니다. 대기 파일은 유지했습니다.');}
   finally{if(request.current===controller&&!current())stop();else finish(controller);}
  }
@@ -62,22 +103,34 @@ export function ProductImageUploadQueue({productId,ownerId,version,storedCount,s
  }
  async function recover(id:string){
   const item=itemsRef.current.find(value=>value.id===id);if(!item||!item.attachmentBasis||item.phase!=='uncertain-attachment'&&item.phase!=='uploaded')return;
-  const operation=begin();if(!operation)return;const {controller,current}=operation;
-  try{const result=await recoverProductImageQueueItem(item,{current,fetcher:fetch,signal:controller.signal});if(!current())return;update(previous=>previous.map(value=>value.id===id?result.item:value));basisRef.current=result.basis;setMessage(result.item.phase==='done'?'저장된 이미지 연결을 확인했습니다. 다시 업로드하지 않았습니다.':'파일은 보관되어 있습니다. 연결되지 않은 상태를 확인했습니다.');if(result.item.phase==='done')callbacks.current.onSaved?.();}
+  const operation=begin('attachment-recovery');if(!operation)return;const {controller,current}=operation;
+  try{
+   const delivery=pendingDelivery.current;
+   if(delivery&&!sameProductImageUploadBasis(delivery.basis,item.attachmentBasis))throw Error('원래 추가 이미지 연결의 저장 기준을 확인해주세요.');
+   const result=await recoverProductImageQueueItem(item,{current,fetcher:sourceFetch,signal:controller.signal});
+   if(!current()||pendingDelivery.current!==delivery)return;
+   // Only this item's positively verified attachment can extend the aggregate.
+   // An unchanged read leaves its original pending delivery basis untouched.
+   if(delivery&&result.item.phase==='done')delivery.basis=result.basis;
+   update(previous=>previous.map(value=>value.id===id?result.item:value));basisRef.current=result.basis;
+   setMessage(result.item.phase==='done'?'저장된 이미지 연결을 확인했습니다. 다시 업로드하지 않았습니다.':'파일은 보관되어 있습니다. 연결되지 않은 상태를 확인했습니다.');
+   if(result.item.phase==='done')await notifyPoolSaved(result.basis,current,controller.signal);
+  }
   catch(cause){if(current())setError(cause instanceof Error?cause.message:'저장 결과를 확인하지 못했습니다. 파일과 시도를 유지했습니다.');}finally{finish(controller);}
  }
- const pending=items.filter(item=>item.phase==='pending').length,dirty=items.some(item=>item.phase!=='done'&&!item.dismissed),blocked=busy||disabled||!active||stage==='main'&&!target?.optionId,stageLabel=stage==='main'?'대표 이미지':stage==='additional'?'추가 이미지':'상세 이미지';
- return <section className={`product-image-upload-queue${compact?' product-image-upload-queue--compact':''}`} aria-label={`${stageLabel} 파일 업로드`} aria-busy={busy} data-image-upload-queue={stage} data-quotation-source-step={stageLabel} data-workspace-dirty={dirty} data-workspace-saving={busy}>
+ const pending=items.filter(item=>item.phase==='pending').length,dirty=deliveryPending||items.some(item=>item.phase!=='done'&&!item.dismissed),blocked=busy||deliveryPending||disabled||!active||stage==='main'&&!target?.optionId,readBlocked=busy||disabled||!active||stage==='main'&&!target?.optionId,stageLabel=stage==='main'?'대표 이미지':stage==='additional'?'추가 이미지':'상세 이미지';
+ return <section ref={queueRoot} className={`product-image-upload-queue${compact?' product-image-upload-queue--compact':''}`} aria-label={`${stageLabel} 파일 업로드`} aria-busy={busy} data-image-upload-queue={stage} data-quotation-source-step={stageLabel} data-workspace-dirty={dirty} data-workspace-saving={busy}>
   {target!==undefined&&(!compact||busy||items.length>0||Boolean(error)||Boolean(message))&&<small>{target.optionId===null?'상품 공통':'선택 옵션'} {stage==='main'?'대표이미지':stage==='additional'?'추가 이미지':'상세 사진'}에 연결됩니다.{stage==='main'?' 업로드하면 바로 저장됩니다.':stage==='detail'?' 직접 작성한 상세 HTML은 유지하며 상세 편집에서 저장할 수 있습니다.':''}</small>}
   <div className="quote-actions"><label className={`btn ${compact?'ghost upload-trigger-icon':'primary'} upload-btn`} title={compact?'이미지 업로드':undefined} aria-label={compact?'이미지 업로드':undefined}>{compact?<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M8 10V2m-3 3 3-3 3 3M3 10v3h10v-3"/></svg>:'＋ 이미지 업로드'}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" multiple={stage!=='main'} aria-label={`${stageLabel} 파일 선택`} disabled={blocked} onChange={event=>void select(event)}/></label>
    {!immediate&&<button type="button" className="btn primary" disabled={blocked||!pending} onClick={()=>void run()}>업로드 시작{pending?` (${pending})`:''}</button>}
    {immediate&&pending>0&&<button type="button" className="btn primary" disabled={blocked} onClick={()=>void run()}>남은 파일 업로드 ({pending})</button>}
   </div>
+  {deliveryPending&&<button type="button" className="btn ghost" disabled={busy||disabled||!active} onClick={()=>void retryDelivery()}>추가 이미지 초안 연결 결과 다시 확인</button>}
   {!!items.length&&<ul className="product-image-upload-files">{items.map(item=><li key={item.id}><span><strong>{item.file.name}</strong> · {(item.file.size/1024).toLocaleString('ko-KR',{maximumFractionDigits:1})}KB · {labels[item.phase]}</span>
    {item.error&&<small>{item.error}</small>}
    {item.phase==='pending'&&<button type="button" className="btn ghost" aria-label={`${item.file.name} 대기 목록에서 제외`} disabled={blocked} onClick={()=>{if(allowed())update(previous=>previous.filter(value=>value.id!==item.id));}}>제외</button>}
    {item.phase==='failed'&&<button type="button" className="btn ghost" disabled={blocked} onClick={()=>{if(allowed())update(previous=>previous.filter(value=>value.id!==item.id));}}>대기에서 제거</button>}
-   {(item.phase==='uncertain-attachment'||item.phase==='uploaded'&&item.attachmentBasis&&!item.retryAttach)&&<button type="button" className="btn ghost" aria-label={`${item.file.name} 저장 결과 확인`} disabled={blocked} onClick={()=>void recover(item.id)}>저장 결과 확인</button>}
+   {(item.phase==='uncertain-attachment'||item.phase==='uploaded'&&item.attachmentBasis&&!item.retryAttach)&&<button type="button" className="btn ghost" aria-label={`${item.file.name} 저장 결과 확인`} disabled={readBlocked} onClick={()=>void recover(item.id)}>저장 결과 확인</button>}
    {item.phase==='uploaded'&&item.retryAttach&&<button type="button" className="btn ghost" disabled={blocked} onClick={()=>void run(item.id)}>저장된 파일 연결</button>}
    {item.phase!=='done'&&item.phase!=='pending'&&item.phase!=='uploading'&&item.phase!=='attaching'&&!item.dismissed&&<button type="button" className="btn ghost" disabled={blocked} onClick={()=>{if(allowed())update(previous=>previous.map(value=>value.id===item.id?{...value,dismissed:true}:value));}}>확인·대기에서 제외</button>}
    {item.dismissed&&<small>대기에서 제외했습니다. 원격 파일은 삭제하지 않았습니다.</small>}

@@ -2,6 +2,7 @@ import { getQuotationSchema, type QuotationField, type ResolvedQuotation, type R
 import { compileHubQuotationSchema, validateHubSchemaSnapshot, type HubSchemaSnapshot, type HubWireField } from '@/app/supplier-hub-schema';
 import { SUPPLIER_HUB_COMPANIES, type SupplierHubCompany } from '@/app/supplier-hub-company';
 import { isQuotationDecimalMultiple, quotationScalarValueIssues } from '@/app/quotation-scalar-constraints';
+import { quotationIndependentOptionalOsrp } from '@/app/quotation-price-targets';
 import { quotationPackagedWeightPeer } from '@/app/quotation-packaged-weight';
 import { NATIVE_FORM_SERIALIZATION_POLICY, projectNativeRequiredForm } from '@/app/supplier-hub-native-form-projection';
 
@@ -284,6 +285,7 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
   // field, so its existing body/packet identity remains byte-for-byte stable.
   let output = result;
   if (nativePolicy) {
+    const independentOsrpId = quotationIndependentOptionalOsrp(expected.fields)?.id;
     let payload: typeof result.payload;
     try { payload = projectNativeRequiredForm(raw, result.payload) as typeof result.payload; }
     catch { return conflict('공식 등록 폼의 저장 구조를 정확히 결정할 수 없습니다. 저장한 견적값과 원문은 변경하지 않았습니다.', 'SINGLE_NATIVE_SERIALIZATION_UNCONFIRMED'); }
@@ -296,7 +298,10 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
         const named = wire?.nameKey ? value.find(row => object(row) && row[wire.nameKey!] === field.name) : undefined;
         value = object(named) && wire?.valueKey ? named[wire.valueKey] : undefined;
       }
-      if (field.projected && field.path.length && value === undefined) {
+      // The native exclusion remains true for this exact independent optional
+      // price even when its local automatic value is absent. Preserve the
+      // warning here, in field order, without supplying a value or an authority.
+      if ((field.projected || field.fieldId === independentOsrpId) && field.path.length && value === undefined) {
         issues.push({code: 'NATIVE_FORM_FIELD_OMITTED', level: 'review', message: '공식 등록 폼의 저장 대상이 아닌 선택 항목입니다. 입력값은 로컬 견적서에 보존하며 이 등록 본문에는 전송하지 않습니다.', optionId: field.optionId, fieldId: field.fieldId, path: [...field.path]});
         return {...field, projected: false};
       }

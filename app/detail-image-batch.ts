@@ -1,5 +1,5 @@
 import { applyQuotationChanges, duplicateQuotationImageIssue, quotationImageRoleIssues, type QuotationFieldsView } from '@/app/quotation-schema';
-import { exactDetailHtmlTarget, optionImageTargets, quotationImageKeys } from '@/app/quotation-image-targets';
+import { exactDetailHtmlTarget, optionImageTargets, quotationImageKeys, type AdditionalImageDraftCapture } from '@/app/quotation-image-targets';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import {
@@ -19,7 +19,7 @@ export type DetailBatchItem = {
 export type DetailImageBatch = {
   productId: string; optionId: string; profileId: string | null; language: 'zh' | 'en';
   stage?: 'main' | 'detail' | 'additional';
-  view: QuotationFieldsView; items: DetailBatchItem[];
+  view: QuotationFieldsView; additionalDraft?: AdditionalImageDraftCapture; items: DetailBatchItem[];
 };
 type Dependencies = {
   fetcher?: typeof fetch;
@@ -95,7 +95,8 @@ const note = (cause: unknown) => cause instanceof Error ? cause.message : '이 �
 export async function prepareDetailImageBatch(input: Omit<DetailImageBatch, 'items'>, signal: AbortSignal,
   onProgress: (batch: DetailImageBatch, message: string) => void = () => {}, deps: Dependencies = {}): Promise<DetailImageBatch> {
   signal.throwIfAborted();
-  const selected = detailBatchTranslationSlots(input.view, input.optionId, input.profileId, input.stage);
+  const selected = input.additionalDraft ? { keys: input.additionalDraft.keys, slots: input.additionalDraft.keys.map((_, index) => index), protectedSlots: [] } : detailBatchTranslationSlots(input.view, input.optionId, input.profileId, input.stage);
+  if (input.additionalDraft && (!input.additionalDraft.current() || input.stage !== 'additional')) throw changed();
   const label = input.stage === 'main' ? '대표 이미지' : input.stage === 'additional' ? '추가 이미지' : '상세 이미지', role = input.stage === 'main' ? 'main' : input.stage === 'additional' ? 'additional' : 'detail';
   if (!selected.keys.length) throw Error(`저장한 선택 옵션의 ${label}를 먼저 선택해주세요.`);
   if (!selected.slots.length) throw Error('번역할 본문 이미지가 없습니다. 상단·하단 설정 이미지는 그대로 유지합니다.');
@@ -109,7 +110,7 @@ export async function prepareDetailImageBatch(input: Omit<DetailImageBatch, 'ite
     signal.throwIfAborted(); position++; onProgress(batch, `${position}/${selected.slots.length} ${label} 번역 준비 중…`);
     try {
       signal.throwIfAborted();
-      const image = await (deps.readSource ?? readFreeImageSource)(batch.productId, batch.view.productVersion, entry.sourceKey, role, signal, deps.fetcher, targetFor(batch, entry.slotIndex));
+      const image = await (deps.readSource ?? readFreeImageSource)(batch.productId, batch.view.productVersion, entry.sourceKey, role, signal, deps.fetcher, batch.additionalDraft ? undefined : targetFor(batch, entry.slotIndex), batch.additionalDraft ? { restoreEditor: true, additionalDraftTarget: batch.additionalDraft.target } : undefined);
       signal.throwIfAborted();
       const regions = await (deps.recognize ?? recognizeFreeImage)(image, batch.language, signal, message => onProgress(batch, `${position}/${selected.slots.length} · ${message}`));
       signal.throwIfAborted();
@@ -174,10 +175,40 @@ function verifyCommit(batch: DetailImageBatch, before: QuotationFieldsView, afte
 
 /** Every result is an explicit, individually proved commit. A lost ACK stops
  * the sequence; recovery never automatically writes or advances to the next. */
+async function applyDraftBatchResult(batch: DetailImageBatch, slotIndex: number, signal: AbortSignal, progress: (batch: DetailImageBatch) => void, deps: Dependencies, recovery = false) {
+  const capture = batch.additionalDraft!, entry = batch.items.find(item => item.slotIndex === slotIndex)!;
+  if (!(recovery ? capture.readable?.() ?? capture.current() : capture.current()) || !entry?.rendered || capture.keys[slotIndex] !== entry.sourceKey) throw changed();
+  let attempt = entry.attempt;
+  if (!recovery) {
+    const current = await readDetailBatchView(batch, signal, deps.fetcher);
+    if (!same(current, capture.view)) throw changed();
+    const proof = await (deps.readSourceProof ?? readFreeImageSourceProof)(batch.productId, current.productVersion, entry.sourceKey, 'additional', signal, deps.fetcher, undefined, { restoreEditor: true, additionalDraftTarget: capture.target });
+    const old = entry.rendered.source, fresh = proof.source;
+    if (old.sourceKey !== fresh.sourceKey || old.sourceSha256 !== fresh.sourceSha256 || old.width !== fresh.width || old.height !== fresh.height || old.contentRevision !== fresh.contentRevision) throw changed();
+    if (!capture.current()) throw changed();
+    attempt = { image: { ...entry.rendered, source: fresh }, before: current };
+  }
+  if (!attempt) throw changed();
+  let next = replace(batch, { ...entry, attempt, status: 'uncertain', message: '추가 이미지 초안 보관 결과를 확인하고 있습니다.' }); progress(next);
+  try {
+    const reply = recovery ? await recoverFreeImageTranslation(attempt.image, signal, deps.fetcher) : await applyFreeImageTranslation(attempt.image, signal, deps.fetcher);
+    const after = await readDetailBatchView(batch, signal, deps.fetcher);
+    if (!reply.applied) {
+      if (!same(after, attempt.before) || !capture.current()) throw changed();
+      next = replace(batch, { ...entry, status: 'ready', attempt: undefined, message: '아직 보관되지 않았습니다. 같은 결과를 다시 적용할 수 있습니다.' }); progress(next); return next;
+    }
+    attempt.reply = reply;
+    const keys = [...capture.keys]; keys[slotIndex] = reply.key;
+    const deliver = capture.current();
+    if (!(deliver ? capture.accept(after, keys, [reply.key]) : recovery && capture.verify(after, [reply.key]))) throw changed();
+    next = replace({ ...next, view: after }, { ...entry, status: 'applied', appliedKey: reply.key, message: deliver ? '추가 이미지 초안에 보관했습니다. 추가 이미지에서 저장해주세요.' : '원래 이미지 보관 결과를 확인했습니다. 현재 초안은 변경하지 않았습니다.' }); progress(next); return next;
+  } catch (cause) { progress(next); throw cause; }
+}
 export async function applyDetailBatchResult(batch: DetailImageBatch, slotIndex: number, signal: AbortSignal,
   onProgress: (batch: DetailImageBatch) => void = () => {}, deps: Dependencies = {}): Promise<DetailImageBatch> {
   const entry = batch.items.find(row => row.slotIndex === slotIndex);
   if (!entry?.rendered || entry.status !== 'ready' || batch.items.some(row => row.status === 'uncertain')) throw Error('검토한 미적용 번역 결과를 선택해주세요.');
+  if (batch.additionalDraft) return applyDraftBatchResult(batch, slotIndex, signal, onProgress, deps);
   translatableSlot(batch, slotIndex);
   const current = await readDetailBatchView(batch, signal, deps.fetcher);
   if (!same(current, batch.view)) throw changed();
@@ -214,6 +245,7 @@ export async function recoverDetailBatchResult(batch: DetailImageBatch, signal: 
   onProgress: (batch: DetailImageBatch) => void = () => {}, deps: Dependencies = {}): Promise<DetailImageBatch> {
   const entry = batch.items.find(row => row.status === 'uncertain');
   if (!entry?.attempt) throw Error('저장 결과를 확인할 번역 이미지가 없습니다.');
+  if (batch.additionalDraft) return applyDraftBatchResult(batch, entry.slotIndex, signal, onProgress, deps, true);
   const attempt = entry.attempt, reply = await recoverFreeImageTranslation(attempt.image, signal, deps.fetcher);
   const current = await readDetailBatchView(batch, signal, deps.fetcher);
   if (!reply.applied) {

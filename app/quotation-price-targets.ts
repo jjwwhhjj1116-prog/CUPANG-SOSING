@@ -29,3 +29,18 @@ export function quotationPriceTargets(fields: readonly QuotationField[]): Quotat
     return [input, { primary, linked: [...new Set([input, primary])] }];
   })) as QuotationPriceTargets;
 }
+
+/** An independent optional shop price has no calculated MSRP source. */
+export function quotationIndependentOptionalOsrp(fields: readonly QuotationField[]): QuotationField | undefined {
+  const exact = (field: QuotationField, key: string) => !field.hubWire?.name
+    && JSON.stringify(field.hubWire?.path) === JSON.stringify(['productPage', 'commonAttributes', key]);
+  const msrp = fields.filter(field => exact(field, 'msrp'));
+  const osrp = fields.filter(field => exact(field, 'osrp'));
+  if (msrp.length !== 1 || osrp.length !== 1) return undefined;
+  const field = osrp[0];
+  if (field.required || field.readOnly || field.hubInput !== 'msrp' || !(field.numericText || field.type === 'number')) return undefined;
+  try {
+    const target = quotationPriceTargets(fields).msrp;
+    return target.primary === msrp[0].id && !target.linked.includes(field.id) ? field : undefined;
+  } catch { return undefined; /* Preserve existing diagnostics for ambiguous price bindings. */ }
+}

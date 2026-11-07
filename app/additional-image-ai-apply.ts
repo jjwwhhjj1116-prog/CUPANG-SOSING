@@ -1,7 +1,7 @@
 import { imageMetadata, type ImageEditJob, type ImageEditView } from '@/app/automation/image-edit';
 import { isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
 import { MainImageSaveError } from '@/app/quotation-main-image';
-import { optionImageChanges, optionImageTargets, optionImageValue, quotationImageKeys, verifyOptionImageRecovery, verifyOptionImageRestored } from '@/app/quotation-image-targets';
+import { optionImageChanges, optionImageTargets, optionImageValue, quotationImageKeys, verifyOptionImageRecovery, verifyOptionImageRestored, type AdditionalImageDraftCapture } from '@/app/quotation-image-targets';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
 
@@ -30,7 +30,7 @@ function validateTarget(target: AdditionalImageAiTarget) {
     || slot.profileId !== null && slot.profileId !== view.categoryContext.profileId || !view.imageKeys.includes(target.sourceKey)) return fail();
   return result;
 }
-function validateJob(target: AdditionalImageAiTarget, job: ImageEditJob) {
+function validateJob(target: Pick<AdditionalImageAiTarget, 'ownerId' | 'productId' | 'sourceKey' | 'productVersion' | 'quotationView'>, job: ImageEditJob) {
   const result = job.result;
   if (job.productId !== target.productId || job.productVersion !== target.productVersion || job.contentRevision !== target.quotationView.contentRevision
     || job.status !== 'completed' || job.error !== null || job.review.sourceKey !== target.sourceKey || job.review.purpose !== 'cleanup'
@@ -125,4 +125,26 @@ export async function recoverAdditionalImageAiResult(attempt: AdditionalImageAiA
   const current = await read(attempt.target, request);
   if (attempt.alreadyApplied) { if (!same(current, attempt.alreadyApplied)) return fail(); return current; }
   verifySave(attempt, current); return current;
+}
+
+/** A generated result is already pool-attached. Verify the same complete job,
+ * bytes, and pool-only advance before delivering it to its captured draft. */
+export async function applyAdditionalImageDraftAiResult(target: { ownerId: string; productId: string; sourceKey: string; productVersion: string; capture: AdditionalImageDraftCapture; originView?: QuotationFieldsView; index: number }, selected: ImageEditJob, request: typeof fetch = fetch, deliver = true) {
+  const capture = target.capture;
+  if (!(deliver ? capture.current() : capture.readable?.() ?? capture.current()) || capture.keys[target.index] !== target.sourceKey) return fail();
+  const result = validateJob({ ...target, quotationView: target.originView ?? capture.view }, selected);
+  const response = await request(`/api/products/${encodeURIComponent(target.productId)}/image-generation`, { cache: 'no-store' });
+  const history = await response.json() as ImageEditView;
+  if (!response.ok || history.product?.id !== target.productId || history.jobs?.filter(job => job.id === selected.id && same(job, selected)).length !== 1
+    || !same(history.product.imageKeys, capture.view.imageKeys.includes(result.storageKey) ? capture.view.imageKeys : [...capture.view.imageKeys, result.storageKey]) || Date.parse(history.product.version) <= Date.parse(target.productVersion)) return fail();
+  const file = await request(`/api/files/${result.storageKey.split('/').map(encodeURIComponent).join('/')}`, { cache: 'no-store' });
+  if (!file.ok || file.redirected || file.headers.get('content-type')?.split(';')[0].trim() !== 'image/png') return fail();
+  const blob = await file.blob();
+  if (!blob.size || blob.size > MAX_IMAGE_BYTES || !same(await imageMetadata(new Uint8Array(await blob.arrayBuffer()), 'image/png'), { mime: result.mime, width: result.width, height: result.height, bytes: result.bytes, sha256: result.sha256 })) return fail();
+  const profileId = capture.target.profileId, read = await request(`/api/products/${encodeURIComponent(target.productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`, { cache: 'no-store' });
+  const after = await read.json() as QuotationFieldsView, keys = [...capture.keys]; keys[target.index] = result.storageKey;
+  if (!read.ok || after.productVersion !== history.product.version || !(capture.readable?.() ?? capture.current())) return fail();
+  if (capture.view.imageKeys.includes(result.storageKey)) { if (!same(after,capture.view) || deliver && !capture.replace(keys)) return fail(); }
+  else if (!(capture.current() ? capture.accept(after, deliver ? keys : capture.keys, [result.storageKey]) : !deliver && capture.verify(after, [result.storageKey]))) return fail();
+  return after;
 }

@@ -7,6 +7,17 @@ import type {TranslationSource,TranslationDraft} from '@/app/automation/translat
 export class SeoFactEmptyError extends Error{code='SEO_FACT_EMPTY';}
 export const SEO_COMPOSITION_VERSION='couplus-current-composition-v1';
 export const SEO_KEYWORD_CAPABILITY='couplus-consumer-keywords-v1';
+/** Generated acceptance only: replay identity checks must still reach closure. */
+export function assertGeneratedSeoTitle(title:string,brand:string){
+ const prefix=brand.split(',')[0].replace(/[^가-힣A-Za-z0-9]/gu,'').toLowerCase();let product=title.replace(/[^가-힣A-Za-z0-9]/gu,' ').toLowerCase();
+ const withoutBrand=(value:string)=>prefix?value.replace(new RegExp(prefix.split('').join('\\s*'),'gu'),''):value;
+ const measurements='밀리미터|센티미터|킬로미터|미터|밀리그램|킬로그램|그램|밀리리터|리터|mm|cm|km|kg|mg|ml|g|m|l';
+ const counters=seoCurrentLiterals.modules['7d6a'].V.map(group=>group.re).join('|')+'|쌍|켤레|묶음|롤|봉지|봉|병|통|박스|캔';
+ product=withoutBrand(product).replace(new RegExp('\\d+\\s*(?:'+measurements+'|'+counters+')(?![a-z])','gu'),' ');
+ product=product.replace(new RegExp('(?<![가-힣a-z])(?:'+measurements+'|'+counters+')(?![가-힣a-z])','gu'),' ');
+ product=withoutBrand(product.replace(/\s/gu,''));
+ if(!/[가-힣A-Za-z]/u.test(product))throw new SeoFactEmptyError('SEO_FACT_EMPTY: 생성 상품명에 브랜드 외의 품목명이 남지 않았습니다. 원문과 직접 입력을 유지했습니다.');
+}
 export type SeoRelatedPreferences={source:'provided'|'consumer'|'unavailable'|'none';query:string;keywords:string[];warnings:string[];observedAt?:string};
 export type SeoCompositionPolicy={version:typeof SEO_COMPOSITION_VERSION;memo:{brand:string;features:string;keywords:string};related:SeoRelatedPreferences};
 const exact=(value:unknown,keys:string):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===keys;

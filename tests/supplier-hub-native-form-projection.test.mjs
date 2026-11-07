@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {module,projectionFixture,syntheticSnapshot,plain} from './helpers/supplier-hub-single-projection.mjs';
+import {module,projectionFixture,syntheticSnapshot,plain,apiFixture} from './helpers/supplier-hub-single-projection.mjs';
 import {imageBytes,sha} from './helpers/supplier-hub-single-assets.mjs';
 import {createProductDocumentPacket,validateProductDocumentPacket} from '../extensions/supplier-hub/product-document.mjs';
 const {projectNativeRequiredForm:project,NATIVE_FORM_SERIALIZATION_POLICY:policy}=module('app/supplier-hub-native-form-projection.ts');
@@ -16,6 +16,33 @@ function fixture(){
  const member={startPage:{productName:'saved product',categoryPath:'saved category'},productPage:{brand:'saved brand',commonAttributes:{purchasePrice:'100',coupangSalePrice:'200',msrp:'300',osrp:'400',exposedAttributes:[{name:'color',value:'black'}]},unexposedAttributes:[{name:'empty',value:null},{name:'nullable-enum',value:null}]},imagePage:{images:{mainImage:'main.jpg',additionalImage:'extra.jpg',labelImages:[{label:'Korean',value:'label.jpg'}]},details:{detailedImage:'detail-1.jpg,detail-2.jpg',htmlProductDetailContent:''},msrpAgree:false,labelContactAgreed:false},legalPage:{productNoticeName:'saved notice',certificates:[{certificate:'cert',value:'해당사항없음'}],notices:[{notice:'material',value:'saved material'}]},logisticsPage:{packagedWeight:'10'},sourcingPage:{sourcingChannelId:null,sourcingChannelType:null}};
  return {schema,payload:{docId:null,productName:'saved product',jsonDocument:[member,structuredClone(member),structuredClone(member)]}};
 }
+const weights=['200','400','1100','600','800'];
+const dimensions=['100*100*100','150*150*100','300*150*100','200*150*100','250*150*100'];
+function packagingFixture(){
+ const f=fixture();
+ for(const key of ['skuUnitBoxWeight','skuUnitBoxDimension']){f.schema.properties.logisticsPage.properties[key]={...scalar(),minLength:1};f.schema.properties.logisticsPage.required.push(key);}
+ f.payload.jsonDocument=weights.map((weight,index)=>({...structuredClone(f.payload.jsonDocument[0]),logisticsPage:{packagedWeight:'10',skuUnitBoxWeight:weight,skuUnitBoxDimension:dimensions[index]}}));
+ return f;
+}
+test('exact native packaging keeps all five saved weights and dimensions in member order without changing the source',()=>{
+ const f=packagingFixture(),before=JSON.stringify(f);let out;assert.doesNotThrow(()=>{out=project(f.schema,f.payload);});
+ assert.deepEqual(plain(out.jsonDocument.map(row=>row.logisticsPage.skuUnitBoxWeight)),weights);
+ assert.deepEqual(plain(out.jsonDocument.map(row=>row.logisticsPage.skuUnitBoxDimension)),dimensions);
+ assert.equal(JSON.stringify(f),before);
+});
+test('packaging exceptions retain other logistics, brand, legal, type, unsupported and false/zero guards',()=>{
+ for(const edit of [
+  f=>f.payload.jsonDocument[1].logisticsPage.packagedWeight='20',
+  f=>f.payload.jsonDocument[1].productPage.brand='other',
+  f=>f.payload.jsonDocument[1].legalPage.notices[0].value='other',
+  ...['skuUnitBoxWeight','skuUnitBoxDimension'].flatMap(key=>[
+   f=>f.schema.properties.logisticsPage.properties[key].oneOf=[],
+   f=>f.schema.properties.logisticsPage.properties[key].type='boolean',
+   ...[false,0,{},[]].map(value=>f=>f.payload.jsonDocument[1].logisticsPage[key]=value),
+   f=>delete f.schema.properties.logisticsPage.properties[key],
+  ]),
+ ]){const f=packagingFixture();edit(f);const before=JSON.stringify(f);assert.throws(()=>project(f.schema,f.payload));assert.equal(JSON.stringify(f),before);}
+});
 test('opt-in native model projects schema-defined optional fields, nullable defaults and all option images without changing local sources',()=>{
  const f=fixture(),before=JSON.stringify(f),out=project(f.schema,f.payload);assert.equal(JSON.stringify(f),before);
  for(const row of out.jsonDocument){assert.equal(Object.hasOwn(row.productPage.commonAttributes,'osrp'),false);assert.equal(Object.hasOwn(row.legalPage,'productNoticeName'),false);assert.equal(row.imagePage.details.htmlProductDetailContent,null);assert.equal(row.imagePage.images.sizeChartImage,'');assert.deepEqual(plain(row.productPage.unexposedAttributes.map(row=>row.value)),['',null]);assert.equal(row.imagePage.details.detailedImage,'detail-1.jpg,detail-2.jpg');assert.equal(row.imagePage.images.mainImage,'main.jpg');assert.equal(row.imagePage.images.labelImages[0].value,'label.jpg');assert.equal(row.legalPage.certificates[0].value,'해당사항없음');assert.equal(row.imagePage.msrpAgree,false);}
@@ -49,10 +76,11 @@ test('optional declared native agreement controls remain shared across options w
   assert.throws(()=>project(f.schema,f.payload));assert.equal(JSON.stringify(f),mixed);
  }
 });
-function projectionInput(){
+function projectionInput(packaging=false){
  const snapshot=syntheticSnapshot(),raw=JSON.parse(snapshot.schemaString);
  function fill(node){if(node.properties){node.required=Object.keys(node.properties);for(const child of Object.values(node.properties))fill(child);}else if(node.allOf){for(const entry of node.allOf)fill(entry.contains);const [nameKey,valueKey]=Object.keys(node.allOf[0].contains.properties);node.examples=[node.allOf.map(entry=>({[nameKey]:entry.contains.properties[nameKey].enum[0],[valueKey]:''}))];}else if(!node.enum)node.examples=[Object.hasOwn(node,'default')?node.default:node.type==='integer'?7:node.type==='boolean'?false:''];}
  fill(raw);raw.properties.productPage.properties.commonAttributes.properties.osrp=scalar(['string','null']);raw.properties.legalPage.properties.productNoticeName={...scalar(),prefilled:true,minLength:1};raw.properties.imagePage.properties.images.properties.sizeChartImage=scalar(['string','null']);raw.properties.imagePage.properties.images.properties.labelImages.allOf[0].contains.properties.labelImageType.enum=['제품 한글 표시사항 라벨 또는 도안 이미지'];raw.properties.imagePage.properties.images.properties.labelImages.examples[0][0].labelImageType='제품 한글 표시사항 라벨 또는 도안 이미지';snapshot.schemaString=JSON.stringify(raw);
+ if(packaging){for(const key of ['skuUnitBoxWeight','skuUnitBoxDimension']){raw.properties.logisticsPage.properties[key]={...scalar(),minLength:1};raw.properties.logisticsPage.required.push(key);}snapshot.schemaString=JSON.stringify(raw);}
  const f=projectionFixture(snapshot);
  for(const field of f.schema.fields){const wire=field.hubWire;if(!wire||!wire.name)continue;const choice=field.choices?.find(choice=>choice.value!=='');f.set(wire.path,wire.name,choice?.value??'saved named value');}
  f.set(['productPage','commonAttributes','count'],undefined,'7');f.set(['productPage','commonAttributes','booleanValue'],undefined,'true');
@@ -60,6 +88,12 @@ function projectionInput(){
  f.set(['productPage','commonAttributes','osrp'],undefined,'39930');f.set(['legalPage','productNoticeName'],undefined,'saved notice');f.set(['imagePage','msrpAgree'],undefined,'false');f.set(['imagePage','labelContactAgreed'],undefined,'false');f.set(['productPage','unexposedAttributes'],'수동 공란','','couplus-default');
  return f;
 }
+test('baseline uniform and legacy byte hashes remain unchanged',async()=>{
+ const f=fixture(),saved=projectionInput(),projectSaved=module('app/supplier-hub-single-projection.ts').projectSupplierHubSingleDocument;
+ assert.equal(sha(JSON.stringify(project(f.schema,f.payload))),'b01dd03b7662231272b32f1be6f4e2a062ff4e0d41ca4c7c1ce76e69ee3ede76');
+ assert.equal(sha(JSON.stringify(await projectSaved(saved.input))),'3c8b4db8ca469dd34523d8e4fdd79f4f6f60af73bb028f2ddd0b111869d193a6');
+ assert.equal(sha(JSON.stringify(await projectSaved({...saved.input,nativeSerializationPolicy:policy}))),'3c547a02a4aeef83ec0f37da64a1c6a94e0f501029c498f6b8bcfb9ab92fc1d0');
+});
 test('real saved-value projector keeps legacy output stable and binds only explicitly marked new projection to its exact schema SHA',async()=>{
  const f=projectionInput(),project=module('app/supplier-hub-single-projection.ts').projectSupplierHubSingleDocument,before=JSON.stringify(f.input),legacy=await project(f.input);
  assert.equal(Object.hasOwn(legacy,'nativeSerializationPolicy'),false);assert.equal(legacy.payload.jsonDocument[0].productPage.commonAttributes.osrp,'39930');assert.equal(legacy.payload.jsonDocument[0].legalPage.productNoticeName,'saved notice');
@@ -70,15 +104,47 @@ test('real saved-value projector keeps legacy output stable and binds only expli
  await assert.rejects(project({...f.input,nativeSerializationPolicy:'unknown'}),error=>error.code==='SINGLE_NATIVE_SERIALIZATION_POLICY');
 });
 
-for(const agreementSource of ['compiled-default-true','manual-false'])test(`new projection placeholders and ${agreementSource} controls retain their original facts through private bytes, compiled review and deferred packet validation`,async()=>{
- const f=projectionInput(),keys=['owner/main.png','owner/add-1.png','owner/add-2.png','owner/detail-top.png','owner/detail-body.png','owner/detail-bottom.png','owner/label.png'];
+test('native saved-value projection keeps missing/ambiguous exact wire guards',async()=>{
+ const projectSaved=module('app/supplier-hub-single-projection.ts').projectSupplierHubSingleDocument;
+ for(const duplicate of [false,true]){
+  const f=projectionInput(true),index=f.schema.fields.findIndex(field=>field.hubWire?.path.join('.')==='logisticsPage.skuUnitBoxWeight');
+  if(duplicate)f.schema.fields.push(structuredClone(f.schema.fields[index]));else f.schema.fields.splice(index,1);
+  const before=JSON.stringify(f.input);await assert.rejects(projectSaved({...f.input,nativeSerializationPolicy:policy}),error=>error.code===(duplicate?'SINGLE_DUPLICATE_WIRE':'SINGLE_WIRE'));assert.equal(JSON.stringify(f.input),before);
+ }
+});
+
+test('authenticated native preview preserves all five saved weights with required blank dimensions still invalid and no writes',async()=>{
+ const snapshot=projectionInput(true).snapshot;snapshot.nativeSerializationPolicy=policy;
+ const f=await apiFixture(undefined,snapshot);try{
+  const db=f.h.load('db/product-options.ts'),model=f.h.load('app/product-options.ts'),current=await db.readProductOptions('owner',f.id),first=model.optionInputs(current)[0],product=await f.h.load('db/queries.ts').findProduct('owner',f.id);
+  const rows=weights.map((weight,index)=>({...first,id:'synthetic-'+index,supplierSku:'PACK-'+index,translatedName:'option '+index,packagedWeightG:Number(weight),packagingConfirmed:true}));
+  assert.ok(await db.saveProductOptions('owner',model.applyOptionRows(current,rows,new Date().toISOString()),current.revision,product.updated_at));
+  const read=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
+  const view=await read(await f.h.route(f.base+'/quotation-fields'+f.query)),byPath=path=>view.resolved.schema.fields.find(field=>field.hubWire?.path.join('.')===path&&field.hubWire.name===undefined).id;
+  const changes=[['startPage.productName','saved common product'],['productPage.commonAttributes.count','7'],['productPage.commonAttributes.booleanValue','true'],['logisticsPage.totalSKUsInBox','50']].map(([path,value])=>({fieldKey:byPath(path),optionId:null,value}));
+  await read(await f.h.route(f.base+'/quotation-fields'+f.query,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes}}));
+  const before=f.state(),objects=JSON.stringify([...f.h.objects]),ai=f.h.aiSources.length;let puts=0;const put=f.h.bindings.FILES.put;f.h.bindings.FILES.put=async(...args)=>{puts++;return put(...args);};
+  const out=await read(await f.h.route(f.base+'/supplier-hub-document'+f.query));
+  assert.equal(out.nativeSerializationPolicy.format,policy);assert.deepEqual(out.payload.jsonDocument.map(row=>row.logisticsPage.skuUnitBoxWeight),weights);assert.deepEqual(out.payload.jsonDocument.map(row=>row.logisticsPage.skuUnitBoxDimension),weights.map(()=>''));
+  const dimensionId=byPath('logisticsPage.skuUnitBoxDimension');
+  for(const row of rows)assert.ok(out.review.issues.some(issue=>issue.code==='VALUE_INVALID'&&issue.fieldId===dimensionId&&issue.optionId===row.id));
+  assert.equal(out.review.documentShapeComplete,false);assert.equal(out.submissionReady,false);
+  const native=f.h.load('app/api/products/[id]/native-assets/route.ts'),plan=await read(await native.GET(new Request('https://app.test'+f.base+'/native-assets'+f.query),{params:Promise.resolve({id:f.id})}));
+  assert.deepEqual(plan.identity.members.map(member=>member.optionId),rows.map(row=>row.id));assert.equal(plan.metadataValid,false);assert.equal(plan.submissionReady,false);
+  assert.equal(f.state(),before);assert.equal(JSON.stringify([...f.h.objects]),objects);assert.equal(puts,0);assert.equal(f.h.aiSources.length,ai);assert.deepEqual(f.h.network,[]);assert.equal(f.h.sqlite.prepare('SELECT COUNT(*) AS n FROM supplier_hub_receipts').get().n,0);
+ }finally{f.close();}
+});
+
+for(const agreementSource of ['compiled-default-true','manual-false'])test(`new projection placeholders and ${agreementSource} controls retain five-option packaging through private bytes, compiled review and deferred packet validation`,async()=>{
+ const f=projectionInput(true),keys=['owner/main.png','owner/add-1.png','owner/add-2.png','owner/detail-top.png','owner/detail-body.png','owner/detail-bottom.png','owner/label.png'];
  f.set(['imagePage','images','mainImage'],undefined,keys[0]);f.set(['imagePage','images','additionalImage'],undefined,keys.slice(1,3).join('\n'));f.set(['imagePage','details','detailedImage'],undefined,keys.slice(3,6).join('\n'));f.set(['imagePage','images','labelImages'],'제품 한글 표시사항 라벨 또는 도안 이미지',keys[6]);
  const agreementFields=f.schema.fields.filter(field=>field.hubWire?.path[0]==='imagePage'&&['msrpAgree','labelContactAgreed'].includes(field.hubWire.path[1]));
  assert.equal(agreementFields.length,2);const originalAgreement=agreementSource==='compiled-default-true';
  for(const field of agreementFields){assert.equal(field.draftDefault,'true');f.set(field.hubWire.path,undefined,originalAgreement?field.draftDefault:'false',originalAgreement?'couplus-default':'manual-option');}
- const second=structuredClone(f.row);second.optionId='synthetic-two';second.optionLabel='흰색';f.resolved.rows.push(second);
+ const weightId=f.set(['logisticsPage','skuUnitBoxWeight'],undefined,weights[0]),dimensionId=f.set(['logisticsPage','skuUnitBoxDimension'],undefined,dimensions[0]);
+ f.resolved.rows.splice(0,1,...weights.map((weight,index)=>{const row=structuredClone(f.row);row.optionId='synthetic-'+index;row.optionLabel='option '+index;row.fields[weightId].value=weight;row.fields[dimensionId].value=dimensions[index];return row;}));
  const projectSaved=module('app/supplier-hub-single-projection.ts').projectSupplierHubSingleDocument,before=JSON.stringify(f.input),legacyBefore=JSON.stringify(await projectSaved(f.input)),projection=await projectSaved({...f.input,nativeSerializationPolicy:policy});
- assert.equal(projection.review.unresolvedImages.length,8);assert.equal(projection.payload.jsonDocument[0].imagePage.images.mainImage,' ');
+ assert.equal(projection.review.unresolvedImages.length,20);assert.equal(projection.payload.jsonDocument[0].imagePage.images.mainImage,' ');
  assert.equal(projection.humanAgreementsConfirmed,false);assert.equal(projection.remoteWrites,false);
  for(const row of projection.payload.jsonDocument)for(const key of ['msrpAgree','labelContactAgreed'])assert.equal(row.imagePage[key],originalAgreement);
  const source={productVersion:'2026-10-31T00:00:00.000Z',contentRevision:1,optionRevision:2,quotationRevision:3,profileId:'captured-category',profileRevision:null},identity={ownerId:'owner',productId:'synthetic-native-policy',company:plain(f.input.company),categoryId:f.input.categoryId,categoryPath:[...f.input.categoryPath],schemaSha256:projection.schemaSha256,sourceFingerprint:'b'.repeat(64),inputFingerprint:'c'.repeat(64),source,members:f.resolved.rows.map((row,documentIndex)=>({optionId:row.optionId,optionLabel:row.optionLabel,documentIndex}))};
@@ -88,7 +154,11 @@ for(const agreementSource of ['compiled-default-true','manual-false'])test(`new 
  const byKey=new Map(plan.images.map(file=>[file.key,file]));for(const row of plan.body.jsonDocument){assert.equal(row.imagePage.images.mainImage,byKey.get(keys[0]).transportName);assert.equal(row.imagePage.images.additionalImage,keys.slice(1,3).map(key=>byKey.get(key).transportName).join(','));assert.equal(row.imagePage.details.detailedImage,keys.slice(3,6).map(key=>byKey.get(key).transportName).join(','));assert.equal(row.imagePage.images.labelImages[0].labelImageFiles,byKey.get(keys[6]).transportName);}
  const quotationView={categoryContext:{categoryId:identity.categoryId,categoryPath:identity.categoryPath,profileId:source.profileId},productVersion:source.productVersion,contentRevision:source.contentRevision,optionRevision:source.optionRevision,revision:source.quotationRevision,inputFingerprint:identity.inputFingerprint,resolved:f.resolved,imageKeys:keys};
  const review=await module('app/supplier-hub-native-product-document.ts').compileNativeSupplierHubProductDocument({productId:identity.productId,profileId:source.profileId,quotationView,sourcePlan:plan,ownerId:'owner'}),packet=await createProductDocumentPacket(plain(review)),validated=await validateProductDocumentPacket(packet);
- assert.equal(review.body.jsonDocument.length,2);assert.equal(review.originalBodySha256,plan.originalBodySha256);assert.equal(review.preparedBodySha256,plan.preparedBodySha256);assert.equal(JSON.stringify(f.input),before);assert.equal(plan.remoteWrites,false);assert.equal(review.remoteWrites,false);assert.equal(review.registered,false);
+ assert.equal(review.body.jsonDocument.length,5);assert.equal(review.originalBodySha256,plan.originalBodySha256);assert.equal(review.preparedBodySha256,plan.preparedBodySha256);assert.equal(JSON.stringify(f.input),before);assert.equal(plan.remoteWrites,false);assert.equal(review.remoteWrites,false);assert.equal(review.registered,false);
+ for(const body of [projection.payload,plan.body,review.body,packet.review.body,validated.preparedBody]){assert.deepEqual(plain(body.jsonDocument.map(row=>row.logisticsPage.skuUnitBoxWeight)),weights);assert.deepEqual(plain(body.jsonDocument.map(row=>row.logisticsPage.skuUnitBoxDimension)),dimensions);}
+ assert.deepEqual(plain(review.members.map(row=>row.optionId)),f.resolved.rows.map(row=>row.optionId));
+ for(const rows of [quotationView.resolved.rows.slice(1),[...quotationView.resolved.rows].reverse()])await assert.rejects(module('app/supplier-hub-native-product-document.ts').compileNativeSupplierHubProductDocument({productId:identity.productId,profileId:source.profileId,quotationView:{...quotationView,resolved:{...quotationView.resolved,rows}},sourcePlan:plan,ownerId:'owner'}));
+ const tampered=plain(packet);tampered.review.body.jsonDocument[2].logisticsPage.skuUnitBoxWeight=weights[0];await assert.rejects(validateProductDocumentPacket(tampered));
  for(const body of [plan.body,review.body,packet.review.body])for(const row of body.jsonDocument)for(const key of ['msrpAgree','labelContactAgreed'])assert.equal(row.imagePage[key],originalAgreement);
  for(const row of validated.preparedBody.jsonDocument)for(const key of ['msrpAgree','labelContactAgreed'])assert.equal(row.imagePage[key],false);
  const canonical=module('app/supplier-hub-product-document.ts').productDocumentReviewCanonical;

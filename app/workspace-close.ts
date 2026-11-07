@@ -41,3 +41,13 @@ export function quotationSourceState(root: (Pick<ParentNode, 'querySelector' | '
   }
   return { busy: workspaceEditState(root).busy, steps };
 }
+
+/** Exclude two captured owning roots, never their descendants or hidden siblings. */
+export function workspaceAdditionalDraftWriteState(root: HTMLElement | null, owner: HTMLElement | null | undefined, producer?: HTMLElement | null) {
+  if (!root || !owner || !root.contains(owner) || !owner.hasAttribute('data-additional-draft')
+    || producer && (!root.contains(producer) || !producer.hasAttribute('data-free-image-editor') && producer.getAttribute('data-image-upload-queue') !== 'additional')) return { busy: true, dirty: true };
+  return {
+    busy: Array.from(root.querySelectorAll('[data-workspace-saving="true"]')).some(element => element !== producer),
+    dirty: Array.from(root.querySelectorAll('[data-workspace-dirty="true"]')).some(element => element !== owner && element !== producer),
+  };
+}

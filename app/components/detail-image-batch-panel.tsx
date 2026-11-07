@@ -2,10 +2,11 @@
 import type {RegistrationUiReads,UiMutation} from '@/app/registration-ui-reads';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { applyDetailBatchResult, detailBatchCapacity, detailBatchTranslationSlots, prepareDetailImageBatch, readDetailBatchView, recoverDetailBatchResult, type DetailImageBatch } from '@/app/detail-image-batch';
+import type {AdditionalImageDraftTools} from '@/app/quotation-image-targets';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 
 type Props = { uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;productId: string; optionId: string; profileId?: string; version: string; refreshToken?: string;
-  stage?: 'main' | 'detail' | 'additional'; active: boolean; disabled?: boolean; beforeApply?: () => boolean; onSaved?: () => void;
+  stage?: 'main' | 'detail' | 'additional'; active: boolean; disabled?: boolean; additionalDraft?: AdditionalImageDraftTools; beforeApply?: (owner?:HTMLElement|null,producer?:HTMLElement|null) => boolean; onSaved?: () => void;
   onSavedView?: (view: QuotationFieldsView) => void; onPendingChange?: (pending: boolean) => void;
   autoPrepare?: boolean; compactToolbar?: boolean; onBusyChange?: (busy: boolean) => void };
 const imageUrl = (key: string) => `/api/files/${key.split('/').map(encodeURIComponent).join('/')}`;
@@ -21,6 +22,8 @@ function Preview({ blob, alt }: { blob: Blob; alt: string }) {
   return url ? <img src={url} alt={alt} style={{ maxWidth: '100%', maxHeight: 360, objectFit: 'contain' }} /> : null;
 }
 export function DetailImageBatchPanel(props: Props) {
+  const panelRoot=useRef<HTMLElement|null>(null);
+  const draftCapture=useRef<ReturnType<AdditionalImageDraftTools['capture']>>(null);
   const uiMutation=useRef<UiMutation|null>(null);
   const sourceFetch:typeof fetch=(url,init)=>{if((init?.method??'GET')!=='GET')uiMutation.current??=controls.current.onBeginSourceWrite?.()??null;return fetch(url,init);};
   const { productId, optionId, profileId, version, refreshToken, stage = 'detail', active, disabled = false, onBusyChange } = props;
@@ -87,6 +90,8 @@ export function DetailImageBatchPanel(props: Props) {
     }
   }
   useEffect(() => {
+    const own = props.additionalDraft?.capture();
+    if (own) { let alive=true;void Promise.resolve().then(()=>{if(alive&&own.current()){latestSaved.current=own.view;setSaved(own.view);setError('');}});return()=>{alive=false;}; }
     const reading = idleRead.current;
     if (reading?.controller && (reading.basis !== readBasis || !active)) {
       reading.controller.abort(); finish(reading.controller); idleRead.current = null;
@@ -97,22 +102,24 @@ export function DetailImageBatchPanel(props: Props) {
     // completed read and a reported failure; explicit retry still reads again.
     // Aborted/skipped reads resume after unlock or a real source-basis change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [readBasis, active, disabled, busy]);
+  }, [readBasis, active, disabled, busy, props.additionalDraft]);
   function permission() {
-    if (controls.current.beforeApply && !controls.current.beforeApply()) { setError('이미지 순서·HTML 등 수정한 입력을 먼저 저장한 뒤 진행해주세요.'); return false; }
+    if (controls.current.beforeApply && !controls.current.beforeApply((draftCapture.current??controls.current.additionalDraft?.capture())?.root(),panelRoot.current)) { setError('이미지 순서·HTML 등 수정한 입력을 먼저 저장한 뒤 진행해주세요.'); return false; }
     return true;
   }
   async function prepare(sourceLanguage: 'zh' | 'en' = language) {
     if (!prepareGeneration || prepareEpoch.current !== prepareGeneration || !unlocked() || latestBatch.current?.items.some(item => item.status === 'uncertain') || !permission()) return;
+    draftCapture.current = controls.current.additionalDraft?.capture() ?? null;
+    if(controls.current.additionalDraft && !draftCapture.current)return;
     const controller = begin(); if (!controller) return; select([]); setMessage(`저장한 ${label} 목록을 확인하고 있습니다…`);
     preparing.current = { generation: prepareGeneration, controller };
     setLanguage(sourceLanguage);
     const currentPreparation = () => valid(controller) && prepareEpoch.current === prepareGeneration;
     try {
-      const view = await readDetailBatchView(basis, controller.signal);
+      const view = draftCapture.current?.view ?? await readDetailBatchView(basis, controller.signal);
       if (!currentPreparation()) return;
       if (view.productVersion !== controls.current.version || !permission()) throw Error('상품 또는 다른 단계의 수정 내용이 변경됐습니다. 먼저 저장한 뒤 진행해주세요.');
-      const result = await prepareDetailImageBatch({ ...basis, view, language: sourceLanguage }, controller.signal, (value, progress) => {
+      const result = await prepareDetailImageBatch({ ...basis, view, language: sourceLanguage, ...(draftCapture.current ? {additionalDraft:draftCapture.current} : {}) }, controller.signal, (value, progress) => {
         if (currentPreparation()) { store(value); setMessage(progress); }
       });
       if (!currentPreparation()) return; store(result);
@@ -142,10 +149,12 @@ export function DetailImageBatchPanel(props: Props) {
     if (!latestBatch.current || !unlocked() || !permission()) return;
     const controller = begin(); if (!controller) return;
     try {
+      const recoveringSlot=latestBatch.current.items.find(item=>item.status==='uncertain')?.slotIndex;
       const value = await recoverDetailBatchResult(latestBatch.current, controller.signal);
       if (!valid(controller)) return; store(value); select([]);
       setMessage('해당 이미지의 저장 상태를 확인했습니다. 다음 이미지에는 적용하지 않았습니다.');
-      if (!value.items.some(item => item.status === 'uncertain') && value.items.some(item => item.status === 'applied')) { uiMutation.current?.confirm();uiMutation.current=null; controls.current.onSavedView?.(value.view); controls.current.onSaved?.(); }
+      if (!value.items.some(item => item.status === 'uncertain') && value.items.some(item => item.status === 'applied')
+        && (!value.additionalDraft || value.items.find(item=>item.slotIndex===recoveringSlot)?.status==='applied')) { uiMutation.current?.confirm();uiMutation.current=null; controls.current.onSavedView?.(value.view); controls.current.onSaved?.(); }
     } catch (cause) { if (valid(controller)) setError(cause instanceof Error ? cause.message : '저장 상태 확인 실패'); }
     finally { finish(controller); }
   }
@@ -157,7 +166,7 @@ export function DetailImageBatchPanel(props: Props) {
     select([]); setMessage('미적용 미리보기를 지웠습니다. 이미 저장한 결과와 나머지 원본은 유지합니다.');
   }
   let count = 0, protectedCount = 0, capacity = 0, eligibilityError = '';
-  if (saved) try { const selection = detailBatchTranslationSlots(saved, optionId, profileId ?? null, stage); count = selection.slots.length; protectedCount = selection.protectedSlots.length; capacity = detailBatchCapacity(saved); }
+  if (saved) try { const draft = props.additionalDraft?.capture(); const selection = draft ? {slots:draft.keys.map((_,index)=>index),protectedSlots:[]} : detailBatchTranslationSlots(saved, optionId, profileId ?? null, stage); count = selection.slots.length; protectedCount = selection.protectedSlots.length; capacity = detailBatchCapacity(saved); }
   catch (cause) { eligibilityError = cause instanceof Error ? cause.message : '상단·하단 이미지 역할을 확인하지 못했습니다. 최신 저장 이미지를 다시 조회해주세요.'; }
   const stale = !!batch && batch.view.productVersion !== version, uncertain = !!batch?.items.some(item => item.status === 'uncertain');
   const dirty = !!batch?.items.some(item => item.status === 'ready' || item.status === 'uncertain');
@@ -174,7 +183,7 @@ export function DetailImageBatchPanel(props: Props) {
   const guidance=<><h4>모든 {label} 번역</h4><p>{eligibilityError ? '이미지 역할을 확인한 뒤 일괄 처리를 시작할 수 있습니다.' : stage === 'detail' ? `선택 옵션에 저장한 본문 이미지 ${count}장을 순서대로 번역합니다. 상단·하단 설정 배너 ${protectedCount}장은 원본을 유지합니다.` : `선택 옵션에 저장한 ${label} ${count}장을 순서대로 번역합니다.`} 원본과 결과를 확인한 뒤 선택한 항목만 견적서에 적용하세요.</p>
     {saved && !eligibilityError && <p>새 번역 이미지 저장 가능 {capacity}장 · 원본 파일은 유지합니다.</p>}
     <label className="field"><span>{label} 원문 언어</span><select aria-label={`일괄 ${label} 원문 언어`} value={language} disabled={locked || uncertain} onChange={event => { if (unlocked()) setLanguage(event.target.value as 'zh' | 'en'); }}><option value="zh">중국어 → 한국어</option><option value="en">영어 → 한국어</option></select></label></>;
-  return <section className={`panel-stack${compactToolbar?' detail-batch-compact':''}`} aria-label={`모든 ${label} 번역`} data-free-image-editor data-batch-prepared={Boolean(batch)} data-quotation-source-step={label} data-workspace-saving={busy} data-workspace-dirty={dirty}>
+  return <section ref={panelRoot} className={`panel-stack${compactToolbar?' detail-batch-compact':''}`} aria-label={`모든 ${label} 번역`} data-free-image-editor data-batch-prepared={Boolean(batch)} data-quotation-source-step={label} data-workspace-saving={busy} data-workspace-dirty={dirty}>
     {compactToolbar&&stage==='detail'&&<h3 className="detail-stage-title">상세 페이지 이미지</h3>}
     {compactToolbar?<details className="detail-batch-guidance"><summary>번역 설정·안내</summary>{guidance}</details>:guidance}
     {stage === 'detail' ? <div className="quote-actions detail-batch-start-controls"><button type="button" className="btn ghost" disabled={locked || uncertain || !count || !capacity} onClick={() => void prepare('en')}>영어→한국어 번역</button>

@@ -1,4 +1,6 @@
 'use client';
+import type {AdditionalImageDraftCapture} from '@/app/quotation-image-targets';
+import type {UiMutation} from '@/app/registration-ui-reads';
 /* eslint-disable @next/next/no-img-element */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { FREE_IMAGE_ROLES, MAX_OCR_REGIONS, type FreeImageRole } from '@/app/free-image-translation';
@@ -29,7 +31,7 @@ import {readCategoryJsonResponse} from '@/app/load-category-profiles';
 import type {QuotationFieldsView} from '@/app/quotation-schema';
 import type {WorkspaceSettingsScope} from '@/app/workspace-settings-scope';
 
-export type FreeImageTranslationTarget = { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en'; role?: FreeImageRole; quotationTarget?: FreeImageQuotationRequest; workspaceTarget?: FreeImageWorkspaceRequest; intent?: 'manual';review?:SelectedImageReview };
+export type FreeImageTranslationTarget = { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en'; role?: FreeImageRole; quotationTarget?: FreeImageQuotationRequest; workspaceTarget?: FreeImageWorkspaceRequest; additionalDraft?: { capture: AdditionalImageDraftCapture; index: number }; intent?: 'manual';review?:SelectedImageReview };
 export type FreeImageEditorEntry = { role: 'main' | 'additional' | 'detail'; sequence: number };
 export type FreeImageQuotationContext = Pick<FreeImageQuotationRequest, 'profileId' | 'optionId' | 'input'>;
 type Props = { productId: string; version: string; imageKeys: string[]; translationTarget?: FreeImageTranslationTarget;
@@ -39,7 +41,7 @@ type Props = { productId: string; version: string; imageKeys: string[]; translat
   workspaceContext?: DetailWorkspaceEditorContext; onWorkspaceSaved?: (reply: DetailWorkspaceView) => void;
   active?: boolean; disabled?: boolean; onEditingChange?: (dirty: boolean) => void;
   onCloseGuard?: (guard: (() => boolean) | null) => void;
-  onProductChanged?: () => void; onBusyChange?: (busy: boolean) => void; beforeApply?: () => boolean };
+  onProductChanged?: () => void; onBusyChange?: (busy: boolean) => void; onBeginSourceWrite?: () => UiMutation | undefined; beforeApply?: (ownRoot?: HTMLElement | null, producerRoot?: HTMLElement | null) => boolean };
 const roleNames: Record<FreeImageRole, string> = { main: '대표 이미지', additional: '추가 이미지', detailTop: '상단 이미지', detail: '상세 이미지', detailBottom: '하단 이미지', label: '최종 라벨 이미지' };
 type RequestWork = { controller: AbortController; epoch: number; kind: 'manual' | 'ocr' | 'refresh' | 'translate' | 'preview' | 'save' | 'recover' };
 const sameQuotationSlot = (left: FreeImageQuotationRequest | null | undefined, right: FreeImageQuotationRequest | null | undefined) => !left || !right ? !left && !right
@@ -68,7 +70,7 @@ function useScopedBlobUrl(blob: Blob | null) {
 
 export default function FreeImageTranslationPanel(props: Props) { return <FreeImageTranslationContent key={props.productId} {...props} />; }
 function FreeImageTranslationContent({ productId, version, imageKeys, translationTarget, editorEntry, editorProfileId, focusedOptionId, quotationContext, workspaceContext, onWorkspaceSaved,
-  active: enabled = true, disabled = false, onEditingChange, onCloseGuard, onProductChanged, onBusyChange, beforeApply }: Props) {
+  active: enabled = true, disabled = false, onEditingChange, onCloseGuard, onProductChanged, onBusyChange, beforeApply, onBeginSourceWrite }: Props) {
   const [sourceKey, setSourceKey] = useState('');
   const [role, setRole] = useState<FreeImageRole>('detail');
   const [roleSources, setRoleSources] = useState<{ scope: string; keys: string[]; error: string } | null>(null);
@@ -117,6 +119,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   const [notice, setNotice] = useState('');
   const [cardPreparation, setCardPreparation] = useState<FreeImageTranslationTarget | null>(null);
   const mounted = useRef(true), epoch = useRef(0), active = useRef<RequestWork | null>(null);
+  const pendingDraftRead = useRef<{ image: FreeImageRendered; capture: AdditionalImageDraftCapture; index: number; selectionKey: string; productId: string; sourceKey: string; role: FreeImageRole } | null>(null);
   const pendingSave = useRef<FreeImageRendered | null>(null), lastVersion = useRef(version), handledTarget = useRef<number | null>(null);
   const handledEditorEntry = useRef<number | null>(null);
   const recoveredScope = useRef<string | null>(null);
@@ -127,6 +130,10 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   const brushSerialRef = useRef(0), pendingBrushRef = useRef<{ id: string; editorKey: string; scopeKey: string; generation: number; size: number; color: string } | null>(null);
   const cropSerialRef = useRef(0), pendingCropRef = useRef<{ id: string; editorKey: string; scopeKey: string; generation: number } | null>(null);
   const workspaceTarget = translationTarget?.workspaceTarget ?? null;
+  const additionalDraft = translationTarget?.additionalDraft;
+  const uiMutation = useRef<UiMutation | null>(null);
+  const sourceFetch: typeof fetch = (url, init) => { if ((init?.method ?? 'GET') !== 'GET') uiMutation.current ??= onBeginSourceWrite?.() ?? null; return fetch(url, init); };
+  const draftRead = additionalDraft ? { restoreEditor: true as const, additionalDraftTarget: additionalDraft.capture.target } : undefined;
   const roleSourceScope = JSON.stringify([productId, version, role]);
   const restrictRoleSources = !!editorEntry && !translationTarget && !quotationContext && !quotationTarget && !workspaceContext;
   const currentRoleSources = roleSources?.scope === roleSourceScope ? roleSources : null;
@@ -208,15 +215,30 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     const context = quotationContext ?? (discoveredQuotationContext.current?.selectionKey === selectionKey ? discoveredQuotationContext.current.context : null);
     return !target || !!context && context.profileId === target.profileId && context.optionId === target.optionId && context.input === target.input;
   }
-  function focusedTarget(target = liveQuotationTarget.current) {
+  function targetContextCurrent(target = liveQuotationTarget.current) {
     return liveControls.current.enabled && !liveControls.current.disabled && liveSelection.current === selectionKey
       && (!workspaceTarget || !target && !!liveControls.current.workspaceContext && sameFreeImageWorkspaceRequest(workspaceTarget, liveControls.current.workspaceContext.target))
       && matchesQuotationContext(target);
   }
+  function focusedTarget(target = liveQuotationTarget.current) {
+    return targetContextCurrent(target) && (!additionalDraft || additionalDraft.capture.current());
+  }
+  function originalRecoveryTarget() {
+    if (!additionalDraft) return focusedTarget();
+    const original = pendingDraftRead.current, image = pendingSave.current;
+    // This authority reads one immutable pending attempt. It never revives
+    // delivery/write authority after an option/stage/actor incarnation retires.
+    return targetContextCurrent() && !workspaceTarget && !workspaceContext && !!original && image === original.image
+      && original.capture === additionalDraft.capture && original.index === additionalDraft.index
+      && original.productId === productId && image.source.productId === productId && original.role === role
+      && original.sourceKey === sourceKey && original.selectionKey === selectionKey
+      && (image.source.editorSource?.resultKey ?? image.source.sourceKey) === sourceKey;
+  }
   function editorCurrent() { return liveEditor.current === editorKey; }
-  function current(work: RequestWork) { return mounted.current && active.current === work && work.epoch === epoch.current && !work.controller.signal.aborted && focusedTarget() && editorCurrent(); }
+  function current(work: RequestWork) { return mounted.current && active.current === work && work.epoch === epoch.current && !work.controller.signal.aborted
+    && (work.kind === 'recover' ? originalRecoveryTarget() : focusedTarget()) && editorCurrent(); }
   function begin(kind: RequestWork['kind']) {
-    if (!mounted.current || active.current || liveBrushDrawingRef.current || liveCropDrawing.current || !focusedTarget() || !editorCurrent()) return null;
+    if (!mounted.current || active.current || liveBrushDrawingRef.current || liveCropDrawing.current || !(kind === 'recover' ? originalRecoveryTarget() : focusedTarget()) || !editorCurrent()) return null;
     clearSaveNotice();
     const work = { kind, epoch: epoch.current, controller: new AbortController() }; active.current = work;
     setBusy(true); busyCallback.current?.(true); setError(''); setNotice(''); return work;
@@ -248,9 +270,10 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     if (mounted.current) { setCropDrawing(false); busyCallback.current?.(false); }
     else liveCropDrawing.current = false;
   }
-  function discardDraft() { restoredDraft.current = null; cancelBrush(); cancelCrop(); setBrushMode(false); setCropMode(false); setCrop(null); setCropGeneration(value => value + 1); setLoaded(null); resetRegions([]); setOptionImageIds([]); setRendered(null); pendingSave.current = null; recoveredScope.current = null; setReadyRetry(false); setUncertain(false); setError(''); }
+  function discardDraft() { restoredDraft.current = null; cancelBrush(); cancelCrop(); setBrushMode(false); setCropMode(false); setCrop(null); setCropGeneration(value => value + 1); setLoaded(null); resetRegions([]); setOptionImageIds([]); setRendered(null); pendingSave.current = null; pendingDraftRead.current = null; recoveredScope.current = null; setReadyRetry(false); setUncertain(false); setError(''); }
   function selectSource(key: string, nextRole = role, nextLanguage = language, nextQuotationTarget: FreeImageQuotationRequest | null = liveQuotationTarget.current, fromCard = false) {
     if (liveBrushDrawingRef.current || liveCropDrawing.current || !focusedTarget(nextQuotationTarget) || !editorCurrent()) return;
+    if (additionalDraft && (nextRole !== 'additional' || key !== additionalDraft.capture.keys[additionalDraft.index])) return;
     if (!fromCard && key && restrictRoleSources && nextRole === role && !eligibleKeys.includes(key)) return;
     // A transmitted save may finish after cancellation. Keep its exact PNG
     // until the user explicitly discards it or acknowledges the saved result.
@@ -330,7 +353,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       && !liveUncertain.current && !liveReadyRetry.current && !liveBrushDrawingRef.current && !liveCropDrawing.current);
     return () => onCloseGuard?.(null);
   }, [onCloseGuard, hasUnsavedDraft, liveRenderedRef, liveUncertain, liveReadyRetry, liveBrushDrawingRef, liveCropDrawing]);
-  const matchingQuotationContext = enabled && !disabled && (!workspaceTarget || !!workspaceContext && sameFreeImageWorkspaceRequest(workspaceTarget, workspaceContext.target))
+  const matchingQuotationContext = enabled && !disabled && (!additionalDraft || additionalDraft.capture.current()) && (!workspaceTarget || !!workspaceContext && sameFreeImageWorkspaceRequest(workspaceTarget, workspaceContext.target))
     && matchesQuotationContext(quotationTarget);
   const locked = busy || brushDrawing || cropDrawing || uncertain || readyRetry || !matchingQuotationContext;
   const selectedSourceKey = (source: FreeImageLoaded['source']) => source.editorSource?.resultKey ?? source.sourceKey;
@@ -468,13 +491,13 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
         if(!response.ok||view.productVersion!==version)throw Error('상품 저장본이 변경됐습니다. 최신 원본을 다시 열어주세요.');
         requestedTarget=rebindSelectedImageReview(review,account.scope,view);
       }
-      if (!workspaceContext && !requestedTarget && isSavedFreeImageResult(productId, sourceKey)) {
+      if (!additionalDraft && !workspaceContext && !requestedTarget && isSavedFreeImageResult(productId, sourceKey)) {
         requestedTarget = await readSavedFreeImageQuotationTarget({ productId, productVersion: version, sourceKey, role, profileId: editorProfileId, context: quotationContext }, work.controller.signal);
         if (!current(work)) return;
       }
       const image = workspaceContext ? await readDetailWorkspaceImage(workspaceContext, work.controller.signal)
         : await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, requestedTarget ?? undefined,
-          { restoreEditor: true, ...(requestedTarget ? { anchorPolicy: 'current-target-v1' as const } : {}) });
+          { ...draftRead, restoreEditor: true, ...(requestedTarget ? { anchorPolicy: 'current-target-v1' as const } : {}) });
       if(review)uncommittedReview=image;
       if (!current(work)) return;
       if(review){
@@ -535,7 +558,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     let processingImage:FreeImageLoaded|null=null;
     try {
       const image = workspaceContext ? await readDetailWorkspaceImage(workspaceContext, work.controller.signal)
-        : await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined);
+        : await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined, draftRead);
       if (!current(work)) return;
       processingImage=image;setLoaded(image);
       const selectedOptions = focusedOptionId && image.source.optionImages?.optionIds.includes(focusedOptionId) ? [focusedOptionId] : [];
@@ -582,7 +605,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     let processingImage:FreeImageLoaded|null=null;
     try {
       const image = workspaceContext ? await readDetailWorkspaceImage(workspaceContext, work.controller.signal)
-        : await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined);
+        : await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined, draftRead);
       if (!current(work)) return;processingImage=image;setLoaded(image);
       setOptionImageIds(focusedOptionId && image.source.optionImages?.optionIds.includes(focusedOptionId) ? [focusedOptionId] : []);
       const rows = (await (local?recognizeLocalFreeImage:recognizeFreeImage)(image, language, work.controller.signal, message => { if (current(work)) setNotice(message); })).map(row=>({...row,backgroundMode:'inpaint-telea-v1' as const}));
@@ -601,7 +624,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     try {
       const image = workspaceContext ? await readDetailWorkspaceImage(workspaceContext, work.controller.signal)
         : await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined,
-          loaded.source.editorSource ? { restoreEditor: true, ...(loaded.source.editorSource.anchorPolicy ? { anchorPolicy: loaded.source.editorSource.anchorPolicy } : {}) } : undefined);
+          loaded.source.editorSource ? { ...draftRead, restoreEditor: true, ...(loaded.source.editorSource.anchorPolicy ? { anchorPolicy: loaded.source.editorSource.anchorPolicy } : {}) } : draftRead);
       if (!current(work)) return;
       if (image.source.sourceSha256 !== previous.source.sourceSha256 || image.source.sourceKey !== previous.source.sourceKey
         || image.source.role !== previous.source.role || image.width !== previous.width || image.height !== previous.height) {
@@ -651,29 +674,41 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       || !retry && (pendingSave.current !== null || liveUncertain.current || liveReadyRetry.current)
       || !retry && (image !== liveRenderedRef.current || image.source.productVersion !== version || selectedSourceKey(image.source) !== sourceKey || image.source.role !== role
         || !sameFreeImageQuotationRequest(image.source.quotationTarget, liveQuotationTarget.current) || !sameFreeImageWorkspaceRequest(image.source.workspaceTarget, workspaceTarget) || !imageKeys.includes(sourceKey))) return;
-    if (beforeApply && !beforeApply()) { setError('다른 단계의 수정값을 먼저 저장하거나 정리한 뒤 이미지 결과를 적용해주세요.'); return; }
+    if (beforeApply && !beforeApply(additionalDraft?.capture.root(), panel.current)) { setError('다른 단계의 수정값을 먼저 저장하거나 정리한 뒤 이미지 결과를 적용해주세요.'); return; }
     const work = begin('save'); if (!work) return;
+    if (!retry) pendingDraftRead.current = additionalDraft ? { image, capture: additionalDraft.capture, index: additionalDraft.index, selectionKey, productId, sourceKey, role } : null;
     pendingSave.current = image; recoveredScope.current = null;
+    let acknowledged = false;
     try {
-      const reply = workspaceContext ? await applyDetailWorkspaceImage(image, workspaceContext, work.controller.signal) : await applyFreeImageTranslation(image, work.controller.signal);
+      const reply = workspaceContext ? await applyDetailWorkspaceImage(image, workspaceContext, work.controller.signal) : await applyFreeImageTranslation(image, work.controller.signal, sourceFetch);
+      acknowledged = true;
       if (!current(work)) return;
-      acknowledgeSave(image, image.source.workspaceTarget ? reply as DetailWorkspaceImageReply : undefined, image.source.workspaceTarget ? undefined : reply as FreeImageApplyReply);
+      await acknowledgeSave(image, image.source.workspaceTarget ? reply as DetailWorkspaceImageReply : undefined, image.source.workspaceTarget ? undefined : reply as FreeImageApplyReply);
     } catch (cause) {
       if (!current(work)) return;
-      if (cause instanceof FreeImageApplyError && cause.uncertain) { setReadyRetry(false); setUncertain(true); setError(cause.message); }
+      if (acknowledged || cause instanceof FreeImageApplyError && cause.uncertain) { setReadyRetry(false); setUncertain(true); setError(cause instanceof Error ? cause.message : '저장 결과를 확인해주세요.'); }
       else { pendingSave.current = null; setReadyRetry(false); setUncertain(false); setError(cause instanceof Error ? cause.message : '이미지 적용을 완료하지 못했습니다.'); }
     } finally { finish(work); }
   }
-  function acknowledgeSave(image: FreeImageRendered, workspaceReply?: DetailWorkspaceImageReply, productReply?: FreeImageApplyReply) {
+  async function acknowledgeSave(image: FreeImageRendered, workspaceReply?: DetailWorkspaceImageReply, productReply?: FreeImageApplyReply, deliverToDraft = true) {
+    if (additionalDraft && deliverToDraft) {
+      if (!productReply || !additionalDraft.capture.current()) throw new FreeImageApplyError('추가 이미지 초안이 변경됐습니다. 저장 결과를 확인해주세요.', true);
+      const profileId = additionalDraft.capture.target.profileId;
+      const response = await fetch(`/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`, { cache: 'no-store' });
+      const after = await response.json() as QuotationFieldsView;
+      const keys = [...additionalDraft.capture.keys]; keys[additionalDraft.index] = productReply.key;
+      if (!response.ok || !additionalDraft.capture.accept(after, keys, [productReply.key])) throw new FreeImageApplyError('추가 이미지 초안의 파일 보관 결과를 확인하지 못했습니다.', true);
+    }
+    uiMutation.current?.confirm(); uiMutation.current = null;
     restoredDraft.current = null;
-    pendingSave.current = null; recoveredScope.current = null; setReadyRetry(false); setUncertain(false); resetRegions([]); setCrop(null); setCropMode(false); setCropGeneration(value => value + 1); setOptionImageIds([]); setRendered(null); setLoaded(null);
+    pendingSave.current = null; pendingDraftRead.current = null; recoveredScope.current = null; setReadyRetry(false); setUncertain(false); resetRegions([]); setCrop(null); setCropMode(false); setCropGeneration(value => value + 1); setOptionImageIds([]); setRendered(null); setLoaded(null);
     const target = image.source.quotationTarget;
     if (image.source.workspaceTarget) {
       if (!workspaceReply) return;
       setNotice('작업 사진과 다시 편집할 문서만 상세 구성에 보관했습니다. 상품 이미지·견적서·기존 HTML은 유지됩니다.');
       liveControls.current.onWorkspaceSaved?.({ view: workspaceReply.view, workspace: workspaceReply.workspace, roles: workspaceReply.roles }); return;
     }
-    const savedNotice = target ? `선택 옵션의 ${roleNames[image.source.role]} ${target.slotIndex + 1}에 번역 이미지를 적용했습니다.`
+    const savedNotice = additionalDraft ? (deliverToDraft ? '편집 이미지와 문서를 추가 이미지 초안에 보관했습니다. 순서를 확인한 뒤 추가 이미지에서 저장해주세요.' : '원래 편집 이미지와 문서의 보관 결과를 확인했습니다. 현재 추가 이미지 초안은 변경하지 않았습니다.') : target ? `선택 옵션의 ${roleNames[image.source.role]} ${target.slotIndex + 1}에 번역 이미지를 적용했습니다.`
       : `${image.source.optionImages?.commonAssigned === false ? '선택한 개별 옵션의 대표 이미지에 적용했습니다. 공통 대표 이미지는 유지됩니다.' : `번역 이미지를 원본의 같은 위치에 적용했습니다.${image.optionImageIds?.length ? ` 선택한 옵션 ${image.optionImageIds.length}개의 대표 이미지에도 반영했습니다.` : ''}`} 원본 파일은 보관되며 다른 이미지와 견적서 직접 수정값은 유지됩니다.`;
     // The client already verified this exact applied source/result/clock. Keep
     // only its notice through the matching parent refresh, never a save proof
@@ -685,12 +720,13 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   }
   async function recover() {
     const image = pendingSave.current;
-    if (!image || !image.source.quotationTarget && !image.source.workspaceTarget && !image.editDocument || !focusedTarget() || !editorCurrent() || !liveUncertain.current) return;
+    if (!image || !image.source.quotationTarget && !image.source.workspaceTarget && !image.editDocument || !originalRecoveryTarget() || !editorCurrent() || !liveUncertain.current) return;
     const work = begin('recover'); if (!work) return;
     try {
       const reply = workspaceContext ? await recoverDetailWorkspaceImage(image, workspaceContext, work.controller.signal) : await recoverFreeImageTranslation(image, work.controller.signal);
       if (!current(work)) return;
-      if (reply.applied) acknowledgeSave(image, image.source.workspaceTarget ? reply as DetailWorkspaceImageReply : undefined, image.source.workspaceTarget ? undefined : reply as FreeImageApplyReply);
+      if (reply.applied) await acknowledgeSave(image, image.source.workspaceTarget ? reply as DetailWorkspaceImageReply : undefined, image.source.workspaceTarget ? undefined : reply as FreeImageApplyReply, !additionalDraft || additionalDraft.capture.current());
+      else if (additionalDraft && !additionalDraft.capture.current()) { setUncertain(true); setReadyRetry(false); setNotice('원래 결과는 아직 보관되지 않았습니다. 현재 초안이 변경되어 이 결과를 다시 적용하지 않습니다.'); }
       else { recoveredScope.current = editorKey; setUncertain(false); setReadyRetry(true); setNotice('이 미리보기는 아직 적용되지 않았습니다. 같은 미리보기를 다시 적용할 수 있습니다.'); }
     } catch (cause) { if (current(work)) { setUncertain(true); setReadyRetry(false); setError(cause instanceof Error ? cause.message : '이미지 저장 상태를 확인하지 못했습니다.'); } }
     finally { finish(work); }
@@ -720,10 +756,10 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     <details><summary>이미지 번역 방식·사용료 안내</summary><p>기본 작업은 설정된 Cloudflare Qwen3.8 Vision으로 본인 소유 원본 한 장의 문구와 한국어 번역을 한 번 읽습니다. Cloudflare 무료 사용량 초과 시 사용료가 발생할 수 있습니다. 이미지 생성은 하지 않으며 실패 후 자동 재요청하지 않습니다. 문구와 영역을 검토한 뒤 적용해주세요.</p><p>브라우저 문구 읽기를 별도로 선택하면 이미지 파일을 번역 서비스에 보내지 않습니다. 선택 문구 번역은 Google을 사용하며, Google HTTP 429 확인 시에만 설정된 무료 AI에 남은 문구를 한 번 보냅니다. 직접 작성한 한국어와 기존 저장본은 유지합니다.</p></details>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     <div className="form-row">
-      <label>이미지 역할<select aria-label="번역할 이미지 역할" value={role} disabled={locked || !!quotationTarget || !!workspaceTarget} onChange={event => { if (!liveQuotationTarget.current && !workspaceTarget) selectSource(restrictRoleSources ? '' : sourceKey, event.target.value as FreeImageRole); }}>
+      <label>이미지 역할<select aria-label="번역할 이미지 역할" value={role} disabled={locked || !!quotationTarget || !!workspaceTarget || !!additionalDraft} onChange={event => { if (!liveQuotationTarget.current && !workspaceTarget) selectSource(restrictRoleSources ? '' : sourceKey, event.target.value as FreeImageRole); }}>
         {FREE_IMAGE_ROLES.filter(value => value !== 'label' || quotationTarget?.input === 'labelImages').map(value => <option key={value} value={value}>{roleNames[value]}</option>)}
       </select></label>
-      <label>원본 이미지<select ref={sourceControl} aria-label="번역할 원본 이미지" value={sourceKey} disabled={locked || !!quotationTarget || !!workspaceTarget} onChange={event => { if (!liveQuotationTarget.current && !workspaceTarget) selectSource(event.target.value); }}>
+      <label>원본 이미지<select ref={sourceControl} aria-label="번역할 원본 이미지" value={sourceKey} disabled={locked || !!quotationTarget || !!workspaceTarget || !!additionalDraft} onChange={event => { if (!liveQuotationTarget.current && !workspaceTarget) selectSource(event.target.value); }}>
         <option value="">원본 선택</option>{sourceKey && !eligibleKeys.includes(sourceKey) && <option value={sourceKey} disabled>현재 역할에 연결되지 않은 원본</option>}{eligibleKeys.map(key => <option key={key} value={key}>이미지 {imageKeys.indexOf(key) + 1} · {key.split('/').at(-1)}</option>)}
       </select></label>
       <label>원문 언어<select aria-label="이미지 원문 언어" value={language} disabled={locked} onChange={event => selectSource(sourceKey, role, event.target.value as 'zh' | 'en')}><option value="zh">중국어</option><option value="en">영어</option></select></label>
@@ -838,7 +874,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       download={`yoofam-plus-${productId}-${role}-${rendered.width}x${rendered.height}.png`} onClick={event => { if (!canDownload(rendered)) event.preventDefault(); }}>편집 결과 PNG 다운로드</a>
       <span> {rendered.width}×{rendered.height}px</span></p>}
     {rendered && !uncertain && !readyRetry && <><p>적용 범위: {rendered.source.workspaceTarget ? '상세 구성의 선택한 작업 사진과 편집 문서만 보관 · 상품 이미지 목록과 견적서 유지' : rendered.source.quotationTarget ? `선택 옵션 ${rendered.source.quotationTarget.optionId} · ${roleNames[rendered.source.role]} ${rendered.source.quotationTarget.slotIndex + 1}` : <>{roleNames[rendered.source.role]}{rendered.source.role === 'main' ? rendered.source.optionImages?.commonAssigned === false ? ' · 공통 대표 이미지 유지' : ' · 공통 대표 이미지 사용 옵션 포함' : ''}{rendered.optionImageIds?.length ? ` + 선택 옵션 ${rendered.optionImageIds.length}개 개별 대표 이미지` : ' · 개별 옵션 이미지 유지'} · 견적서의 직접 수정값은 유지됩니다.</>}</p><button type="button" className="btn green" disabled={locked || !currentImage} onClick={() => void save()}>{workspaceTarget ? '검토한 작업 사진 보관' : '검토한 번역 이미지 적용'}</button></>}
-    {uncertain && <button type="button" className="btn blue" disabled={busy || !matchingQuotationContext} onClick={() => { if (pendingSave.current?.source.quotationTarget || pendingSave.current?.source.workspaceTarget || pendingSave.current?.editDocument) void recover(); else void save(true); }}>{workspaceTarget ? '작업 사진 보관 결과 확인' : '같은 결과의 저장 상태 다시 확인'}</button>}
+    {uncertain && <button type="button" className="btn blue" disabled={busy || !originalRecoveryTarget()} onClick={() => { if (pendingSave.current?.source.quotationTarget || pendingSave.current?.source.workspaceTarget || pendingSave.current?.editDocument) void recover(); else void save(true); }}>{workspaceTarget ? '작업 사진 보관 결과 확인' : '같은 결과의 저장 상태 다시 확인'}</button>}
     {readyRetry && <button type="button" className="btn green" disabled={busy || !matchingQuotationContext} onClick={() => void save(true)}>{workspaceTarget ? '같은 작업 사진 다시 보관' : '같은 미리보기 다시 적용'}</button>}
     {(dirty || loaded || discoveredQuotationContext.current) && <button type="button" className="btn" disabled={busy} onClick={() => { cancel(false); discardDraft(); if (discoveredQuotationContext.current) { discoveredQuotationContext.current = null; setQuotationTarget(null); } setNotice('편집 초안을 지웠습니다. 서버에 보관된 원본과 이미지 역할은 변경하지 않았습니다.'); }}>이미지 번역 편집 초안 지우기</button>}
     {!imageKeys.length && <p>상품에 저장된 원본 이미지를 먼저 선택해주세요.</p>}

@@ -33,7 +33,7 @@ export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTM
  visionTextStyle?:ImageTextStyle;visionConfiguration?:ImageTextVisionConfiguration;visionTransport?:'workers-ai-batch-v1';visionRequestId?:string;visionPending?:FreeImageVisionError;visionResult?:ImageTextVisionResult;visionExecution?:{requests:0|1;cached:boolean};visionStyleIssues?:VisionStyleIssue[];visionFetcher?:typeof fetch };
 export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[]; crop?: FreeImageCrop; editDocument?: FreeImageEditDocument };
 export type FreeImageQuotationRequest = Omit<NonNullable<FreeImageSource['quotationTarget']>, 'bindingSha256'>;
-export type FreeImageEditorReadOptions = { restoreEditor: true; anchorPolicy?: 'current-target-v1' | 'current-role-v1' };
+export type FreeImageEditorReadOptions = { restoreEditor: true; additionalDraftTarget?: Omit<NonNullable<FreeImageSource['additionalDraftTarget']>, 'kind' | 'bindingSha256'>; anchorPolicy?: 'current-target-v1' | 'current-role-v1' | 'current-pool-v1' };
 /** Metadata only: choosing a stage must not load pixels, run OCR or mutate roles. */
 export async function readFreeImageRoleSources(productId: string, productVersion: string, role: FreeImageRole, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<string[]> {
   const response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams({ list: 'sources', role })}`, { signal, cache: 'no-store' });
@@ -111,15 +111,17 @@ function canvas(width: number, height: number) {
 export async function readFreeImageSourceProof(productId: string, version: string, sourceKey: string, role: FreeImageRole,
   signal: AbortSignal, fetcher: typeof fetch = fetch, quotationTarget?: FreeImageQuotationRequest, options?: FreeImageEditorReadOptions): Promise<Pick<FreeImageLoaded, 'source' | 'editDocument' | 'noTextProof' | 'visionConfiguration' | 'visionTransport' | 'visionFetcher'>> {
   signal.throwIfAborted();
-  if (options?.anchorPolicy !== undefined && (options.restoreEditor !== true || (quotationTarget ? options.anchorPolicy !== 'current-target-v1'
+  const draftTarget = options?.additionalDraftTarget;
+  if (draftTarget && (quotationTarget || role !== 'additional')) throw Error('추가 이미지 초안 범위를 확인해주세요.');
+  if (!draftTarget && options?.anchorPolicy !== undefined && (options.restoreEditor !== true || (quotationTarget ? options.anchorPolicy !== 'current-target-v1'
     : options.anchorPolicy !== 'current-role-v1' || !['main', 'additional', 'detail'].includes(role)))) throw Error('다시 편집할 현재 이미지 연결을 확인해주세요.');
   if (role === 'label' && !quotationTarget) throw Error('선택 옵션에 저장된 최종 라벨 이미지를 선택해주세요.');
-  const params = { sourceKey, role, ...(quotationTarget ? quotationSourceQuery(quotationTarget, role, sourceKey) : {}) };
+  const params = { sourceKey, role, ...(draftTarget ? { target: 'additional-draft', ...(draftTarget.optionId ? { optionId: draftTarget.optionId } : {}), ...(draftTarget.profileId ? { profileId: draftTarget.profileId } : {}) } : {}), ...(quotationTarget ? quotationSourceQuery(quotationTarget, role, sourceKey) : {}) };
   // Only our deterministic edited results can carry a saved document. Legacy
   // images still use their existing source request; a missing document is the
   // only response that permits falling back to opening the flattened picture.
   const savedEditor = !!options?.restoreEditor && (quotationTarget !== undefined || ['main', 'additional', 'detail'].includes(role)) && sourceKey.split('/').at(-1)?.startsWith(`free-image-${productId}-`) === true;
-  const editorMode = !quotationTarget ? 'saved-current-role-v1' : options?.anchorPolicy === 'current-target-v1' ? 'saved-current-target-v1' : 'saved';
+  const editorMode = draftTarget ? 'saved-current-pool-v1' : !quotationTarget ? 'saved-current-role-v1' : options?.anchorPolicy === 'current-target-v1' ? 'saved-current-target-v1' : 'saved';
   let restoring = savedEditor;
   let response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams({ ...params, ...(savedEditor ? { editor: editorMode } : {}) })}`, { signal, cache: 'no-store' });
   let body = await response.json() as { source?: unknown; error?: string; code?: string; editDocument?: unknown;visionConfiguration?:unknown;visionTransport?:unknown;noTextProof?:unknown;preservationProof?:unknown }; signal.throwIfAborted();
@@ -133,9 +135,11 @@ export async function readFreeImageSourceProof(productId: string, version: strin
   if (source.workspaceTarget || source.productId !== productId || source.productVersion !== version || (source.editorSource?.resultKey ?? source.sourceKey) !== sourceKey || source.role !== role
     || restoring && (source.editorSource === undefined || body.editDocument === undefined)
     || source.editorSource !== undefined && (!restoring || body.editDocument === undefined)
-    || restoring && source.editorSource?.anchorPolicy !== (quotationTarget ? options?.anchorPolicy : 'current-role-v1')
+    || restoring && source.editorSource?.anchorPolicy !== (draftTarget ? 'current-pool-v1' : quotationTarget ? options?.anchorPolicy : 'current-role-v1')
     || body.editDocument !== undefined && (!restoring || !source.editorSource)
-    || !sameFreeImageQuotationRequest(source.quotationTarget, quotationTarget)) throw Error('상품·이미지·역할 또는 저장 버전이 변경됐습니다. 최신 저장본에서 다시 선택해주세요.');
+    || !sameFreeImageQuotationRequest(source.quotationTarget, quotationTarget)
+    || draftTarget && (!source.additionalDraftTarget || Object.entries(draftTarget).some(([key,value]) => source.additionalDraftTarget![key as keyof typeof draftTarget] !== value))
+    || !draftTarget && source.additionalDraftTarget !== undefined) throw Error('상품·이미지·역할 또는 저장 버전이 변경됐습니다. 최신 저장본에서 다시 선택해주세요.');
   const editDocument = body.editDocument === undefined ? undefined : validateFreeImageEditDocument(body.editDocument, source);
   if (editDocument && await editDocumentDigest(editDocument) !== source.editorSource!.documentSha256) throw Error('저장한 편집 내용의 연결을 확인하지 못했습니다.');
   const configuration:ImageTextVisionConfiguration|null=body.visionConfiguration===undefined?{provider:'workers-ai-vision',model:IMAGE_TEXT_VISION_MODEL,configured:false,paidAllowed:false,notice:IMAGE_TEXT_VISION_NOTICE}:parseImageTextVisionConfiguration(body.visionConfiguration);
@@ -600,7 +604,7 @@ export function readFreeImageApplyReply(input: unknown, image: FreeImageRendered
   const ids = validateFreeImageOptionIds(image.source, image.optionImageIds ?? []);
   const crop = renderedCrop(image);
   const quotationTarget = image.source.quotationTarget;
-  const contentDelta = quotationTarget || image.source.optionImages?.commonAssigned === false ? 0 : 1;
+  const contentDelta = quotationTarget || image.source.additionalDraftTarget || image.source.optionImages?.commonAssigned === false ? 0 : 1;
   if (!body || image.source.optionImages?.commonAssigned === false && !ids.length
     || body.editDocumentSha256 !== editDocumentSha256 || image.editDocument !== undefined && editDocumentSha256 === undefined
     || !sameFreeImageSource(body.source, image.source) || !sameCrop(body.crop, crop, image.source) || body.applied !== true || !isOwnedImageKey(owner, body.key)

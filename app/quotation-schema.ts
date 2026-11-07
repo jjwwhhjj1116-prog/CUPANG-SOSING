@@ -28,7 +28,7 @@ import type {TemplateDefinition} from '@/app/category-profiles';
 import { quotationPackagingBasisIssues, quotationPackagingDraftReviewMessages, validateQuotationPackagingBasis, type QuotationPackagingBasis } from '@/app/quotation-packaging-basis';
 import {validateOfficialWorkbookFields} from '@/app/official-workbook-field-descriptors';
 import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
-import { quotationPriceInputs, quotationPriceTargets } from '@/app/quotation-price-targets';
+import { quotationPriceInputs, quotationPriceTargets, quotationIndependentOptionalOsrp } from '@/app/quotation-price-targets';
 import { quotationSeoDocumentTitle } from '@/app/seo-title-document';
 import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
 import { productLabelFields, validateProductLabelOverrides, validateProductLabelStructure, type ProductLabelsState, type ProductLabelFixedKey } from '@/app/product-label';
@@ -436,6 +436,7 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
   const overrides = input.overrides ?? emptyQuotationOverrides();
   const explicitSeoDefaultFor=explicitSeoQuotationDefaultsResolver(content,schema);
   const initialNotices = readInitialLegalNotices(content.initialLegalNotices, schema);
+  const independentOsrp = quotationIndependentOptionalOsrp(schema.fields);
   let ownedKeys: string[] = [];
   const reviewMessages = [schema.evidence, 'Supplier Hub 최종 접수 검증 전인 편집 자료입니다.'];
   const issues = [...reviewMessages], validationIssues: string[] = [];
@@ -473,6 +474,7 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
       ? literal(`${option.widthCm} × ${option.lengthCm} × ${option.heightCm} cm`, 'option') : contentValue(content.label.dimensions);
   }
   function currentAuto(definition: QuotationField, option: ProductOption | null): Automatic {
+    if (definition === independentOsrp) return literal('', 'empty');
     // A live field keeps its category/wire identity. Shared source meanings are
     // restricted to complete, observed labels and their section/group.
     const noticeBinding=definition.hubWire&&isQuotationAutomaticLegalNotice(definition)

@@ -1,5 +1,6 @@
 'use client';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
+import { isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
 
 /* Authenticated R2 previews use the existing file route without a public image optimizer. */
 /* eslint-disable @next/next/no-img-element */
@@ -8,25 +9,26 @@ import { adoptGeneratedOptionImage } from '@/app/option-image-adoption';
 import { generatedImagesRolePatch } from '@/app/image-role-adoption';
 import type { ProductContent } from '@/app/product-content';
 import type { ImageEditJob, ImageEditView, ImagePurpose, ImageQuality, ImageSize } from '@/app/automation/image-edit';
-import { imageRecipeVersion } from '@/app/automation/image-edit';
+import { imageMetadata, imageRecipeVersion } from '@/app/automation/image-edit';
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
 import type {QuotationFieldsView} from '@/app/quotation-schema';
 import {prepareMainImageAiApply,applyMainImageAiResult,recoverMainImageAiResult,type MainImageAiApplyAttempt} from '@/app/main-image-ai-apply';
 import {MainImageSaveError} from '@/app/quotation-main-image';
-import {prepareAdditionalImageAiApply,applyAdditionalImageAiResult,recoverAdditionalImageAiResult,type AdditionalImageAiApplyAttempt} from '@/app/additional-image-ai-apply';
-import {quotationImageKeys} from '@/app/quotation-image-targets';
+import {applyAdditionalImageDraftAiResult,prepareAdditionalImageAiApply,applyAdditionalImageAiResult,recoverAdditionalImageAiResult,type AdditionalImageAiApplyAttempt} from '@/app/additional-image-ai-apply';
+import {quotationImageKeys,type AdditionalImageDraftCapture} from '@/app/quotation-image-targets';
 
 export type SelectedMainImageProcessingTarget = { sourceKey: string; sequence: number; productVersion: string; quotationTarget: FreeImageQuotationRequest;ownerId?:string;quotationView?:QuotationFieldsView };
+export type AdditionalDraftProcessingTarget = { sourceKey: string; sequence: number; productVersion: string; ownerId: string; capture: AdditionalImageDraftCapture; originView: QuotationFieldsView; index: number };
 export type ImageGenerationAvailability = {productId:string;productVersion:string;configured:boolean};
 type Props = { productId: string; version: string; imageKeys: string[]; active?:boolean; onProductChanged?: () => void; translationTarget?: { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en' }; onBusyChange?: (busy: boolean) => void;
-  processingTarget?: SelectedMainImageProcessingTarget; processingTargetActive?: boolean; onCloseProcessingTarget?: () => void;
-  processingResultActive?:boolean;beforeSelectedImageApply?:()=>boolean;onAvailabilityChange?:(value:ImageGenerationAvailability|null)=>void };
+  onBeginSourceWrite?:()=>import('@/app/registration-ui-reads').UiMutation|undefined; draftProcessingTarget?: AdditionalDraftProcessingTarget; processingTarget?: SelectedMainImageProcessingTarget; processingTargetActive?: boolean; onCloseProcessingTarget?: () => void;
+  processingResultActive?:boolean;beforeSelectedImageApply?:(owner?:HTMLElement|null,producer?:HTMLElement|null)=>boolean;onAvailabilityChange?:(value:ImageGenerationAvailability|null)=>void };
 const statuses: Record<ImageEditJob['status'], string> = { prepared: '원본·요청 검토 대기', approved: '승인됨 · 실행 대기', running: '실행 중 · 중복 호출 차단', completed: '이미지 생성 완료 · 검토 필요', failed: '실패 · 자동 재호출 없음', uncertain: '결과 확인 필요 · 자동 재호출 없음' };
 const imageUrl = (key: string) => `/api/files/${encodeURIComponent(key)}`;
 const translationTargetLimitError = '추가 요청 문구가 길어서 선택한 언어 지침을 넣을 수 없습니다. 문구를 줄인 뒤 번역 버튼을 다시 눌러주세요.';
 
 export default function ImageGenerationPanel(props: Props) { return <ImageGenerationContent key={props.productId} {...props} />; }
-function ImageGenerationContent({ productId, version, imageKeys, active=true, onProductChanged, translationTarget, onBusyChange, processingTarget, processingTargetActive = true, onCloseProcessingTarget,processingResultActive=false,beforeSelectedImageApply,onAvailabilityChange }: Props) {
+function ImageGenerationContent({ productId, version, imageKeys, active=true, onProductChanged, translationTarget, onBusyChange, processingTarget, draftProcessingTarget, onBeginSourceWrite, processingTargetActive = true, onCloseProcessingTarget,processingResultActive=false,beforeSelectedImageApply,onAvailabilityChange }: Props) {
   const [view, setView] = useState<ImageEditView | null>(null);
   const [sourceKey, setSourceKey] = useState('');
   const [purpose, setPurpose] = useState<ImagePurpose>('translate');
@@ -44,7 +46,7 @@ function ImageGenerationContent({ productId, version, imageKeys, active=true, on
   const [error, setError] = useState('');
   const [notice,setNotice]=useState('');
   const [reviewedIds,setReviewedIds]=useState<string[]>([]);
-  const [selectedApplyPending,setSelectedApplyPending]=useState(false);
+  const [selectedApplyPending,setSelectedApplyPending]=useState(false),[poolReadPending,setPoolReadPending]=useState(false);
   // A persisted running record may outlive its client request or source
   // version. Keep it unresolved and block new paid work, but do not let that
   // historical status permanently lock independent free/manual editing.
@@ -55,6 +57,7 @@ function ImageGenerationContent({ productId, version, imageKeys, active=true, on
   const historyRequest=useRef<AbortController|null>(null);
   const loadedHistory=useRef<object|null>(null);
   const selectedApply=useRef<MainImageAiApplyAttempt|AdditionalImageAiApplyAttempt|null>(null);
+  const pendingPoolRead=useRef<{target:AdditionalDraftProcessingTarget & {productId:string};jobId:string;review:ImageEditJob['review'];action:'execute'|'attach'}|null>(null);
   const selectedApplyRequest=useRef<AbortController|null>(null);
   const notifiedAttachment=useRef('');
   const attachmentContext=useRef({productId,imageKeys,onProductChanged});
@@ -63,10 +66,11 @@ function ImageGenerationContent({ productId, version, imageKeys, active=true, on
   const handledTranslation=useRef<number|null>(null);
   const handledProcessing=useRef<number|null>(null);
   const languageDirective=useRef('');
-  const processingScope=JSON.stringify([productId,version,processingTarget?.sequence,processingTarget?.sourceKey,processingTarget?.productVersion,processingTarget?.quotationTarget,processingTargetActive,processingResultActive]);
+  const processingScope=JSON.stringify([productId,version,processingTarget?.sequence,processingTarget?.sourceKey,processingTarget?.productVersion,processingTarget?.quotationTarget,draftProcessingTarget?.sequence,processingTargetActive,processingResultActive]);
   const processingToken=useMemo(()=>({scope:processingScope}),[processingScope]),liveProcessingToken=useRef<object|null>(processingToken),liveView=useRef(view);
-  const pinned=!!processingTarget,processingImageLabel=processingTarget?.quotationTarget.input==='additionalImages'?'추가이미지':'대표이미지';
-  const targetCurrent=!processingTarget||processingTargetActive&&processingTarget.productVersion===version&&imageKeys.includes(processingTarget.sourceKey)
+  const pinned=!!processingTarget||!!draftProcessingTarget,processingImageLabel=draftProcessingTarget?'추가이미지':processingTarget?.quotationTarget.input==='additionalImages'?'추가이미지':'대표이미지';
+  const draftSourceMatches=(snapshot:ImageEditView['product'])=>!snapshot||snapshot.id===productId&&snapshot.version===version&&snapshot.imageKeys.includes(draftProcessingTarget?.sourceKey??'');
+  const targetCurrent=draftProcessingTarget ? !poolReadPending && draftSourceMatches(view?.product) && processingTargetActive && draftProcessingTarget.capture.current() && draftProcessingTarget.capture.keys[draftProcessingTarget.index]===draftProcessingTarget.sourceKey : !processingTarget||processingTargetActive&&processingTarget.productVersion===version&&imageKeys.includes(processingTarget.sourceKey)
     &&processingTarget.quotationTarget.kind==='quotation'&&!!processingTarget.quotationTarget.optionId
     &&(processingTarget.quotationTarget.input==='mainImage'&&processingTarget.quotationTarget.slotIndex===0&&processingTarget.quotationTarget.value===processingTarget.sourceKey
       ||processingTarget.quotationTarget.input==='additionalImages'&&Number.isSafeInteger(processingTarget.quotationTarget.slotIndex)&&processingTarget.quotationTarget.slotIndex>=0&&processingTarget.quotationTarget.slotIndex<30
@@ -87,6 +91,10 @@ function ImageGenerationContent({ productId, version, imageKeys, active=true, on
     onAvailabilityChange?.(active&&configurationRead?.token===configurationToken?{productId,productVersion:version,configured:configurationRead.configured}:null);
     return()=>onAvailabilityChange?.(null);
   },[configurationRead,configurationToken,productId,version,onAvailabilityChange,active]);
+  useEffect(()=>{
+    if(!draftProcessingTarget||handledProcessing.current===draftProcessingTarget.sequence||!targetCurrent||imageWorkBusy||activeRequest.current)return;
+    handledProcessing.current=draftProcessingTarget.sequence;setSourceKey(draftProcessingTarget.sourceKey);setPurpose('cleanup');setConfirmed(false);
+  },[draftProcessingTarget,targetCurrent,imageWorkBusy]);
   useEffect(()=>{
     if(!processingTarget||handledProcessing.current===processingTarget.sequence||!currentProcessing()||imageWorkBusy||activeRequest.current)return;
     handledProcessing.current=processingTarget.sequence;
@@ -121,16 +129,17 @@ function ImageGenerationContent({ productId, version, imageKeys, active=true, on
     sourceRef.current?.focus({ preventScroll: true });
   },[translationTarget,imageWorkBusy,imageKeys,prompt,pinned]);
   function beginRequest(allowMissing=false,readOnly=false) {
-    if(!mounted.current||liveProcessingToken.current!==processingToken||!readOnly&&(!targetCurrent||selectedApplyPending)||activeRequest.current||(!allowMissing&&!view))return null;
+    if(!mounted.current||liveProcessingToken.current!==processingToken||!readOnly&&(!targetCurrent||selectedApplyPending||!!pendingPoolRead.current)||activeRequest.current||(!allowMissing&&!view))return null;
     const controller=new AbortController();activeRequest.current=controller;return controller;
   }
   function finishRequest(controller:AbortController) {
     if(activeRequest.current===controller){activeRequest.current=null;if(mounted.current)setBusy(false);}
   }
-  const source = processingTarget ? imageKeys.includes(processingTarget.sourceKey)?processingTarget.sourceKey:'' : imageKeys.includes(sourceKey) ? sourceKey : imageKeys[0] ?? '';
+  const pinnedSource = draftProcessingTarget?.sourceKey ?? processingTarget?.sourceKey, pinnedVersion = draftProcessingTarget?.productVersion ?? processingTarget?.productVersion;
+  const source = draftProcessingTarget ? draftProcessingTarget.sourceKey : processingTarget ? imageKeys.includes(processingTarget.sourceKey)?processingTarget.sourceKey:'' : imageKeys.includes(sourceKey) ? sourceKey : imageKeys[0] ?? '';
   const job = view?.jobs.find(item => item.id === selectedId) ?? view?.jobs[0] ?? null;
   const stale = Boolean(job && (job.productVersion !== version || job.review.settingsFingerprint !== view?.settingsFingerprint || job.review.recipeVersion !== imageRecipeVersion));
-  const jobMatchesTarget=!processingTarget||!!job&&job.review.sourceKey===processingTarget.sourceKey&&job.productVersion===processingTarget.productVersion&&job.review.purpose==='cleanup';
+  const jobMatchesTarget=draftProcessingTarget ? !!job && job.review.sourceKey === draftProcessingTarget.sourceKey && job.productVersion === draftProcessingTarget.productVersion && job.review.purpose === 'cleanup' : !processingTarget||!!job&&job.review.sourceKey===processingTarget.sourceKey&&job.productVersion===processingTarget.productVersion&&job.review.purpose==='cleanup';
 
   function attachmentSnapshot(next:ImageEditView) {
     const {productId,imageKeys}=attachmentContext.current;
@@ -143,9 +152,9 @@ function ImageGenerationContent({ productId, version, imageKeys, active=true, on
       &&snapshot.imageKeys.includes(item.result.storageKey)&&!imageKeys.includes(item.result.storageKey));
     return recovered?JSON.stringify([snapshot.id,snapshot.version,snapshot.imageKeys]):'';
   }
-  function notifyAttachment(snapshot:string) {
-    if(snapshot&&notifiedAttachment.current!==snapshot){notifiedAttachment.current=snapshot;attachmentContext.current.onProductChanged?.();}
-  }
+  const notifyAttachment=useMemo(()=>(snapshot:string)=>{
+    if(!draftProcessingTarget&&snapshot&&notifiedAttachment.current!==snapshot){notifiedAttachment.current=snapshot;attachmentContext.current.onProductChanged?.();}
+  },[draftProcessingTarget]);
   const readAvailability=useMemo(()=>(next:ImageEditView)=>{
     // A legacy history remains readable, but only the current owned product
     // snapshot can enable a new generative entry in its parent workspace.
@@ -166,22 +175,39 @@ function ImageGenerationContent({ productId, version, imageKeys, active=true, on
       if(activeRequest.current===controller){activeRequest.current=null;if(mounted.current){setLoadedVersion(version);setBusy(false);}}if(historyRequest.current===controller)historyRequest.current=null;
     });
     return () => { controller.abort();if(activeRequest.current===controller){activeRequest.current=null;if(mounted.current)setBusy(false);}if(historyRequest.current===controller)historyRequest.current=null; };
-  }, [productId, version,readAvailability,configurationToken,active]);
+  }, [productId, version,readAvailability,configurationToken,active,notifyAttachment]);
   async function action(body: Record<string, unknown>) {
+    if(draftProcessingTarget&&!draftSourceMatches(liveView.current?.product))return;
     if(['prepare','approve','execute'].includes(String(body.action))&&(!liveView.current?.configuration.configured||liveView.current.jobs.some(item=>item.status==='running')))return;
-    if(pinned&&(!targetCurrent||body.action==='prepare'&&(body.sourceKey!==processingTarget!.sourceKey||body.purpose!=='cleanup'||body.expectedVersion!==processingTarget!.productVersion)
+    if(pinned&&(!targetCurrent||body.action==='prepare'&&(body.sourceKey!==pinnedSource||body.purpose!=='cleanup'||body.expectedVersion!==pinnedVersion)
       ||body.action!=='prepare'&&(!jobMatchesTarget||body.jobId!==job?.id)))return;
+    const poolWrite=!!draftProcessingTarget&&(body.action==='execute'||body.action==='attach');
+    const mayWritePool=()=>draftSourceMatches(liveView.current?.product)&&!!draftProcessingTarget?.capture.current()&&beforeSelectedImageApply?.(draftProcessingTarget.capture.root(),panelRef.current)===true;
+    if(poolWrite&&!mayWritePool()){setError('다른 단계의 수정값 또는 진행 중인 작업을 확인한 뒤 이미지 결과를 보관해주세요.');return;}
     const controller=beginRequest();if(!controller)return;
     setBusy(true); setError('');
     try {
-      const response = await fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`, { signal:controller.signal,method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      // Execute and attach can mutate the pool before local result adoption.
+      // Recheck the captured owner/producer guard at that dispatch boundary.
+      if(poolWrite&&!mayWritePool())throw Error('다른 단계의 수정값 또는 진행 중인 작업을 확인해주세요.');
+      if(poolWrite){pendingPoolRead.current={target:{...draftProcessingTarget!,productId},jobId:String(body.jobId),review:job!.review,action:body.action as 'execute'|'attach'};setPoolReadPending(true);}
+      const response = await sourceFetch(`/api/products/${encodeURIComponent(productId)}/image-generation`, { signal:controller.signal,method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
       const value = await response.json() as Partial<ImageEditView> & { job?: ImageEditJob; error?: string };
       if(controller.signal.aborted)return;
       if (!response.ok || !value.job) throw Error(value.error ?? '이미지 요청을 처리하지 못했습니다.');
       const saved = value.job;
+      const pending=poolWrite?pendingPoolRead.current:null;
+      if(pending&&(saved.id!==pending.jobId||saved.productId!==pending.target.productId||saved.productVersion!==pending.target.productVersion||JSON.stringify(saved.review)!==JSON.stringify(pending.review)))throw Error('원래 AI 작업의 저장 결과를 확인해주세요.');
       setView(previous => ({ configuration: value.configuration ?? previous!.configuration, settings: value.settings ?? previous!.settings, settingsFingerprint: value.settingsFingerprint ?? previous!.settingsFingerprint, jobs: [saved, ...(previous?.jobs ?? []).filter(item => item.id !== saved.id)] }));
       setSelectedId(saved.id); setConfirmed(false);
-      if (saved.result?.attached) onProductChanged?.();
+      if (saved.result?.attached) {
+        if(draftProcessingTarget){const pending=pendingPoolRead.current;if(!pending||saved.id!==pending.jobId||JSON.stringify(saved.review)!==JSON.stringify(pending.review))throw Error('원래 AI 작업의 저장 결과를 확인해주세요.');await applyAdditionalImageDraftAiResult(pending.target,saved,(url,init)=>fetch(url,{...init,signal:controller.signal}),false);uiMutation.current?.confirm();uiMutation.current=null;pendingPoolRead.current=null;setPoolReadPending(false);}
+        onProductChanged?.();
+      }else if(pending){
+        const read=await fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`,{cache:'no-store',signal:controller.signal});
+        if(!read.ok)throw Error('원래 AI 작업의 종료 상태를 확인하지 못했습니다.');
+        await settlePoolTerminal(await read.json() as ImageEditView,controller.signal);
+      }
     } catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '요청 실패'); }
     finally { finishRequest(controller); }
   }
@@ -221,7 +247,17 @@ function ImageGenerationContent({ productId, version, imageKeys, active=true, on
     } catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '옵션 이미지 적용 실패'); }
     finally { finishRequest(controller); }
   }
+  const uiMutation=useRef<import('@/app/registration-ui-reads').UiMutation|null>(null);
+  const sourceFetch:typeof fetch=(url,init)=>{if((init?.method??'GET')!=='GET')uiMutation.current??=onBeginSourceWrite?.()??null;return fetch(url,init);};
   async function adoptSelectedMain(){
+    if(pendingPoolRead.current)return;
+    if (draftProcessingTarget) {
+      if (!draftSourceMatches(liveView.current?.product) || !job || !draftProcessingTarget.capture.current() || !beforeSelectedImageApply?.(draftProcessingTarget.capture.root(),panelRef.current)) return;
+      const controller=beginRequest(false,true);if(!controller)return;setBusy(true);setError('');
+      try { await applyAdditionalImageDraftAiResult({ ...draftProcessingTarget, productId },job,(url,init)=>fetch(url,{...init,signal:controller.signal})); uiMutation.current?.confirm();uiMutation.current=null;setNotice('검토한 AI 결과를 추가 이미지 초안에 보관했습니다. 추가 이미지에서 저장해주세요.');onProductChanged?.(); }
+      catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'추가 이미지 초안 보관 실패');}finally{finishRequest(controller);}return;
+    }
+
     const target=processingTarget,selected=job;
     if(!target?.quotationView||!target.ownerId||!selected||!processingResultActive||!jobMatchesTarget||!selected.result?.attached||!beforeSelectedImageApply?.()
       ||selectedApply.current&&(selectedApply.current.job.id!==selected.id||selectedApply.current.target.quotationTarget!==target.quotationTarget))return;
@@ -253,14 +289,51 @@ function ImageGenerationContent({ productId, version, imageKeys, active=true, on
       selectedApply.current=null;setSelectedApplyPending(false);setNotice(`선택 옵션에 저장된 AI ${processingImageLabel}를 확인했습니다. 같은 결과를 다시 저장하지 않았습니다.`);onProductChanged?.();
     }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:`${processingImageLabel} 저장 결과 확인 실패`);}finally{finishRequest(controller);}
   }
+  async function settlePoolTerminal(history:ImageEditView,signal:AbortSignal){
+    const pending=pendingPoolRead.current;if(!pending||pending.action!=='execute')return false;
+    const {target,review}=pending,capture=target.capture,product=history.product;
+    const fail=():never=>{throw Error('원래 AI 작업의 종료 상태와 상품 이미지 목록을 확인하지 못했습니다. 다시 조회해주세요.');};
+    if(!capture.readable()||!isOwnedImageKey(target.ownerId,target.sourceKey)||capture.keys[target.index]!==target.sourceKey
+      ||!product||product.id!==target.productId||!Number.isFinite(Date.parse(product.version))||Date.parse(product.version)<Date.parse(target.productVersion)
+      ||!Array.isArray(product.imageKeys)||product.imageKeys.length>PRODUCT_IMAGE_POOL_LIMIT||new Set(product.imageKeys).size!==product.imageKeys.length||product.imageKeys.some(key=>!isOwnedImageKey(target.ownerId,key))||!Array.isArray(history.jobs))return fail();
+    const matches=history.jobs.filter(item=>item.id===pending.jobId);if(matches.length!==1)return fail();const job=matches[0];
+    if(job.productId!==target.productId||job.productVersion!==target.productVersion||job.contentRevision!==target.originView.contentRevision
+      ||JSON.stringify(job.review)!==JSON.stringify(review)||review.sourceKey!==target.sourceKey||review.purpose!=='cleanup'||!/^[a-f0-9]{64}$/.test(review.fingerprint)||!/^[a-f0-9]{64}$/.test(review.source.sha256))return fail();
+    if(job.status!=='failed'&&!(job.status==='completed'&&job.result?.attached===false))return false;
+    const key=target.ownerId+'/ai-'+pending.jobId+'.png';
+    if(!/^[a-f0-9-]{36}$/.test(pending.jobId)||!job.finishedAt||!Number.isFinite(Date.parse(job.finishedAt))||!job.startedAt||!Number.isFinite(Date.parse(job.startedAt))||Date.parse(job.finishedAt)<Date.parse(job.startedAt)||product.imageKeys.includes(key))return fail();
+    if(job.status==='failed'){
+      if(job.result!==null||!job.error||typeof job.error.code!=='string'||!job.error.code||job.error.code==='PROVIDER_OUTCOME_UNCERTAIN'||typeof job.error.message!=='string'||!job.error.message||typeof job.error.mayHaveBeenCharged!=='boolean')return fail();
+    }else{
+      const result=job.result!;
+      if(job.error!==null||result.storageKey!==key||!isOwnedImageKey(target.ownerId,result.storageKey)||result.provenance!=='generated'||result.reviewRequired!==true||result.assignedRole!==false||result.purpose!=='cleanup'||result.model!==review.model
+        ||result.mime!=='image/png'||!/^[a-f0-9]{64}$/.test(result.sha256)||!Number.isSafeInteger(result.bytes)||result.bytes<=0||result.bytes>MAX_IMAGE_BYTES||`${result.width}x${result.height}`!==review.size||!Number.isFinite(Date.parse(result.generatedAt)))return fail();
+      const file=await fetch(`/api/files/${result.storageKey.split('/').map(encodeURIComponent).join('/')}`,{cache:'no-store',signal});
+      if(!file.ok||file.redirected||file.headers.get('content-type')?.split(';')[0].trim()!=='image/png')return fail();
+      const blob=await file.blob();if(blob.size!==result.bytes||JSON.stringify(await imageMetadata(new Uint8Array(await blob.arrayBuffer()),'image/png'))!==JSON.stringify({mime:result.mime,width:result.width,height:result.height,bytes:result.bytes,sha256:result.sha256}))return fail();
+    }
+    signal.throwIfAborted();if(pendingPoolRead.current!==pending||!capture.readable())return fail();
+    liveView.current=history;setView(history);setSelectedId(job.id);
+    // A terminal execute can prove no attachment; an unchanged attach read cannot.
+    uiMutation.current?.confirm();uiMutation.current=null;pendingPoolRead.current=null;setPoolReadPending(false);
+    setNotice(job.status==='failed'?'원래 AI 작업의 실패 상태를 확인했습니다. 새 요청은 다시 검토·승인해야 합니다.':'생성 결과는 보관되어 있지만 상품에 첨부되지 않았습니다. 현재 원본을 확인한 뒤 직접 첨부해주세요.');
+    if(product.version!==version)onProductChanged?.();return true;
+  }
   async function refresh() {
     const controller=beginRequest(true,true);if(!controller)return;
     loadedHistory.current=null;setBusy(true); setError('');setConfigurationRead(null);
-    try { const response = await fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`,{cache:'no-store',signal:controller.signal}); const next = await response.json() as ImageEditView & { error?: string };if(controller.signal.aborted)return; if (!response.ok) throw Error(next.error ?? '조회 실패'); const snapshot=attachmentSnapshot(next);setView(next);readAvailability(next);loadedHistory.current=configurationToken;setLoadedVersion(version);notifyAttachment(snapshot); }
+    try { const response = await fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`,{cache:'no-store',signal:controller.signal}); const next = await response.json() as ImageEditView & { error?: string };if(controller.signal.aborted)return; if (!response.ok) throw Error(next.error ?? '조회 실패'); const snapshot=attachmentSnapshot(next);setView(next);readAvailability(next);loadedHistory.current=configurationToken;setLoadedVersion(version);if(draftProcessingTarget||pendingPoolRead.current){
+      if(await settlePoolTerminal(next,controller.signal))return;
+      const pending=pendingPoolRead.current,target=pending?.target??{...draftProcessingTarget!,productId};
+      if(pending&&next.jobs.filter(item=>item.id===pending.jobId).length!==1)throw Error('원래 AI 작업을 하나로 확인하지 못했습니다.');
+      const completed=next.jobs.find(item=>item.id===(pending?.jobId??job?.id)&&(!pending||JSON.stringify(item.review)===JSON.stringify(pending.review))&&item.status==='completed'&&item.result?.attached);
+      if(completed){await applyAdditionalImageDraftAiResult(target,completed,(url,init)=>fetch(url,{...init,signal:controller.signal}),false);uiMutation.current?.confirm();uiMutation.current=null;pendingPoolRead.current=null;setPoolReadPending(false);onProductChanged?.();}
+    }else notifyAttachment(snapshot); }
     catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '조회 실패'); } finally { finishRequest(controller); }
   }
-  return <section ref={panelRef} className="translation-panel image-generation-panel" aria-label="원본 이미지 AI 가공">
+  return <section data-free-image-editor={draftProcessingTarget ? true : undefined} ref={panelRef} className="translation-panel image-generation-panel" aria-label="원본 이미지 AI 가공">
     <h4>원본 이미지 AI 가공</h4>
+    {draftProcessingTarget&&<div className="connection-note"><strong>추가 이미지 초안 AI 처리</strong><p>생성 결과를 검토한 뒤 초안에 적용하고 추가 이미지에서 저장해주세요.</p>{onCloseProcessingTarget&&<button type="button" className="btn ghost" disabled={imageWorkBusy} onClick={onCloseProcessingTarget}>추가 이미지 AI 처리 종료</button>}</div>}
     {processingTarget&&<div className="connection-note" aria-label={`선택 옵션 ${processingImageLabel} AI 처리 대상`}><strong>{`선택 옵션 ${processingImageLabel} AI 처리`}</strong><p>{`옵션 ${processingTarget.quotationTarget.optionId} · 현재 견적 ${processingImageLabel}${processingTarget.quotationTarget.input==='additionalImages'?` ${processingTarget.quotationTarget.slotIndex+1}번째`:''} 한 장의 상품 바깥 설명 문구를 정리합니다.`}</p><p>{`원본과 결과를 검토한 뒤, 아래에서 선택 옵션 ${processingImageLabel}에 적용하세요. 번역·직접 편집과는 별도의 AI 이미지 가공입니다.`}</p>{!targetCurrent&&<p role="status">{processingResultActive&&jobMatchesTarget&&job?.status==='completed'&&job.result?.attached?'저장된 AI 결과를 확인한 뒤 선택 옵션에 적용할 수 있습니다.':`편집 대상이나 저장 버전이 변경되었습니다. 현재 ${processingImageLabel}의 AI 처리를 다시 선택해주세요. 입력한 요청은 유지했습니다.`}</p>}{onCloseProcessingTarget&&<button type="button" className="btn ghost" disabled={imageWorkBusy} onClick={()=>{if(mounted.current&&liveProcessingToken.current===processingToken&&!imageWorkBusy&&!activeRequest.current)onCloseProcessingTarget();}}>선택 옵션 AI 처리 종료 · 공통 작업으로 돌아가기</button>}</div>}
     <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>저장된 설정·실행 이력 새로고침 · 무료</button>
     <p>상품에 업로드한 PNG·JPEG·WebP 한 장을 가공합니다. 결과는 새 파일로 보관하며, 원본과 기존 이미지 역할을 보존합니다.</p>
@@ -276,7 +349,7 @@ function ImageGenerationContent({ productId, version, imageKeys, active=true, on
         {view.settings.translationPrompt && <details><summary>저장된 번역 지침</summary><pre>{view.settings.translationPrompt}</pre></details>}
       </div>
       {!imageKeys.length && <p>먼저 이 상품에 원본 이미지를 업로드해주세요. 원본 없이 임의의 상품 이미지를 생성하지 않습니다.</p>}
-      <label>가공할 원본<select ref={sourceRef} value={source} onChange={event => {if(!pinned&&currentProcessing())setSourceKey(event.target.value);}} disabled={busy || pinned || !imageKeys.length}>{!source && <option value="">원본 이미지 없음</option>}{imageKeys.filter(key=>!processingTarget||key===processingTarget.sourceKey).map((key) => <option key={key} value={key}>이미지 {imageKeys.indexOf(key) + 1} · {key.split('/').at(-1)}</option>)}</select></label>
+      <label>가공할 원본<select ref={sourceRef} value={source} onChange={event => {if(!pinned&&currentProcessing())setSourceKey(event.target.value);}} disabled={busy || pinned || !imageKeys.length}>{!source && <option value="">원본 이미지 없음</option>}{imageKeys.filter(key=>!pinnedSource||key===pinnedSource).map((key) => <option key={key} value={key}>이미지 {imageKeys.indexOf(key) + 1} · {key.split('/').at(-1)}</option>)}</select></label>
       {source && <img src={imageUrl(source)} alt="선택한 원본 이미지" style={{ maxWidth: 240, maxHeight: 240, objectFit: 'contain' }} />}
       <label>작업 목적<select value={pinned?'cleanup':purpose} onChange={event => {if(!pinned&&currentProcessing())setPurpose(event.target.value as ImagePurpose);}} disabled={busy||pinned}><option value="translate">이미지 속 문구 번역</option><option value="thumbnail">대표 이미지 초안</option><option value="detail">상세 이미지 초안</option><option value="cleanup">대표·추가 이미지 문구 정리</option></select></label>
       {purpose==='cleanup'&&<p>상품 바깥 설명 문구를 정리합니다. 상품 표면의 인쇄는 유지합니다.</p>}
@@ -311,7 +384,7 @@ function ImageGenerationContent({ productId, version, imageKeys, active=true, on
         {job.status === 'approved' && <button className="btn blue" type="button" disabled={busy || selectedApplyPending || historyRunning || stale || !targetCurrent || !jobMatchesTarget || !view.configuration.configured} onClick={() => void action({ action: 'execute', jobId: job.id })}>승인한 이미지 1장 가공 · 비용 발생</button>}
         {job.status === 'running' && <><p>실행 중이거나 결과 확인이 필요한 상태입니다. 같은 작업으로 유료 호출을 반복하지 않습니다.</p><button className="btn" type="button" disabled={busy} onClick={() => void refresh()}>저장된 실행 상태 새로고침 · 무료</button></>}
         {job.error && <p role="alert">{job.error.message}{job.error.mayHaveBeenCharged ? ' 비용이 발생했을 수 있습니다.' : ''}</p>}
-        {job.result && <div className="translation-field"><h4>생성 결과 검토</h4><img src={imageUrl(job.result.storageKey)} alt="AI 가공 결과 · 검토 필요" style={{ maxWidth: '100%', maxHeight: 480, objectFit: 'contain' }} /><p>번역 정확성·상표·인증·법적 표시사항을 확인한 결과가 아닙니다. 원본과 비교한 뒤 이미지 역할을 지정해주세요.</p><p>{job.result.attached ? '상품 이미지 목록에 추가했습니다. 대표·상세 역할은 자동 지정하지 않았습니다.' : '가공 중 상품이 변경되어 결과만 보관했습니다. 아래 버튼은 저장한 결과를 무료로 첨부합니다.'}</p>{pinned&&job.result.attached&&<><p role="status">{`원본과 결과를 비교한 뒤 선택 옵션의 최종 견적 ${processingImageLabel}에 적용할 수 있습니다.`}</p>{processingTarget?.quotationView&&processingTarget.ownerId&&<button type="button" className="btn primary" disabled={busy||selectedApplyPending||!processingResultActive||!jobMatchesTarget||!imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptSelectedMain()}>{`선택 옵션 ${processingImageLabel}에 적용`}</button>}</>}{!pinned&&job.result.attached && <><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptRoles()}>검토한 결과를 원본의 대표·추가·상세 위치에 적용</button><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptOptionImages()}>검토한 결과를 같은 원본의 옵션 대표 이미지에 적용</button><small>가공 요청 이후 콘텐츠를 수정했다면 이미지 편집에서 직접 선택해주세요.</small></>}{!job.result.attached && <button className="btn" type="button" disabled={busy||selectedApplyPending||!targetCurrent||!jobMatchesTarget} onClick={() => void action({ action: 'attach', jobId: job.id, expectedVersion: version })}>생성된 결과를 현재 상품에 추가 · 무료</button>}</div>}
+        {job.result && <div className="translation-field"><h4>생성 결과 검토</h4><img src={imageUrl(job.result.storageKey)} alt="AI 가공 결과 · 검토 필요" style={{ maxWidth: '100%', maxHeight: 480, objectFit: 'contain' }} /><p>번역 정확성·상표·인증·법적 표시사항을 확인한 결과가 아닙니다. 원본과 비교한 뒤 이미지 역할을 지정해주세요.</p><p>{job.result.attached ? '상품 이미지 목록에 추가했습니다. 대표·상세 역할은 자동 지정하지 않았습니다.' : '가공 중 상품이 변경되어 결과만 보관했습니다. 아래 버튼은 저장한 결과를 무료로 첨부합니다.'}</p>{pinned&&job.result.attached&&<><p role="status">{`원본과 결과를 비교한 뒤 선택 옵션의 최종 견적 ${processingImageLabel}에 적용할 수 있습니다.`}</p>{(draftProcessingTarget||processingTarget?.quotationView&&processingTarget.ownerId)&&<button type="button" className="btn primary" disabled={busy||selectedApplyPending||poolReadPending||!processingResultActive||!jobMatchesTarget||!draftProcessingTarget&&!imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptSelectedMain()}>{`선택 옵션 ${processingImageLabel}에 적용`}</button>}</>}{!pinned&&job.result.attached && <><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptRoles()}>검토한 결과를 원본의 대표·추가·상세 위치에 적용</button><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptOptionImages()}>검토한 결과를 같은 원본의 옵션 대표 이미지에 적용</button><small>가공 요청 이후 콘텐츠를 수정했다면 이미지 편집에서 직접 선택해주세요.</small></>}{!job.result.attached && <button className="btn" type="button" disabled={busy||selectedApplyPending||!targetCurrent||!jobMatchesTarget} onClick={() => void action({ action: 'attach', jobId: job.id, expectedVersion: version })}>생성된 결과를 현재 상품에 추가 · 무료</button>}</div>}
       </div>}
     </>}
   </section>;

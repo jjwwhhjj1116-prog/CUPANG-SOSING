@@ -2,6 +2,7 @@ import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-pr
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { createRequire } from 'node:module';
@@ -66,11 +67,12 @@ function harness(initial = {}, boundaries = {}) {
   function load(file) {
     if (modules.has(file)) return modules.get(file);
     const exports = {}; modules.set(file, exports);
-    const source = fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8') + (file.endsWith('dashboard-client.tsx') ? '\nexport { DetailPanel };' : '');
+    const before=process.env.ADDITIONAL_DRAFT_BEFORE,mirror=before?path.join(before,file):null;
+    const source = fs.readFileSync(mirror&&fs.existsSync(mirror)?mirror:new URL('../' + file, import.meta.url), 'utf8') + (file.endsWith('dashboard-client.tsx') ? '\nexport { DetailPanel };' : '');
     vm.runInNewContext(ts.transpileModule(source, { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
       { exports, AbortController, URL, URLSearchParams, TextEncoder, TextDecoder, Date, Intl, crypto, structuredClone,
         fetch: async (...args) => { calls.reads++; if(boundaries.fetch)return boundaries.fetch(...args);throw Error('Stage navigation must not send a request through DetailPanel.'); },
-        window: { print() {}, setTimeout() {} }, require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
+        window: { print() {}, setTimeout() {} }, require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name==='@/app/registration-ui-reads')return load('app/registration-ui-reads.tsx');
           if (name === 'react') return hooks;
           if (name === 'react/jsx-runtime') return { jsx: (type, received, key) => ({ type, props: received, key }), jsxs: (type, received, key) => ({ type, props: received, key }), Fragment: 'fragment' };
           if (name.endsWith('.css')) return {};

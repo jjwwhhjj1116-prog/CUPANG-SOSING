@@ -107,20 +107,31 @@ export function projectNativeRequiredForm(schema: Node, payload: Node): Node {
   }
   const product = shared.productPage, image = shared.imagePage;
   if (!object(product) || !object(image) || !object(model.productPage) || !object(model.productPage.commonAttributes) || !object(model.imagePage) || !object(model.imagePage.images) || !object(model.imagePage.details)) fail();
+  const packaging = object(model.logisticsPage) ? Object.keys(model.logisticsPage).filter(key => {
+    if (!['skuUnitBoxWeight', 'skuUnitBoxDimension'].includes(key)) return false;
+    const field = nodeAt(schema, ['logisticsPage', key]);
+    return !object(field.properties) && (field.type === 'string' || Array.isArray(field.type) && field.type.length === 2 && field.type.includes('string') && field.type.includes('null'));
+  }) : [];
   for (const [page, key] of [['productPage', 'unexposedAttributes'], ['legalPage', 'certificates'], ['legalPage', 'notices']]) {
     const value = shared[page];
     if (object(value) && Object.hasOwn(value, key)) value[key] = sortedRows(nodeAt(schema, [page, key]), value[key]);
   }
   const documents = members.map((member, index) => {
     if (!object(member) || !object(member.productPage) || !object(member.productPage.commonAttributes) || !object(member.imagePage) || !object(member.imagePage.images) || !object(member.imagePage.details)) return fail();
-    // Native form shares every other page/input from the first member. Reject
-    // a meaningful per-option divergence rather than overwrite it silently.
+    // Exact schema-declared packaging belongs to each SKU. Reject differences
+    // in the remaining shared inputs rather than overwrite them silently.
     for (const [page, value] of Object.entries(shared)) {
       if (!object(value) || !object(member[page])) return fail();
-      const ignored = page === 'productPage' ? ['commonAttributes'] : page === 'imagePage' ? ['images', 'details'] : page === 'sourcingPage' ? ['sourcingChannelId', 'sourcingChannelType'] : [];
+      const ignored = page === 'productPage' ? ['commonAttributes'] : page === 'imagePage' ? ['images', 'details'] : page === 'sourcingPage' ? ['sourcingChannelId', 'sourcingChannelType'] : page === 'logisticsPage' ? packaging : [];
       if (Object.keys(value).some(key => !ignored.includes(key) && !same((first[page] as Node)[key], (member[page] as Node)[key]))) return fail();
     }
     const doc = merge(model, shared) as Node, common: Node = {}, wantedCommon = member.productPage.commonAttributes;
+    for (const key of packaging) {
+      if (!object(member.logisticsPage) || !object(doc.logisticsPage)) return fail();
+      const value = member.logisticsPage[key], field = nodeAt(schema, ['logisticsPage', key]);
+      if (typeof value !== 'string' && !(value === null && Array.isArray(field.type) && field.type.includes('null'))) return fail();
+      doc.logisticsPage[key] = value;
+    }
     for (const key of Object.keys((model.productPage as Node).commonAttributes as Node)) {
       const value = wantedCommon[key];
       if (key === 'exposedAttributes') { common[key] = sortedRows(nodeAt(schema, ['productPage', 'commonAttributes', key]), value, true); continue; }

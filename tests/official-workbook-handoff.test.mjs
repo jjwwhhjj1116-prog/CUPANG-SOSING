@@ -76,22 +76,27 @@ for(const company of schemaCompanies)test(`official workbook evidence can prepar
   const osrp=view.resolved.schema.fields.find(field=>field.hubWire?.path.join('.')==='productPage.commonAttributes.osrp');assert.equal(osrp.required,false);
   const preview=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview',profileId:profile.id}}));
   assert.equal(preview.report.missingRequired.length,0);
-  assert.ok(preview.report.mappingCoverage.some(field=>field.fieldId===osrp.id&&field.workbookOnlyAutomatic===true));
-  assert.equal(preview.submissionReview.issues.find(issue=>issue.code==='EXCEL_OPTIONAL_SINGLE_OMITTED').kind,'review');
+  assert.ok(!preview.report.mappingCoverage.some(field=>field.fieldId===osrp.id));
+  assert.ok(!preview.submissionReview.issues.some(issue=>issue.fieldId===osrp.id));
   const coverage=h.load('app/exports/quotation-fields.ts');
-  assert.ok(coverage.quotationMappingIssues(view.resolved,profile).some(issue=>issue.fieldId===osrp.id&&issue.kind==='error'),'the stored evidence flag alone is not proof of the actual original file');
+  assert.ok(!coverage.quotationMappingIssues(view.resolved,profile).some(issue=>issue.fieldId===osrp.id),'an absent optional price needs no mapping');
+  // Retain the legacy populated-automatic exemption controls independently of
+  // the corrected resolver, which no longer manufactures this shop price.
+  const legacy=structuredClone(view.resolved);for(const row of legacy.rows)row.fields[osrp.id]={...row.fields[osrp.id],value:'14000',source:'pricing'};
+  assert.ok(coverage.quotationMappingIssues(legacy,profile).some(issue=>issue.fieldId===osrp.id&&issue.kind==='error'),'the stored evidence flag alone is not proof of the actual original file');
   const verified=await h.load('app/official-hub-template.ts').verifyOfficialWorkbookTemplate(bytes,profile);
+  assert.equal(coverage.quotationMappingIssues(legacy,profile,verified).find(issue=>issue.fieldId===osrp.id).code,'EXCEL_OPTIONAL_SINGLE_OMITTED');
   for(const mutate of [
    resolved=>{resolved.schema.fields.find(field=>field.id===osrp.id).required=true;},
    resolved=>{resolved.schema.fields.find(field=>field.id===osrp.id).hubWire.path=['productPage','commonAttributes','otherPrice'];},
    resolved=>{for(const row of resolved.rows)row.fields[osrp.id].source='schema';},
-  ]){const resolved=structuredClone(view.resolved);mutate(resolved);assert.ok(coverage.quotationMappingIssues(resolved,profile,verified).some(issue=>issue.fieldId===osrp.id&&issue.kind==='error'));}
+  ]){const resolved=structuredClone(legacy);mutate(resolved);assert.ok(coverage.quotationMappingIssues(resolved,profile,verified).some(issue=>issue.fieldId===osrp.id&&issue.kind==='error'));}
   const empty=structuredClone(view.resolved);for(const row of empty.rows)row.fields[osrp.id]={...row.fields[osrp.id],value:'',source:'empty'};
   assert.ok(!coverage.quotationMappingIssues(empty,profile,verified).some(issue=>issue.fieldId===osrp.id),'an absent optional value remains acceptable');
   const response=await h.route(base+'/quotation',{method:'POST',body:{action:'export',profileId:profile.id,fingerprint:preview.fingerprint}});assert.equal(response.status,200,await response.clone().text());
   const archive=new Uint8Array(await response.arrayBuffer()),files=readPackageZip(archive),prepared=await prepareAttachments(archive);assert.equal(prepared.includedOptions,6);assert.equal(prepared.profileId,profile.id);assert.deepEqual(prepared.company,company);
   const document=JSON.parse(new TextDecoder().decode(files.get('quotation-fields.json')));
-  for(const row of document.rows){assert.equal(row.fields[osrp.id].source,'pricing');assert.equal(row.fields[osrp.id].value,view.resolved.rows.find(source=>source.optionId===row.optionId).fields[osrp.id].value);}
+  for(const row of document.rows){assert.equal(row.fields[osrp.id].source,'empty');assert.equal(row.fields[osrp.id].value,'');}
   const output=reader.inspectXlsxArchive(await reader.readXlsxArchive(files.get(preview.filename))),msrpColumn=profile.template.headers.indexOf('권장소비자가격');
   for(let index=0;index<6;index++){const values=reader.xlsxHeaders(output,profile.template.sheetName,index+9);assert.equal(values[1],preview.rows[index][1]);assert.equal(values[msrpColumn],String(preview.rows[index][msrpColumn]));}
   assert.equal(preview.submissionReview.errorCount,0,JSON.stringify(preview.submissionReview.issues.filter(issue=>issue.kind==='error')));
@@ -127,7 +132,8 @@ for(const company of schemaCompanies)test(`official workbook evidence can prepar
   const ordinary=JSON.parse(saved),workbookFieldIds=new Set((ordinary.template.workbookFields??[]).map(field=>field.id));
   delete ordinary.template.workbookEvidence;delete ordinary.template.workbookFields;ordinary.mappings=ordinary.mappings.filter(mapping=>!workbookFieldIds.has(mapping.field));
   h.sqlite.prepare('UPDATE category_profiles SET payload=? WHERE id=?').run(JSON.stringify(ordinary),profile.id);
-  const noEvidence=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview',profileId:profile.id}}));assert.ok(noEvidence.submissionReview.issues.some(issue=>issue.fieldId===osrp.id&&issue.kind==='error'));
+  const noEvidence=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview',profileId:profile.id}}));assert.ok(!noEvidence.submissionReview.issues.some(issue=>issue.fieldId===osrp.id));
+  assert.ok(coverage.quotationMappingIssues(legacy,ordinary).some(issue=>issue.fieldId===osrp.id&&issue.kind==='error'));
   h.sqlite.prepare('UPDATE category_profiles SET payload=? WHERE id=?').run(saved,profile.id);
   assert.deepEqual(h.objects.get(profile.template.storageKey),new Uint8Array(bytes));
  }finally{h.close();}

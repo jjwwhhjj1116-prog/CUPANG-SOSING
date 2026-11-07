@@ -10,6 +10,7 @@ import {mobileIntakeHarness} from './mobile-intake.mjs';
 import {hubSchemaSnapshot,schemaCompanies,schemaPath} from './hub-schema.mjs';
 import {quotationWorkbook} from './quotation-workbook.mjs';
 import {reviewFixture} from './selected-image-review.mjs';
+import * as pageSourcePriceBasis from '../../extensions/supplier-hub/page-source-price-basis.mjs';
 
 export const companies=schemaCompanies;
 export const plain=value=>JSON.parse(JSON.stringify(value));
@@ -30,7 +31,7 @@ function declarations(file,expose){
  return vm.runInNewContext(parts.join('\n').replaceAll('import.meta.url',JSON.stringify(url.href))+'\n({'+expose+'})',
   {assert,fs,path,vm,ts,createRequire,createHash,deflateSync,webcrypto,mobileIntakeHarness,hubSchemaSnapshot,schemaCompanies,schemaPath,quotationWorkbook,reviewFixture,
    URL,URLSearchParams,Blob,File,FormData,Response,Request,Headers,AbortController,AbortSignal,TextEncoder,TextDecoder,Uint8Array,DataView,CompressionStream,DecompressionStream,Buffer,Date,JSON,structuredClone,
-   crypto:webcrypto,console,setTimeout,clearTimeout,setImmediate});
+   crypto:webcrypto,console,process,pageSourcePriceBasis,setTimeout,clearTimeout,setImmediate});
 }
 const apiHelpers=declarations('free-image-quotation-linkage.test.mjs','fixture,png');
 const optionHelpers=declarations('option-image-editor.test.mjs','imageUI');
