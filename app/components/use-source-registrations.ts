@@ -11,6 +11,7 @@ import {validateQueryRegistrationSummary} from '@/app/source-registration';
 type SourceRegistrationState={scope?:object;ownerId?:string;items:SourceInboxItem[];error:string;queryItems?:QuerySourceCaptureSummary[];queryError?:string};
 type SourceRegistrationSession={ownerId?:string;token:object;alive:boolean;epoch:number;cancel:()=>void;accepted:Map<string,SourceInboxItem>;archived:Map<string,SourceArchiveReceipt>};
 type SourceDeliveryCompany={code:string;name:string};
+type SourceInboxBody={ownerId?:string;company?:SourceDeliveryCompany;items?:SourceInboxItem[];error?:string};
 type SourceDeliveryAttempt={token:object;epoch:number;origin:string;ownerId:string;company:SourceDeliveryCompany|null;requestId:string;controller:AbortController;posted:boolean;waiting:boolean;expiresAt:number;timer?:ReturnType<typeof setTimeout>};
 const deliveryCompany=(value:unknown):SourceDeliveryCompany|null=>{
  if(!value||typeof value!=='object')return null;const company=value as SourceDeliveryCompany;
@@ -32,12 +33,13 @@ export function useSourceRegistrations(ownerId?:string,includeQueryCaptures=fals
   if(typeof window==='undefined'||typeof document==='undefined')return;
   let alive=true,running:AbortController|null=null,queryRunning:AbortController|null=null,queryQueued=false,titleRunning:AbortController|null=null,titleQueued=false,queued=false,queuedCompany:SourceDeliveryCompany|undefined,deliveryTimer:ReturnType<typeof setTimeout>|undefined,titleRetry:ReturnType<typeof setTimeout>|undefined;
   const titleAttempts=new Map<string,number>();
+  let inboxCache:{tag:string;body:SourceInboxBody}|null=null;
   const origin=location.origin;
   const releaseDelivery=(attempt:SourceDeliveryAttempt)=>{clearTimeout(attempt.timer);attempt.controller.abort();if(delivery.current===attempt)delivery.current=null;};
   // An expired result wait is uncertainty, not a save acknowledgement. Only a
   // later foreground may retry the same immutable, idempotent worker queue.
   const expireDelivery=()=>{const attempt=delivery.current;if(attempt?.posted&&Date.now()>=attempt.expiresAt)releaseDelivery(attempt);};
-  const scope:SourceRegistrationSession={ownerId,token,alive:true,epoch:0,cancel:()=>{running?.abort();running=null;queryRunning?.abort();queryRunning=null;queryQueued=false;titleRunning?.abort();titleRunning=null;titleQueued=false;clearTimeout(titleRetry);titleRetry=undefined;queued=false;queuedCompany=undefined;clearTimeout(deliveryTimer);deliveryTimer=undefined;const attempt=delivery.current;if(attempt?.token===token)releaseDelivery(attempt);},accepted:new Map(),archived:new Map()};session.current=scope;
+  const scope:SourceRegistrationSession={ownerId,token,alive:true,epoch:0,cancel:()=>{inboxCache=null;running?.abort();running=null;queryRunning?.abort();queryRunning=null;queryQueued=false;titleRunning?.abort();titleRunning=null;titleQueued=false;clearTimeout(titleRetry);titleRetry=undefined;queued=false;queuedCompany=undefined;clearTimeout(deliveryTimer);deliveryTimer=undefined;const attempt=delivery.current;if(attempt?.token===token)releaseDelivery(attempt);},accepted:new Map(),archived:new Map()};session.current=scope;
   const active=(epoch:number)=>alive&&scope.alive&&session.current===scope&&owner.current===token&&scope.epoch===epoch&&location.origin===origin;
   const publish=(value:SourceRegistrationState)=>{const previous=current.current;value={...(previous.scope===token?previous:{}),...value,scope:token};current.current=value;setState(value);};
   async function loadQueries(){
@@ -86,14 +88,20 @@ export function useSourceRegistrations(ownerId?:string,includeQueryCaptures=fals
    if(!ownerId||expectedCompany===null||!active(scope.epoch))return;
    if(running){queued=true;if(deliveryExpectedCompany)queuedCompany=deliveryExpectedCompany;return;}
    const controller=new AbortController(),epoch=scope.epoch;running=controller;
-   const timeout=setTimeout(()=>{if(active(epoch)&&running===controller){publish({ownerId,items:current.current.scope===token?current.current.items:[],error:'수집 상품 목록 응답이 지연되고 있습니다. 표시된 이전 목록에 최신 수집본이 없을 수 있습니다. 다시 불러와주세요.'});controller.abort();}},15000);
+   const timeout=setTimeout(()=>{if(active(epoch)&&running===controller){inboxCache=null;publish({ownerId,items:current.current.scope===token?current.current.items:[],error:'수집 상품 목록 응답이 지연되고 있습니다. 표시된 이전 목록에 최신 수집본이 없을 수 있습니다. 다시 불러와주세요.'});controller.abort();}},15000);
    try{
-    const response=await fetch('/api/source-inbox',{cache:'no-store',redirect:'error',signal:controller.signal});
-    const body=await response.json().catch(()=>{throw Error('수집 상품 목록을 불러오지 못했습니다.');}) as {ownerId?:string;company?:SourceDeliveryCompany;items?:SourceInboxItem[];error?:string};
+    const cached=inboxCache;
+    const response=await fetch('/api/source-inbox',{cache:'no-store',redirect:'error',signal:controller.signal,...(cached?{headers:{'if-none-match':cached.tag}}:{})});
+    const tag=response.headers?.get('etag'),unchanged=response.status===304;
+    if(unchanged&&(!cached||tag!==cached.tag))throw Error('수집 상품 목록의 현재 확인값을 확인하지 못했습니다.');
+    const body=unchanged?cached!.body:await response.json().catch(()=>{throw Error('수집 상품 목록을 불러오지 못했습니다.');}) as SourceInboxBody;
     if(!active(epoch)||controller.signal.aborted)return;
     const readCompany=deliveryCompany(body.company);
-    if(!response.ok||body.ownerId!==ownerId||!Array.isArray(body.items)||body.items.some(item=>item.ownerId!==ownerId)||body.company!==undefined&&(!readCompany||body.items.some(item=>!sameCompany(item.company,readCompany)))
+    if(!unchanged&&!response.ok||body.ownerId!==ownerId||!Array.isArray(body.items)||body.items.some(item=>item.ownerId!==ownerId)||body.company!==undefined&&(!readCompany||body.items.some(item=>!sameCompany(item.company,readCompany)))
       ||expectedCompany!==undefined&&!sameCompany(readCompany,expectedCompany)||deliveryExpectedCompany&&!sameCompany(readCompany,deliveryExpectedCompany))throw Error(body.error||'수집 상품 목록을 확인하지 못했습니다.');
+    // Keep the validated server body separate from local title failure/review
+    // projections. A bodyless read must still revalidate this owner/company.
+    inboxCache=readCompany&&tag&&/^W\/"source-inbox-[a-f0-9]{64}"$/.test(tag)?{tag,body}:null;
     // An old read must not roll back a review acknowledgement, including a
     // refresh that raced with propagation of the saved revision.
     const items=body.items.filter(item=>{const archived=scope.archived.get(item.id);if(!archived||!sameCompany(item.company,archived.company))return true;
@@ -101,8 +109,10 @@ export function useSourceRegistrations(ownerId?:string,includeQueryCaptures=fals
      if(item.revision>archived.revision&&item.archivedAt===null){scope.archived.delete(item.id);return true;}return false;
     }).map(item=>{const accepted=scope.accepted.get(item.id);if(!accepted||readCompany&&!sameCompany(accepted.company,readCompany))return item;if(item.revision>=accepted.revision){scope.accepted.delete(item.id);return item;}return accepted;});
     for(const accepted of scope.accepted.values())if((!readCompany||sameCompany(accepted.company,readCompany))&&!items.some(item=>item.id===accepted.id))items.push(accepted);
-    publish({ownerId,items,error:''});void prepareTitles(items);
-   }catch(error){if(active(epoch)&&!controller.signal.aborted)publish({ownerId,items:current.current.scope===token?current.current.items:[],error:(error instanceof Error?error.message:'수집 상품 조회 실패')+' 이전 목록에 최신 수집본이 없을 수 있습니다. 다시 불러와주세요.'});}
+    const previous=current.current;
+    if(!unchanged||previous.scope!==token||previous.ownerId!==ownerId||previous.error||previous.items.length!==items.length||items.some((item,index)=>item!==previous.items[index]))publish({ownerId,items,error:''});
+    void prepareTitles(items);
+   }catch(error){if(active(epoch)&&!controller.signal.aborted){inboxCache=null;publish({ownerId,items:current.current.scope===token?current.current.items:[],error:(error instanceof Error?error.message:'수집 상품 조회 실패')+' 이전 목록에 최신 수집본이 없을 수 있습니다. 다시 불러와주세요.'});}}
    finally{clearTimeout(timeout);if(running===controller){running=null;if(active(epoch)&&queued){const company=queuedCompany;queued=false;queuedCompany=undefined;void load(company);}}}
   }
   const reload=()=>{void load();void loadQueries();};refresh.current=reload;

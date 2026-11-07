@@ -9,7 +9,20 @@ import {prepareCollectedSourceTitle} from '@/app/source-inbox-title-service';
 const reply=(value:unknown,status=200)=>Response.json(value,{status,headers:{'cache-control':'no-store'}});
 async function access(){const user=await getChatGPTUser(),company=user?.verifiedAccess?approvedSupplierHubCompany(user.membership):null;if(!company)return null;const owner=await getWorkspaceOwnerId(),member=user?.membership;
  return {owner,company,member:user?.userId===owner&&member?.id===owner&&member.status==='approved'&&['admin','member'].includes(member.role)?{id:owner,email:member.email.trim().toLowerCase(),role:member.role as 'admin'|'member'}:null};}
-export async function GET(){try{const auth=await access();if(!auth)return reply({error:'승인된 회사 계정으로 로그인해주세요.'},401);const items=await listSourceInboxJson(auth.owner,auth.company),metadata=JSON.stringify({ownerId:auth.owner,company:auth.company,limits:{active:SOURCE_INBOX_ACTIVE_LIMIT,retained:SOURCE_INBOX_RETENTION_LIMIT}});return new Response(metadata.slice(0,-1)+',"items":'+items+'}',{headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});}catch{return reply({error:'수집함을 불러오지 못했습니다. 이전 목록은 최신 수집 상태가 아닐 수 있습니다.'},503);}}
+export async function GET(request?:Request){
+ try{
+  const auth=await access();if(!auth)return reply({error:'승인된 회사 계정으로 로그인해주세요.'},401);
+  const items=await listSourceInboxJson(auth.owner,auth.company),metadata=JSON.stringify({ownerId:auth.owner,company:auth.company,limits:{active:SOURCE_INBOX_ACTIVE_LIMIT,retained:SOURCE_INBOX_RETENTION_LIMIT}});
+  const body=metadata.slice(0,-1)+',"items":'+items+'}',headers={'content-type':'application/json; charset=utf-8','cache-control':'no-store'};
+  // Always authenticate and serialize the current receipt first. Bound this
+  // optional optimization so a legal large list does not need another full
+  // byte buffer just to hash it; smaller responses reuse the encoded bytes.
+  if(body.length>2*1024*1024)return new Response(body,{headers});
+  const bytes=new TextEncoder().encode(body),digest=await crypto.subtle.digest('SHA-256',bytes);
+  const tag='W/"source-inbox-'+Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('')+'"';
+  return new Response(request?.headers.get('if-none-match')===tag?null:bytes,{status:request?.headers.get('if-none-match')===tag?304:200,headers:{...headers,etag:tag}});
+ }catch{return reply({error:'수집함을 불러오지 못했습니다. 이전 목록은 최신 수집 상태가 아닐 수 있습니다.'},503);}
+}
 export async function POST(request:Request){
  try{
   const auth=await access();if(!auth)return reply({error:'승인된 회사 계정으로 로그인해주세요.'},401);

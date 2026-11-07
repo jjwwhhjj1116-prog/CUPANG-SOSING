@@ -405,26 +405,41 @@ type Automatic = { value: string; source: QuotationSource; issues?: string[] };
 const literal = (value: unknown, source: QuotationSource): Automatic => ({ value: value === null || value === undefined ? '' : String(value), source: value === '' || value === null || value === undefined ? 'empty' : source });
 const htmlEscape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+function nativeSharedLegalColorId(input: QuotationResolverInput, schema: QuotationSchema): string | undefined {
+  const snapshot = input.hubSchema;
+  if (snapshot?.nativeSerializationPolicy !== 'supplier-hub-native-required-form-v1' || schema.status !== 'observed' || !input.content.initialLegalNotices) return;
+  const color = schema.fields.find(field => (field.type === 'text' || field.type === 'textarea') && !field.choices && !field.numericText && !field.numericValue
+    && !field.hubInput && quotationNoticeInput(field) === 'color' && field.hubWire?.nameKey === 'noticeItemName'
+    && ['noticeItemValue', 'noticeContent'].includes(field.hubWire.valueKey ?? ''));
+  if (!color) return;
+  // The native template retains only required object properties.
+  const form = JSON.parse(snapshot.schemaString) as { required?: unknown; properties?: { legalPage?: { required?: unknown } } };
+  const legalRequired = form.properties?.legalPage?.required;
+  if (Array.isArray(form.required) && form.required.includes('legalPage') && Array.isArray(legalRequired) && legalRequired.includes('notices')) return color.id;
+}
+
 export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQuotation {
   if(input.packagingBasis!==undefined)validateQuotationPackagingBasis(input.packagingBasis);
-  return resolveQuotationFieldsWithSchema(input, getQuotationSchema(input.categoryId, input.categoryPath,input.hubSchema,input.template));
+  const schema = getQuotationSchema(input.categoryId, input.categoryPath,input.hubSchema,input.template);
+  return resolveQuotationFieldsWithSchema(input, schema, nativeSharedLegalColorId(input, schema));
 }
 
 /** Resolve both views from one validated compilation, shared only within this call. */
 export function resolveQuotationFieldsPair(input: QuotationResolverInput): { automatic: ResolvedQuotation; resolved: ResolvedQuotation } {
   if(input.packagingBasis!==undefined)validateQuotationPackagingBasis(input.packagingBasis);
   const schema = getQuotationSchema(input.categoryId, input.categoryPath,input.hubSchema,input.template);
+  const nativeColorId = nativeSharedLegalColorId(input, schema);
   const automaticInput = { ...input,labelManualQuotationOverrides:input.overrides };
   delete automaticInput.overrides;
   delete automaticInput.packagingBasis;
   return {
-    automatic: resolveQuotationFieldsWithSchema(automaticInput, schema),
+    automatic: resolveQuotationFieldsWithSchema(automaticInput, schema, nativeColorId),
     // Consumers may edit either view. Never share mutable schema fields/choices.
-    resolved: resolveQuotationFieldsWithSchema(input, structuredClone(schema)),
+    resolved: resolveQuotationFieldsWithSchema(input, structuredClone(schema), nativeColorId),
   };
 }
 
-function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema: QuotationSchema): ResolvedQuotation {
+function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema: QuotationSchema, nativeColorId: string | undefined): ResolvedQuotation {
   const { product, settings } = input;
   const content={...input.content,label:prioritizedContentLabelFields(input.content)};
   const detail=productFactDetailDescription(content);
@@ -436,6 +451,40 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
   const overrides = input.overrides ?? emptyQuotationOverrides();
   const explicitSeoDefaultFor=explicitSeoQuotationDefaultsResolver(content,schema);
   const initialNotices = readInitialLegalNotices(content.initialLegalNotices, schema);
+  const includedOptions = options.filter(option => option.included);
+  const nativeLegalColor = nativeColorId ? schema.fields.find(field => field.id === nativeColorId) : undefined;
+  const capturedColor = nativeLegalColor && initialNotices.get(nativeLegalColor.id);
+  let sharedColorInitial: Automatic | undefined;
+  if (nativeLegalColor && capturedColor?.source === 'couplus-default') {
+    const initialValue = capturedColor.value;
+    if (!quotationValueIssues(nativeLegalColor, initialValue, undefined, capturedColor.source).length) {
+      const fieldId = nativeLegalColor.id;
+      const manual = input.labelManualQuotationOverrides ?? overrides;
+      const hasManualColor = Object.hasOwn(manual.common, fieldId) || includedOptions.some(option => option.provenance.color === 'manual'
+        || Object.hasOwn(manual.options[option.id] ?? {}, fieldId));
+      const generated = new Map(input.generatedAdoption?.entries.filter(entry => entry.fieldKey === fieldId
+        && !quotationValueIssues(nativeLegalColor, entry.value).length).map(entry => [entry.optionId, entry]));
+      const optionColors = includedOptions.map(option => {
+        const color = option.color;
+        return color && !/\p{Script=Han}/u.test(color) && !quotationValueIssues(nativeLegalColor, color).length ? color : undefined;
+      });
+      const previousColors = new Set(includedOptions.map((option, index) => optionColors[index] ?? generated.get(option.id)?.value ?? initialValue));
+      const currentAdoption = input.generatedAdoption?.resultPolicy === CURRENT_QUOTATION_RESULT_POLICY;
+      const adoptedRecognizedColor = includedOptions.some((option, index) => optionColors[index] !== undefined && generated.has(option.id));
+      const firstAdoption = generated.get(includedOptions[0]?.id ?? null);
+      // A full common result from one owned job stays visible after adoption and later edits.
+      const adoptedCommonColor = currentAdoption && firstAdoption?.value.trim() && includedOptions.every(option => {
+        const entry = generated.get(option.id);
+        return entry?.jobId === firstAdoption.jobId && entry.value === firstAdoption.value;
+      });
+      const divergentOptionColors = new Set(optionColors.map(color => color ?? initialValue)).size > 1;
+      // Current selected-option saves can fill a previously option-protected cell. Legacy entries cannot.
+      const canDraftCommonColor = !hasManualColor && (adoptedRecognizedColor ? currentAdoption : previousColors.size > 1);
+      if (divergentOptionColors && (adoptedCommonColor || canDraftCommonColor)) {
+        sharedColorInitial = capturedColor;
+      }
+    }
+  }
   const independentOsrp = quotationIndependentOptionalOsrp(schema.fields);
   let ownedKeys: string[] = [];
   const reviewMessages = [schema.evidence, 'Supplier Hub 최종 접수 검증 전인 편집 자료입니다.'];
@@ -445,7 +494,7 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
     if (first) issues.unshift(message); else issues.push(message);
   };
   if (!includeCommonRow && !options.some(option => option.included)) constraint('견적서에 포함할 옵션을 한 개 이상 선택해주세요. 삭제·제외된 옵션을 상품 대표 가격으로 대체하지 않습니다.', true);
-  const optionLimitIssue = quotationOptionLimitIssue(schema, options.filter(option => option.included).length);
+  const optionLimitIssue = quotationOptionLimitIssue(schema, includedOptions.length);
   if (optionLimitIssue) constraint(optionLimitIssue, true);
   try { const keys: unknown = JSON.parse(product.image_keys); if (!Array.isArray(keys) || keys.some(key => typeof key !== 'string')) throw new Error(); ownedKeys = keys; }
   catch { constraint('상품 이미지 목록을 읽지 못했습니다. 이미지 자동 연결을 확인해주세요.'); }
@@ -640,6 +689,7 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
     return contentValue(field ?? { value: '', provenance: 'unverified', updatedAt: null }, fallback);
   }
   function auto(definition: QuotationField, option: ProductOption | null): Automatic {
+    if (definition === nativeLegalColor && sharedColorInitial && option?.included && option.provenance.color !== 'manual') return sharedColorInitial;
     let current: Automatic;
     const notice = isQuotationAutomaticLegalNotice(definition) ? quotationNoticeInput(definition) ?? notice80719.find(([, name]) => name === definition.label)?.[0] ?? definition.id : undefined;
     const keys: Readonly<Record<string, keyof ProductContent['label']>> = {

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 const sourceUrl='https://detail.1688.com/offer/700000000753.html',offerId='700000000753';
 const id=index=>'00000000-0000-4000-8000-'+String(index).padStart(12,'0');
@@ -97,4 +98,42 @@ for(const company of companies)test(`a complete recapture unblocks source→draf
   assert.equal(JSON.stringify(await h.load('db/collection-results.ts').readCollectionResult('owner',jobId)),pinned);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(imported.product_id)),savedNewProduct);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(existing.id)),oldProduct);assert.equal(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(existing.id).payload,oldContent);
   const original=await x.db.readSourceInbox('owner',id(1));assert.equal(original.fingerprint,first.input.fingerprint);assert.equal(original.snapshot.options[0].supplierSku,null);assert.equal(original.reviewed,null);assert.equal(h.network.filter(host=>host.includes('1688')||host==='itemcdn.tmall.com').length,beforeSourceRequests);assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products WHERE id=?').get(imported.product_id).supplier_hub_status,'미전송');
  }finally{h.close();}
+});
+
+const conditionalGet=(x,tag)=>x.api.GET(new Request('https://app.test/api/source-inbox',{headers:tag?{'if-none-match':tag}:{}}));
+test('conditional inbox GET returns exact content tag and empty304 only after fresh serialization',async()=>{
+ const x=harness();try{
+  await x.post(1);const first=await conditionalGet(x),tag=first.headers.get('etag'),body=await first.text();
+  assert.equal(tag,'W/"source-inbox-'+createHash('sha256').update(body).digest('hex')+'"');assert.equal(first.headers.get('cache-control'),'no-store');
+  const same=await conditionalGet(x,tag);assert.equal(same.status,304);assert.equal(await same.text(),'');assert.equal(same.headers.get('etag'),tag);assert.equal(same.headers.get('cache-control'),'no-store');
+  assert.equal(await (await x.api.GET()).text(),body,'legacy direct callers retain full identical JSON');
+  for(const unsupported of ['*',tag+', '+tag,tag.slice(2)])assert.equal((await conditionalGet(x,unsupported)).status,200);
+  const item=await x.db.readSourceInbox('owner',id(1));await x.review(item);
+  const changed=await conditionalGet(x,tag);assert.equal(changed.status,200);assert.notEqual(changed.headers.get('etag'),tag);assert.equal((await changed.json()).items[0].reviewed.title,'수동 검토 상품');
+  x.h.setCompany({code:'A01526306',name:'유앤채'});const other=await conditionalGet(x,tag);assert.equal(other.status,200);assert.notEqual(other.headers.get('etag'),tag);assert.equal((await other.json()).company.code,'A01526306');
+ }finally{x.h.close();}
+});
+test('conditional inbox GET cannot turn corrupt stored data into a304',async()=>{
+ const x=harness();try{await x.post(1);const first=await conditionalGet(x),tag=first.headers.get('etag');assert.ok(tag);
+  x.h.sqlite.prepare('UPDATE source_inbox SET payload=?').run('{corrupt');const response=await conditionalGet(x,tag);
+  assert.equal(response.status,503);assert.equal(response.headers.get('etag'),null);assert.equal(response.headers.get('cache-control'),'no-store');assert.ok((await response.json()).error);
+ }finally{x.h.close();}
+});
+
+test('conditional inbox GET still authenticates and hashes clock-derived title state',async()=>{
+ const x=harness(),now=Date.now,clock=now();try{
+  x.h.bindings.SOURCEFLOW_TEXT_PROVIDER='google-free';
+  await x.post(1);const item=(await (await x.api.GET()).json()).items[0];
+  x.h.sqlite.prepare("INSERT INTO source_inbox_titles VALUES(?,?,?,?,?,?,?,'running',NULL,NULL,1,0,?)").run(item.ownerId,item.id,item.company.code,item.company.name,item.fingerprint,item.revision,item.snapshot.title,new Date(clock).toISOString());
+  const first=await conditionalGet(x),tag=first.headers.get('etag');assert.equal((await first.json()).items[0].titlePreparation.state,'running');
+  Date.now=()=>clock+31001;const later=await conditionalGet(x,tag);assert.equal(later.status,200);assert.notEqual(later.headers.get('etag'),tag);assert.equal((await later.json()).items[0].titlePreparation.state,'failed');
+  x.h.setMembershipStatus('pending');const denied=await conditionalGet(x,tag);assert.equal(denied.status,401);assert.equal(denied.headers.get('etag'),null);
+ }finally{Date.now=now;x.h.close();}
+});
+test('conditional inbox GET falls back to full200 without tag for a large legal list',async()=>{
+ const x=harness();try{
+  for(let n=1;n<=32;n++){const source=snapshot(n);source.description='d'.repeat(20000);source.options=Array.from({length:100},(_,i)=>({...source.options[0],key:'option-'+i,name:'n'.repeat(490)+i}));assert.equal((await x.post(n,source)).response.status,200);}
+  const response=await conditionalGet(x,'W/"source-inbox-'+ 'a'.repeat(64)+'"'),body=await response.text();
+  assert.ok(body.length>2*1024*1024);assert.equal(response.status,200);assert.equal(response.headers.get('etag'),null);assert.equal(JSON.parse(body).items.length,32);assert.equal(response.headers.get('cache-control'),'no-store');
+ }finally{x.h.close();}
 });

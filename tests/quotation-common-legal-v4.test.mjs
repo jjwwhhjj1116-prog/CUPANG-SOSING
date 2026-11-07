@@ -54,6 +54,125 @@ test('actual saved multicolor job shares legal notices through apply without rew
  }finally{f.close();}
 });
 
+for(const missingColor of [false,true])test(`saved Korean option colors allow common legal color generation, adoption and native compilation (${missingColor?'one recognized color':'all recognized'})`,async()=>{
+ const {quotationAiApiFixture}=await import('./helpers/quotation-ai-api.mjs'),f=await quotationAiApiFixture();
+ const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
+ try{
+  const source=fixture(),snapshot=source.snapshot,raw=source.raw;
+  const common=raw.properties.productPage.properties.commonAttributes.properties,logistics=raw.properties.logisticsPage.properties;
+  delete common.count;delete common.booleanValue;delete logistics.skuUnitBoxDimension;delete logistics.skuUnitBoxWeight;
+  const otherNotice='관리 시 참고사항';
+  raw.properties.legalPage.properties.notices.allOf.push({contains:{type:'object',properties:{noticeItemName:{type:'string',enum:[otherNotice]},noticeItemValue:{type:'string'}}}});
+  raw.properties.imagePage.properties.images.properties.labelImages.allOf[0].contains.properties.labelImageType.enum=['제품 한글표시사항 라벨 또는 도안 이미지'];
+  function nativeExamples(node){
+   if(node.properties){node.required=Object.keys(node.properties);Object.values(node.properties).forEach(nativeExamples);}
+   else if(node.allOf){
+    node.allOf.forEach(entry=>nativeExamples(entry.contains));
+    const [nameKey,valueKey]=Object.keys(node.allOf[0].contains.properties);
+    node.examples=[node.allOf.map(entry=>({[nameKey]:entry.contains.properties[nameKey].enum[0],[valueKey]:''}))];
+   }else if(!node.enum)node.examples=[node.default??(node.type==='integer'?7:node.type==='boolean'?false:'')];
+  }
+  nativeExamples(raw);source.syncSchema();
+  snapshot.nativeSerializationPolicy=f.h.load('app/supplier-hub-native-form-projection.ts').NATIVE_FORM_SERIALIZATION_POLICY;
+  const profiles=f.h.load('db/category-profiles.ts'),profile=await profiles.getCategoryProfile('owner',f.profile.id);
+  assert.ok(await profiles.updateCategoryProfile('owner',profile.id,profile.revision,{...profile,hubSchema:snapshot}));
+  const now=new Date().toISOString(),optionStore=f.h.load('db/product-options.ts'),previous=await optionStore.readProductOptions('owner',f.id);
+  const optionColors=missingColor?colors.map((value,index)=>index===1?value:''):colors;
+  const rows=source.options.rows.map((row,index)=>({...row,color:optionColors[index]}));
+  rows.push({...rows[0],id:'excluded-color',included:false});
+  const options=f.h.load('app/product-options.ts').applyOptionRows(previous,rows,now);
+  for(const row of options.rows)row.provenance.color='translated';
+  const productVersion=f.h.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(f.id).updated_at;
+  assert.ok(await optionStore.saveProductOptions('owner',options,previous.revision,productVersion));
+  const contentStore=f.h.load('db/product-content.ts'),beforeContent=await contentStore.readProductContent('owner',f.id);
+  const content=f.h.load('app/product-content.ts').applyContentPatch(beforeContent,{seo:{description:'합성 견적 참고 자료'}},now);
+  const schema=f.h.load('app/quotation-schema.ts').getQuotationSchema(snapshot.categoryId,snapshot.categoryPath,snapshot);
+  const legal=schema.fields.find(field=>field.section==='legal'&&field.label==='색상');
+  content.initialLegalNotices=f.h.load('app/initial-legal-notices.ts').createInitialLegalNotices(schema,{},now);
+  assert.equal(content.initialLegalNotices.fields.find(field=>field.fieldId===legal.id).value,'해당사항없음');
+  assert.ok(await contentStore.saveProductContent('owner',content,beforeContent.revision));
+  const endpoint=f.base+'/quotation-fields'+f.query,read=()=>f.h.route(endpoint).then(json);
+  const save=(view,body)=>f.h.route(endpoint,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,...body}}).then(json);
+  let before=await save(await read(),{changes:[{optionId:null,fieldKey:'title',value:'검토한 공통 커튼'},{optionId:'excluded-color',fieldKey:legal.id,value:''}]});
+  const {readMappedQuotationSource,resolveQuotationExport}=f.h.load('app/exports/quotation-source.ts');
+  const savedSource=await readMappedQuotationSource('owner',f.id,f.profile.id);
+  const legalCells=input=>plain(resolveQuotationExport(input).rows.filter(row=>row.included).map(row=>[row.fields[legal.id].value,row.fields[legal.id].source]));
+  const originalCells=optionColors.map(value=>[value||'해당사항없음',value?'option':'couplus-default']);
+  if(missingColor){
+   const oldEntries=options.rows.filter(row=>row.included&&!row.color).map(row=>({optionId:row.id,fieldKey:legal.id,value:'샴페인',jobId:'existing-synthetic-job'}));
+   const oldAdoption={policy:'owned-job-facts-v1',sourceBasis:'a'.repeat(64),entries:oldEntries};
+   const expected=optionColors.map(value=>['샴페인',value?'option':'generated']);
+   assert.deepEqual(legalCells({...savedSource,generatedAdoption:oldAdoption}),expected);
+   const differentJob={optionId:options.rows[1].id,fieldKey:legal.id,value:'검정',jobId:'different-synthetic-job'};
+   assert.deepEqual(legalCells({...savedSource,generatedAdoption:{...oldAdoption,entries:[...oldEntries,differentJob]}}),expected);
+   const legacyPartial=legalCells({...savedSource,generatedAdoption:{...oldAdoption,entries:[oldEntries[0],differentJob]}});
+   assert.deepEqual(legacyPartial,[['샴페인','generated'],...originalCells.slice(1)]);
+  }else{
+   const unmarked={...snapshot};delete unmarked.nativeSerializationPolicy;
+   assert.deepEqual(legalCells({...savedSource,hubSchema:unmarked}),originalCells);
+   const uncaptured={...savedSource.content};delete uncaptured.initialLegalNotices;
+   assert.deepEqual(legalCells({...savedSource,content:uncaptured}),originalCells);
+   const optionalRaw=structuredClone(raw);optionalRaw.properties.legalPage.required=[];
+   const optionalSnapshot={...snapshot,schemaString:JSON.stringify(optionalRaw)};
+   const optionalSchema=f.h.load('app/quotation-schema.ts').getQuotationSchema(snapshot.categoryId,snapshot.categoryPath,optionalSnapshot);
+   const optionalContent={...savedSource.content,initialLegalNotices:f.h.load('app/initial-legal-notices.ts').createInitialLegalNotices(optionalSchema,{},now)};
+   assert.deepEqual(legalCells({...savedSource,hubSchema:optionalSnapshot,content:optionalContent}),originalCells);
+   const selectRaw=structuredClone(raw);
+   const selectNotice=selectRaw.properties.legalPage.properties.notices.allOf.find(row=>row.contains.properties.noticeItemName.enum[0]==='색상');
+   Object.assign(selectNotice.contains.properties.noticeItemValue,{type:['string','null'],enum:[null,...colors]});
+   const selectSnapshot={...snapshot,schemaString:JSON.stringify(selectRaw)};
+   const selectSchema=f.h.load('app/quotation-schema.ts').getQuotationSchema(snapshot.categoryId,snapshot.categoryPath,selectSnapshot);
+   assert.equal(selectSchema.fields.find(field=>field.id===legal.id).type,'select');
+   const selectContent={...savedSource.content,initialLegalNotices:f.h.load('app/initial-legal-notices.ts').createInitialLegalNotices(selectSchema,{},now)};
+   assert.deepEqual(legalCells({...savedSource,hubSchema:selectSnapshot,content:selectContent}),originalCells);
+   const uniform={...options,rows:options.rows.map(row=>({...row,color:'샴페인'}))};
+   assert.deepEqual(legalCells({...savedSource,options:uniform}),Array.from({length:6},()=>['샴페인','option']));
+   const overrides=structuredClone(savedSource.state.overrides);
+   overrides.options[rows[0].id]={[legal.id]:''};
+   assert.deepEqual(legalCells({...savedSource,state:{...savedSource.state,overrides}}),[['','manual-option'],...originalCells.slice(1)]);
+  }
+  const requests=[];
+  f.setProvider({async run(_model,input){
+   const request=JSON.parse(input.messages[1].content);requests.push(request);
+   if(request.task==='ANALYZE_SCHEMA_ATTRIBUTES')return {response:JSON.stringify({differentiatedFieldIds:[]})};
+   const changes=request.fields.filter(field=>field.id===legal.id||field.label===otherNotice).map(field=>({fieldKey:field.id,value:field.id===legal.id?'샴페인':'상세설명 참조'}));
+   return {response:JSON.stringify({changes})};
+  }});
+  const project=f.h.load('app/supplier-hub-single-projection.ts').projectSupplierHubSingleDocument;
+  const compile=view=>project({snapshot,company:snapshot.company,categoryId:snapshot.categoryId,categoryPath:snapshot.categoryPath,resolved:view.resolved});
+  if(!missingColor){
+   const selectedIndex=1,optionId=options.rows[selectedIndex].id;
+   const request=f.requestBody(await json(await f.request(undefined,'GET')));
+   const {job:selected}=await json(await f.request({...request,optionId,applyToAllOptions:false}));
+   assert.deepEqual(selected.result.changes.filter(change=>change.fieldKey===legal.id),[{optionId,fieldKey:legal.id,value:'샴페인'}]);
+   const adopted=await save(before,{changes:[],generatedAdoption:{jobId:selected.id,targets:selected.result.changes.map(({optionId,fieldKey})=>({optionId,fieldKey}))}});
+   const readback=await read();
+   f.h.load('app/quotation-fields-confirmation.ts').confirmGeneratedQuotationSave(before,adopted,[],selected.result.changes,selected.id,readback);
+   const values=readback.resolved.rows.filter(row=>row.included).map(row=>[row.fields[legal.id].value,row.fields[legal.id].source]);
+   assert.deepEqual(values,optionColors.map((_,index)=>index===selectedIndex?['샴페인','generated']:['해당사항없음','couplus-default']));
+   await assert.rejects(compile(readback),error=>error.code==='SINGLE_NATIVE_SERIALIZATION_UNCONFIRMED');
+   before=readback;requests.length=0;
+  }
+  const {job}=await json(await f.request(f.requestBody(await json(await f.request(undefined,'GET')))));
+  assert.equal(job.generationPolicy,policy);
+  await save(before,{changes:[],generatedAdoption:{jobId:job.id,targets:job.result.changes.map(({optionId,fieldKey})=>({optionId,fieldKey}))}});
+  const saved=await read(),compiled=await compile(saved);
+  const included=saved.resolved.rows.filter(row=>row.included),documents=compiled.payload.jsonDocument;
+  assert.deepEqual(included.map(row=>[row.fields[legal.id].value,row.fields[legal.id].source]),Array.from({length:6},()=>['샴페인','generated']));
+  assert.deepEqual(plain(documents.map(doc=>doc.legalPage.notices.find(row=>row.noticeItemName==='색상').noticeItemValue)),Array(6).fill('샴페인'));
+  assert.deepEqual(plain(documents.map(doc=>doc.productPage.commonAttributes.exposedAttributes.find(row=>row.attributeName==='색상').attributeValue)),optionColors.map(value=>value||'해당사항없음'));
+  const excluded=saved.resolved.rows.find(row=>row.optionId==='excluded-color').fields[legal.id];
+  assert.equal(excluded.value,'');assert.equal(excluded.source,'manual-option');
+  assert.deepEqual(requests.filter(request=>request.fields.some(field=>field.id===legal.id)).map(request=>request.task),['GET_COMMON_OTHER_ATTRIBUTES']);
+  if(!missingColor){
+   const edited=await save(saved,{changes:[{optionId:included[0].optionId,fieldKey:legal.id,value:''}]});
+   const values=edited.resolved.rows.filter(row=>row.included).map(row=>[row.fields[legal.id].value,row.fields[legal.id].source]);
+   assert.deepEqual(values,[['','manual-option'],...Array.from({length:5},()=>['샴페인','generated'])]);
+  }
+  assert.deepEqual(f.h.network,[]);
+ }finally{f.close();}
+});
+
 test('v4 rejects raw Chinese and unbound whole translated names as a legal representative',()=>{
  const m=aiModule(),client=providedOptionModule('app/quotation-ai-client.ts'),f=fixture(),plan=m.buildQuotationAiPlan(f.saved,f.scope,undefined,policy),field=plan.fields.find(x=>x.group==='notice'&&x.label==='색상'),facts=client.quotationAiGenerationFacts(plan.facts);
  assert.ok(client.quotationAiGenerationIssue(field,facts.options[0].optionId,'浅紫',facts,policy));
