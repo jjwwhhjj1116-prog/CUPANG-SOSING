@@ -2,9 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {acknowledgementClock,deferred,intakeWithDeadline,observe,settle} from './helpers/intake-collection-deadline.mjs';
 import {companies,json,manualSpineDraft,plain,workflowSpineFixture} from './helpers/registration-workflow-spine.mjs';
-import {createProductDocumentPacket} from '../extensions/supplier-hub/product-document.mjs';
-import {dispatchProductDocument,PRODUCT_DOCUMENT_LIVE_VERIFIED} from '../extensions/supplier-hub/product-document-dispatch.mjs';
-import {SINGLE_SENDER} from './helpers/supplier-hub-single-document.mjs';
+import {createProductDocumentPacket,validateProductDocumentPacket} from '../extensions/supplier-hub/product-document.mjs';
 
 async function fixture(company,phase){
  const f=await workflowSpineFixture(company),clock=acknowledgementClock(f.h.load),collect=intakeWithDeadline(f.h,clock),held=deferred(),controller=new AbortController(),jobs=[],progress=[];
@@ -40,8 +38,8 @@ for(const company of companies)for(const phase of ['headers','body'])test(`${com
   assert.equal(review.body.jsonDocument[0].productPage.modelNumber,'');assert.equal(review.body.jsonDocument[1].productPage.commonAttributes.purchasePrice,'3333');
   assert.equal(review.body.jsonDocument[1].productPage.commonAttributes.coupangSalePrice,'4444');assert.equal(review.body.jsonDocument[1].productPage.commonAttributes.msrp,'5555');
   assert.ok(review.body.jsonDocument.every(doc=>doc.imagePage.details.htmlProductDetailContent===''));
-  const before=f.state(),packet=await createProductDocumentPacket(review),preview=await dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'preview',packet},SINGLE_SENDER);
-  assert.equal(preview.remoteWrites,false);assert.equal(preview.registered,false);assert.equal(PRODUCT_DOCUMENT_LIVE_VERIFIED,false);assert.deepEqual(plain(packet.review.body),plain(review.body));
+  const before=f.state(),packet=await createProductDocumentPacket(review),validated=await validateProductDocumentPacket(packet,{ownerId:'owner',company});
+  assert.equal(validated.remoteWrites,false);assert.equal(validated.registered,false);assert.deepEqual(plain(validated.packet.review.body),plain(review.body));
   assert.equal(JSON.stringify(f.h.sqlite.prepare('SELECT * FROM collection_results').all()),f.sourceBytes);
   f.held.resolve(phase==='headers'?Response.json({jobId:'wrong-late-job'}):{jobId:'wrong-late-job'});await settle();
   assert.equal(f.state(),before);assert.equal(f.requests.filter(call=>call.url.endsWith('/collect')).length,1);assert.equal(f.h.sqlite.prepare('SELECT count(*) n FROM supplier_hub_single_receipts').get().n,0);f.unchangedContext();

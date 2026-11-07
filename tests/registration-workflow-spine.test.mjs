@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
 import {companies,json,manualSpineDraft,plain,sourceUrl,workflowSpineFixture} from './helpers/registration-workflow-spine.mjs';
-import {createProductDocumentPacket} from '../extensions/supplier-hub/product-document.mjs';
+import {createProductDocumentPacket,validateProductDocumentPacket} from '../extensions/supplier-hub/product-document.mjs';
 import {dispatchProductDocument,PRODUCT_DOCUMENT_LIVE_VERIFIED} from '../extensions/supplier-hub/product-document-dispatch.mjs';
 import {SINGLE_SENDER} from './helpers/supplier-hub-single-document.mjs';
 
@@ -20,6 +20,7 @@ for(const company of companies)test(`category-selected recorded URL reaches exac
   for(let index=0;index<savedOptions.rows.length;index++){const row=savedOptions.rows[index],raw=source.options[index];assert.equal(row.supplierSku,raw.sku);assert.equal(row.unitCostCny,raw.unitPriceCny);assert.equal(row.minimumOrderQuantity,raw.minimumOrder);assert.equal(row.stock,raw.stock);}
   assert.equal(savedOptions.rows[2].unitsPerPack,3);assert.equal(savedOptions.rows[2].translatedName,'직접 확인한 두 번째 옵션');
   assert.equal(draft.savedContent.content.seo.title.value,draft.title);assert.equal(draft.savedContent.content.seo.description.value,'');assert.equal(draft.savedContent.content.seo.description.provenance,'manual');
+  assert.equal(draft.savedContent.content.label.material.value,'');
   assert.equal(draft.savedContent.content.assets.main.value.length,1);assert.deepEqual(plain(draft.savedContent.content.assets.additional.value),[]);assert.equal(draft.savedContent.content.assets.detail.value.length,2);
   assert.equal(quotation.categoryContext.source,'collection');assert.equal(quotation.categoryContext.profileId,f.profile.id);assert.equal(quotation.categoryContext.categoryId,f.snapshot.categoryId);assert.deepEqual(plain(quotation.categoryContext.categoryPath),f.snapshot.categoryPath);
   const endpoint=base+'/supplier-hub-single-package',candidate=await json(await f.h.route(endpoint));
@@ -32,18 +33,19 @@ for(const company of companies)test(`category-selected recorded URL reaches exac
   const[first,second]=review.body.jsonDocument;
   assert.equal(first.startPage.productName,'첫 옵션 견적서 전용 제목');assert.equal(second.startPage.productName,draft.title+', 직접 확인한 두 번째 옵션');
   for(const document of review.body.jsonDocument){assert.equal(document.startPage.categoryPath,'합성등록워크플로>기록원문연결시험 (997300)');assert.equal(document.productPage.commonAttributes.count,0);assert.equal(document.productPage.commonAttributes.booleanValue,false);assert.equal(document.imagePage.details.htmlProductDetailContent,'');}
+  for(const document of review.body.jsonDocument)assert.equal(document.legalPage.notices.find(notice=>notice.noticeItemName==='소재')?.noticeItemValue,'검토한 시험용 소재');
   assert.equal(first.productPage.modelNumber,'');assert.equal(second.productPage.modelNumber,'MANUAL-MODEL-730');
   assert.equal(second.productPage.commonAttributes.purchasePrice,'3333');assert.equal(second.productPage.commonAttributes.coupangSalePrice,'4444');assert.equal(second.productPage.commonAttributes.msrp,'5555');
   const calculated=draft.savedOptions.pricing.rows.find(row=>row.optionId===included[0])?.calculation;assert.ok(calculated);assert.equal(first.productPage.commonAttributes.purchasePrice,String(calculated.supplyPrice));assert.equal(first.productPage.commonAttributes.coupangSalePrice,String(calculated.salePrice));assert.equal(first.productPage.commonAttributes.msrp,String(calculated.msrp));
   const readCalls=f.requests.slice(requestsBefore);assert.equal(readCalls.length,4);assert.ok(readCalls.every(call=>call.method==='GET'&&!call.url.includes('?profileId=')));
-  const packet=await createProductDocumentPacket(review),preview=await dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'preview',packet},SINGLE_SENDER);
-  assert.deepEqual(plain(packet.review.body),plain(review.body));assert.deepEqual(plain(preview.members),plain(review.members));assert.equal(preview.preparedBodySha256,review.preparedBodySha256);
-  assert.equal(preview.remoteWrites,false);assert.equal(preview.registered,false);assert.equal(preview.liveVerified,false);assert.equal(PRODUCT_DOCUMENT_LIVE_VERIFIED,false);
+  const packet=await createProductDocumentPacket(review),validated=await validateProductDocumentPacket(packet,{ownerId:'owner',company});
+  assert.deepEqual(plain(packet.review.body),plain(review.body));assert.deepEqual(plain(validated.binding.members),plain(review.members));assert.equal(validated.binding.preparedBodySha256,review.preparedBodySha256);
+  assert.equal(validated.remoteWrites,false);assert.equal(validated.registered,false);assert.equal(PRODUCT_DOCUMENT_LIVE_VERIFIED,false);
   await assert.rejects(dispatchProductDocument({type:'YOOFAM_PRODUCT_DOCUMENT_REQUEST',action:'start',packet},SINGLE_SENDER),error=>error.code==='PRODUCT_LIVE_CONTRACT_UNVERIFIED');
   assert.equal(f.state(),currentBefore);assert.equal(JSON.stringify(JSON.parse(f.h.sqlite.prepare('SELECT payload FROM collection_results WHERE job_id=?').get(f.job.id).payload)),sourceBefore);f.unchangedContext();
   assert.equal(review.registered,false);assert.equal(review.remoteWrites,false);assert.equal(review.submissionReady,false);assert.equal(f.h.sqlite.prepare('SELECT count(*) n FROM supplier_hub_receipts').get().n,0);assert.equal(f.h.sqlite.prepare('SELECT count(*) n FROM supplier_hub_single_receipts').get().n,0);
   const requestsAtResume=f.sourceCalls.length,downloads=f.h.stats.downloads,beforeResume=f.state();await f.run();assert.equal(f.state(),beforeResume);assert.equal(f.sourceCalls.length,requestsAtResume);assert.equal(f.h.stats.downloads,downloads);assert.equal(f.h.aiSources.length,1);
-  traces.push({company,productId:f.product().id,sourceReceiptSha256:sha(sourceBefore),capturedContextSha256:sha(f.context),includedOptionIds:included,excluded:4,sourceOptions:6,sourceImages:19,preparedDocuments:2,querylessReadCalls:readCalls.length,preservedManualBlanks:true,preservedStageTwoPrices:true,exactPacketPreview:true,startGateRejected:true,resumeDoesNotRecapture:true,nativeReceipt:false});
+  traces.push({company,productId:f.product().id,sourceReceiptSha256:sha(sourceBefore),capturedContextSha256:sha(f.context),includedOptionIds:included,excluded:4,sourceOptions:6,sourceImages:19,preparedDocuments:2,querylessReadCalls:readCalls.length,preservedManualBlanks:true,preservedStageTwoPrices:true,exactPacketBinding:true,startGateRejected:true,resumeDoesNotRecapture:true,nativeReceipt:false});
  }finally{f.close();}
 });
 

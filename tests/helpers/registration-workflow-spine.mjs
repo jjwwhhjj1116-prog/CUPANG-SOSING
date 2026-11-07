@@ -76,6 +76,7 @@ export async function manualSpineDraft(f){
   {fieldKey:byWire(['productPage','commonAttributes','count']),optionId:null,value:'0'},
   {fieldKey:byWire(['productPage','commonAttributes','booleanValue']),optionId:null,value:'false'},
   {fieldKey:byWire(['imagePage','details','htmlProductDetailContent']),optionId:null,value:''},
+  {fieldKey:byWire(['legalPage','notices'],'소재'),optionId:null,value:'검토한 시험용 소재'},
   ...[['supplyPrice','3333','purchasePrice'],['salePrice','4444','coupangSalePrice'],['msrp','5555','msrp']].flatMap(([key,value,wire])=>[...new Set([key,byWire(['productPage','commonAttributes',wire])])].map(fieldKey=>({fieldKey,optionId:included[1],value}))),
  ];
  assert.ok(changes.every(change=>typeof change.fieldKey==='string'));
