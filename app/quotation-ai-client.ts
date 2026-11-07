@@ -2,6 +2,7 @@ import {CURRENT_QUOTATION_RESULT_POLICY} from '@/app/current-quotation-attribute
 import { quotationValueIssues, quotationGeneratedSourceWritable, type QuotationField, type QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationKnownNoticeTarget, quotationSavedQuantityText, type QuotationSavedNoticeChange } from '@/app/quotation-known-notice-proposals';
 import { isCouplusNotApplicableValue } from '@/app/couplus-quotation-defaults';
+import { isProductSizeAttribute, productSizeValue } from '@/app/product-name-proposal';
 import {quotationTextModel,validQuotationTextExecution,type QuotationTextExecution} from '@/app/quotation-text-execution';
 
 import { unsupportedProductMaterial } from '@/app/product-material-evidence';
@@ -14,20 +15,38 @@ export const LEGACY_QUOTATION_GENERATION_POLICY = 'option-notice-material-eviden
 export const RECEIPT_QUOTATION_GENERATION_POLICY = 'option-notice-material-evidence-v2' as const;
 export const CANONICAL_QUOTATION_GENERATION_POLICY = 'option-notice-material-evidence-v3' as const;
 export const QUOTATION_GENERATION_POLICY = 'couplus-common-legal-material-evidence-v4' as const;
-export type QuotationGenerationPolicy=typeof QUOTATION_GENERATION_POLICY|typeof CANONICAL_QUOTATION_GENERATION_POLICY|typeof RECEIPT_QUOTATION_GENERATION_POLICY|typeof LEGACY_QUOTATION_GENERATION_POLICY;
-export const validQuotationGenerationPolicy=(value:unknown):value is QuotationGenerationPolicy=>value===QUOTATION_GENERATION_POLICY||value===CANONICAL_QUOTATION_GENERATION_POLICY||value===RECEIPT_QUOTATION_GENERATION_POLICY||value===LEGACY_QUOTATION_GENERATION_POLICY;
+export const SAVED_SIZE_QUOTATION_GENERATION_POLICY = 'couplus-common-legal-saved-size-v5' as const;
+export const isCouplusCommonLegalGenerationPolicy = (value: unknown) => value === QUOTATION_GENERATION_POLICY || value === SAVED_SIZE_QUOTATION_GENERATION_POLICY;
+export type QuotationGenerationPolicy=typeof SAVED_SIZE_QUOTATION_GENERATION_POLICY|typeof QUOTATION_GENERATION_POLICY|typeof CANONICAL_QUOTATION_GENERATION_POLICY|typeof RECEIPT_QUOTATION_GENERATION_POLICY|typeof LEGACY_QUOTATION_GENERATION_POLICY;
+export const validQuotationGenerationPolicy=(value:unknown):value is QuotationGenerationPolicy=>isCouplusCommonLegalGenerationPolicy(value)||value===CANONICAL_QUOTATION_GENERATION_POLICY||value===RECEIPT_QUOTATION_GENERATION_POLICY||value===LEGACY_QUOTATION_GENERATION_POLICY;
 export type QuotationGenerationFacts = {
   material: { name: string; value: string; provenance?: string }[];
-  options: { optionId: string | null; color: string; translatedName: string; originalName?:string }[];
+  options: { optionId: string | null; color: string; translatedName: string; originalName?:string; size?:string }[];
 };
 /** Project only independent material evidence and option distinctions, never SEO copy. */
-export function quotationAiGenerationFacts(facts: QuotationAiPlan['facts']): QuotationGenerationFacts {
+export function quotationAiGenerationFacts(facts: QuotationAiPlan['facts'], generationPolicy?: QuotationGenerationPolicy): QuotationGenerationFacts {
   const material = (facts.preferredAttributes ?? facts.attributes)
     .filter(pair => (productFactKey(pair.name) === 'material' || currentLabelNoticeNames.material.includes(pair.name as typeof currentLabelNoticeNames.material[number])) && !['generated', 'unverified'].includes(pair.provenance ?? '')
       && (pair.value.trim() || pair.provenance === 'detail-conflict') && !isCouplusNotApplicableValue(pair.value) && !/상세.*(?:참조|확인)|확인\s*필요|알\s*수\s*없음|정보\s*없음/u.test(pair.value));
   const manual = material.filter(pair => pair.provenance === 'manual');
   return { material: (manual.length ? manual : material).map(({value, provenance}) => ({name:'material', value, provenance})),
-    options: facts.options.map(({optionId, color, translatedName, originalName}) => ({optionId, color, translatedName, originalName})) };
+    options: facts.options.map(({optionId, color, translatedName, originalName, size}) => ({optionId, color, translatedName, originalName,
+      ...(generationPolicy === SAVED_SIZE_QUOTATION_GENERATION_POLICY ? { size } : {})})) };
+}
+
+export function quotationAiExposedSize(field: QuotationField) {
+  const wire = field.hubWire;
+  return field.section === 'product' && field.visibility === 'exposed' && isProductSizeAttribute(field.label)
+    && wire?.name === field.label && wire.path.join('.') === 'productPage.commonAttributes.exposedAttributes'
+    && wire.nameKey === 'attributeName' && wire.valueKey === 'attributeValue';
+}
+
+export function quotationAiSavedSize(field: QuotationField, optionId: string | null, facts: QuotationGenerationFacts) {
+  const size = productSizeValue(facts.options.find(option => option.optionId === optionId)?.size ?? '');
+  if (!size || /\p{Script=Han}/u.test(size)) return;
+  const matches = field.choices?.filter(choice => choice.value && productSizeValue(choice.value) === size);
+  const value = matches ? matches.length === 1 ? matches[0].value : undefined : size;
+  if (value && !quotationValueIssues(field, value).length) return value;
 }
 /** Complete color-axis parts are dispatch references, never saved option-color facts. */
 export function quotationAiColorReference(option: QuotationGenerationFacts['options'][number]): { key:string; aliases:string[] } | undefined {
@@ -74,7 +93,7 @@ export function quotationAiCommonLegalField(field:QuotationField):boolean{
 }
 export function quotationAiLegalMaterialReference(field: QuotationField, facts: QuotationGenerationFacts, generationPolicy?: string): string | undefined {
   const reference = '상세설명 참조';
-  if (generationPolicy === QUOTATION_GENERATION_POLICY && facts.material.length === 0 && field.label === '제품 소재'
+  if (isCouplusCommonLegalGenerationPolicy(generationPolicy) && facts.material.length === 0 && field.label === '제품 소재'
     && quotationAiCommonLegalField(field) && field.hubWire?.valueKey === 'noticeItemValue' && writableAiField(field)
     && (field.type === 'text' || field.type === 'textarea') && !field.choices && !field.numericText && !field.numericValue
     && !quotationValueIssues(field, reference).length) return reference;
@@ -117,9 +136,11 @@ export function quotationAiCommonLegalIssue(fields:readonly QuotationField[],cha
 }
 /** Negative evidence checks do not certify translated names as actual product facts. */
 export function quotationAiGenerationIssue(field: QuotationField, optionId: string | null, value: string, facts: QuotationGenerationFacts, generationPolicy?:string): string | null {
+  if (generationPolicy === SAVED_SIZE_QUOTATION_GENERATION_POLICY && quotationAiExposedSize(field))
+    return value === quotationAiSavedSize(field, optionId, facts) ? null : '옵션에 저장된 실제 사이즈를 확인해주세요.';
   if (quotationAiMaterialField(field)) {
     if (value === quotationAiLegalMaterialReference(field, facts, generationPolicy)) return null;
-    const expected = generationPolicy === QUOTATION_GENERATION_POLICY || generationPolicy === CANONICAL_QUOTATION_GENERATION_POLICY
+    const expected = isCouplusCommonLegalGenerationPolicy(generationPolicy) || generationPolicy === CANONICAL_QUOTATION_GENERATION_POLICY
       ? quotationAiCanonicalMaterial(field, facts) : undefined;
     if (expected !== undefined && value !== expected) return '원문 재질의 정규화 값과 제안값이 다릅니다.';
     const priority = productFactPriorityIssue(value, 'material', '', facts.material);
@@ -127,7 +148,7 @@ export function quotationAiGenerationIssue(field: QuotationField, optionId: stri
     if(facts.material.some(pair=>pair.provenance==='collection-source')){
       const source=facts.material.map(pair=>pair.value).join('\n');
       // The v4 canonical value already proves that every whole material value agrees.
-      const explicit = generationPolicy === QUOTATION_GENERATION_POLICY && expected !== undefined
+      const explicit = isCouplusCommonLegalGenerationPolicy(generationPolicy) && expected !== undefined
         ? `material: ${expected}` : facts.material.map(pair => `material: ${pair.value}`).join('\n');
       const issue=productFactPriorityIssue(value,'material',explicit);
       const percents=(text:string)=>Array.from(text.matchAll(/(\d+(?:[.,]\d+)*)\s*[%％]/gu),match=>'%:'+match[1]);
@@ -136,7 +157,7 @@ export function quotationAiGenerationIssue(field: QuotationField, optionId: stri
     }
   }
   if (quotationAiOptionColorNotice(field)) {
-    if(generationPolicy===QUOTATION_GENERATION_POLICY&&quotationAiCommonLegalField(field))return commonLegalColorSupported(field,value,facts)?null:'공통 색상은 선택 원문 옵션에 연결된 대표값 하나만 사용할 수 있습니다.';
+    if(isCouplusCommonLegalGenerationPolicy(generationPolicy)&&quotationAiCommonLegalField(field))return commonLegalColorSupported(field,value,facts)?null:'공통 색상은 선택 원문 옵션에 연결된 대표값 하나만 사용할 수 있습니다.';
     const own = facts.options.find(option => option.optionId === optionId);
     if (!own) return '선택 옵션의 색상 연결을 확인해주세요.';
     const words = (text: string) => text.match(/[가-힣A-Za-z]{2,}/gu) ?? [];
@@ -265,7 +286,7 @@ export function quotationAiProposalChanges(view: QuotationFieldsView, job: Quota
   const rows = new Set(view.resolved.rows.filter(row => row.included && (job.scope.applyToAllOptions || row.optionId === job.scope.optionId)).map(row => row.optionId));
   if (job.result.changes.length > Math.min(fields.size, 300) * rows.size || new TextEncoder().encode(JSON.stringify(job.result)).length > 256 * 1024)
     throw Error('AI 초안의 항목 수 또는 응답 크기가 현재 양식·옵션 처리 범위를 초과했습니다.');
-  if(job.generationPolicy===QUOTATION_GENERATION_POLICY){const issue=quotationAiCommonLegalIssue(view.resolved.schema.fields,job.result.changes);if(issue)throw Error(issue);}
+  if(isCouplusCommonLegalGenerationPolicy(job.generationPolicy)){const issue=quotationAiCommonLegalIssue(view.resolved.schema.fields,job.result.changes);if(issue)throw Error(issue);}
   const seen = new Set<string>(), proposedFields = new Set<string>();
   return job.result.changes.map(change => {
     if (!change || typeof change.fieldKey !== 'string' || typeof change.value !== 'string') throw Error('AI 초안의 입력 자료형을 확인해주세요.');

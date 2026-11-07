@@ -84,7 +84,7 @@ export async function PUT(request: Request, context: Context) {
       let proposals;
       try { proposals = quotationAiProposalChanges(saved.view, { ...job, fingerprint: job.review.fingerprint, quotationRevision: job.review.quotationRevision, profileId: job.review.profileId,
         scope:job.review.scope, resultPolicy:job.review.plan.resultPolicy, executionPolicy:job.review.executionPolicy,
-        ...(job.review.plan.generationPolicy?{generationPolicy:job.review.plan.generationPolicy,generationFacts:quotationAiGenerationFacts(job.review.plan.facts)}:{}) }, expectedFingerprint); }
+        ...(job.review.plan.generationPolicy?{generationPolicy:job.review.plan.generationPolicy,generationFacts:quotationAiGenerationFacts(job.review.plan.facts,job.review.plan.generationPolicy)}:{}) }, expectedFingerprint); }
       catch (error) { throw new FieldsError(error instanceof Error ? error.message : 'AI 생성 초안을 확인해주세요.', 400); }
       try{validateCurrentQuotationResult(job.review.plan,proposals);}catch(error){throw new FieldsError(error instanceof Error?error.message:'필수 속성 값을 확인해주세요.',400);}
       const seen = new Set<string>();

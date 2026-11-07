@@ -1,4 +1,4 @@
-import { CANONICAL_QUOTATION_GENERATION_POLICY, quotationAiCommonLegalIssue, QUOTATION_GENERATION_POLICY, RECEIPT_QUOTATION_GENERATION_POLICY, quotationAiCanonicalMaterial, quotationAiGenerationFacts, quotationAiGenerationIssue, quotationAiLegalMaterialReference, quotationAiOptionColorNotice, quotationAiColorReference, validQuotationGenerationPolicy, type QuotationGenerationPolicy } from '@/app/quotation-ai-client';
+import { CANONICAL_QUOTATION_GENERATION_POLICY, quotationAiCommonLegalIssue, RECEIPT_QUOTATION_GENERATION_POLICY, SAVED_SIZE_QUOTATION_GENERATION_POLICY, isCouplusCommonLegalGenerationPolicy, quotationAiCanonicalMaterial, quotationAiGenerationFacts, quotationAiGenerationIssue, quotationAiLegalMaterialReference, quotationAiOptionColorNotice, quotationAiColorReference, quotationAiExposedSize, quotationAiSavedSize, validQuotationGenerationPolicy, type QuotationGenerationPolicy } from '@/app/quotation-ai-client';
 import {CURRENT_QUOTATION_RESULT_POLICY,currentAttributeRules,normalizeCurrentAttributeNumber,mandatoryHiddenProblems,type AttributeRule} from '@/app/current-quotation-attribute-rules';
 import type { QuotationExportSource } from '@/app/exports/quotation-source';
 import { getQuotationSchema, resolveQuotationFields, quotationGeneratedSourceWritable, type QuotationField } from '@/app/quotation-schema';
@@ -174,8 +174,10 @@ export function buildQuotationAiPlan(saved: QuotationExportSource, scope: { opti
       .filter(key => saved.content.label[key]?.value).map(key => ({ name: key, value: excerpt(saved.content.label[key].value, 2000, '저장 상품 속성'), provenance: saved.content.label[key].provenance })), ...categoryFacts],
     options: targets.map(row => { const option = saved.options.rows.find(item => item.id === row.optionId); return { optionId: row.optionId,
       originalName: excerpt(option?.originalName ?? '', 1000, '옵션 원문명'), translatedName: excerpt(option?.translatedName ?? row.optionLabel, 1000, '옵션 번역명'),
-      color: excerpt(option?.color ?? '', 200, '옵션 색상'), size: excerpt(option?.size ?? '', 200, '옵션 사이즈'), unitsPerPack: option?.unitsPerPack ?? null }; }) };
-  if((generationPolicy===QUOTATION_GENERATION_POLICY||generationPolicy===CANONICAL_QUOTATION_GENERATION_POLICY||generationPolicy===RECEIPT_QUOTATION_GENERATION_POLICY)&&saved.collectionSourceFacts){
+      color: excerpt(option?.color ?? '', 200, '옵션 색상'),
+      size: excerpt(generationPolicy === SAVED_SIZE_QUOTATION_GENERATION_POLICY && option?.provenance.size === 'unverified' ? '' : option?.size ?? '', 200, '옵션 사이즈'),
+      unitsPerPack: option?.unitsPerPack ?? null }; }) };
+  if((isCouplusCommonLegalGenerationPolicy(generationPolicy)||generationPolicy===CANONICAL_QUOTATION_GENERATION_POLICY||generationPolicy===RECEIPT_QUOTATION_GENERATION_POLICY)&&saved.collectionSourceFacts){
     const {attributes,jobId,offerId,fingerprint}=saved.collectionSourceFacts;
     facts.attributes.push(...attributes.map(pair=>({...pair,provenance:'collection-source'})));
     facts.receiptSource={jobId,offerId,fingerprint};
@@ -269,6 +271,9 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
   plan = structuredClone(plan);
   if (!ai || typeof ai.run !== 'function') fail('AI_UNAVAILABLE', 'AI 생성 기능의 연결을 확인해주세요.');
   const steps: { task: string }[] = [], warnings = [...plan.warnings], started = Date.now();
+  const commonLegal = isCouplusCommonLegalGenerationPolicy(plan.generationPolicy);
+  const canonicalMaterial = commonLegal || plan.generationPolicy === CANONICAL_QUOTATION_GENERATION_POLICY;
+  const savedSize = plan.generationPolicy === SAVED_SIZE_QUOTATION_GENERATION_POLICY;
   const call = async (task: string, input: Record<string, unknown>) => {
     const content = JSON.stringify({ task, category: plan.category, facts: plan.facts, ...input });
     if (new TextEncoder().encode(content).length > PROMPT_LIMIT) fail('AI_LIMIT', 'AI 요청 참고자료가 한 번의 처리 한도를 초과했습니다.');
@@ -276,13 +281,13 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new QuotationAiError('AI_TIMEOUT', 'AI 응답 시간이 초과되었습니다. 같은 요청을 자동 재시도하지 않았습니다.', true)), Math.min(QUOTATION_AI_TIMEOUT_MS, remaining)); });
-      const result = await Promise.race([Promise.resolve().then(() => ai.run(model, { messages: [{ role: 'system', content: instructions+(plan.generationPolicy===QUOTATION_GENERATION_POLICY?' 상품정보고시(legalPage.notices)는 모든 선택 옵션에 공유하는 공통 값 한 세트입니다. 공통 색상은 선택 원문 옵션의 색상축에 연결된 대표값 하나만 고르며 여러 옵션의 색상을 합치지 마세요. 상품 속성의 옵션별 색상·사이즈는 별도로 유지하세요.':'') }, { role: 'user', content }], max_tokens: executionPolicy?.maxOutputTokens??4096, temperature: 0.1 })), timeout]);
+      const result = await Promise.race([Promise.resolve().then(() => ai.run(model, { messages: [{ role: 'system', content: instructions+(commonLegal?' 상품정보고시(legalPage.notices)는 모든 선택 옵션에 공유하는 공통 값 한 세트입니다. 공통 색상은 선택 원문 옵션의 색상축에 연결된 대표값 하나만 고르며 여러 옵션의 색상을 합치지 마세요. 상품 속성의 옵션별 색상·사이즈는 별도로 유지하세요.':'') }, { role: 'user', content }], max_tokens: executionPolicy?.maxOutputTokens??4096, temperature: 0.1 })), timeout]);
       const parsed = responseObject(result); steps.push({ task }); return parsed;
     } catch (error) { if (error instanceof QuotationAiError) throw error; throw new QuotationAiError('AI_PROVIDER', 'AI 제공자가 응답하지 못했습니다. 입력은 유지하며 자동 재시도하지 않습니다.', true); }
     finally { if (timer !== undefined) clearTimeout(timer); }
   };
   const writable = (field: QuotationAiField) => plan.targets.some(target => target.writableFieldIds.includes(field.id));
-  const active = plan.fields.filter(writable), attributes = active.filter(field => field.group !== 'notice');
+  const active = plan.fields.filter(field => writable(field) && !(savedSize && quotationAiExposedSize(field))), attributes = active.filter(field => field.group !== 'notice');
   let differentiated = new Set<string>();
   if (attributes.length) {
     const parsed = await call('ANALYZE_SCHEMA_ATTRIBUTES', { fields: attributes, output: { differentiatedFieldIds: ['exact-fieldKey'] } }); exactKeys(parsed, ['differentiatedFieldIds']);
@@ -290,8 +295,8 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
       || new Set(parsed.differentiatedFieldIds).size !== parsed.differentiatedFieldIds.length) fail('AI_RESPONSE_SCOPE', 'AI가 확인되지 않거나 중복된 차별화 항목을 반환했습니다.');
     differentiated = new Set(parsed.differentiatedFieldIds as string[]);
   }
-  const generationFacts=plan.generationPolicy?quotationAiGenerationFacts(plan.facts):undefined;
-  if(plan.generationPolicy!==QUOTATION_GENERATION_POLICY&&generationFacts&&new Set(generationFacts.options.map(option=>quotationAiColorReference(option)?.key).filter(Boolean)).size>1)
+  const generationFacts=plan.generationPolicy?quotationAiGenerationFacts(plan.facts,plan.generationPolicy):undefined;
+  if(!commonLegal&&generationFacts&&new Set(generationFacts.options.map(option=>quotationAiColorReference(option)?.key).filter(Boolean)).size>1)
     for(const field of active)if(quotationAiOptionColorNotice(field))differentiated.add(field.id);
   const commonValues = new Map<string, string>();
   const rawSchema=JSON.parse(plan.snapshot.schemaString);
@@ -315,7 +320,7 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
       const invalid = (value: unknown): boolean => typeof value !== 'string' || Boolean(field.choices && !field.choices.some(choice => choice.value === value))
         || quotationScalarValueIssues(field, value as string).length > 0 || Boolean(field.required && !(value as string).trim() && !field.choices?.some(choice => choice.value === ''));
       let value = change.value;
-      const sourceMaterial=(plan.generationPolicy===QUOTATION_GENERATION_POLICY||plan.generationPolicy===CANONICAL_QUOTATION_GENERATION_POLICY)&&generationFacts?quotationAiCanonicalMaterial(field,generationFacts):undefined;
+      const sourceMaterial=canonicalMaterial&&generationFacts?quotationAiCanonicalMaterial(field,generationFacts):undefined;
       if(sourceMaterial!==undefined){value=sourceMaterial;warnings.push(`${field.label}: 명시된 원문 재질을 정규화한 값을 사용했습니다.`);}
       const rule=plan.attributeRules?.find(rule=>rule.fieldKey===field.id);
       if(plan.resultPolicy){
@@ -352,7 +357,7 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
         if(fallback === undefined || invalid(fallback))continue;
         value=fallback;
       }
-      if((plan.generationPolicy===QUOTATION_GENERATION_POLICY||plan.generationPolicy===CANONICAL_QUOTATION_GENERATION_POLICY)&&generationFacts&&typeof value==='string'){
+      if(canonicalMaterial&&generationFacts&&typeof value==='string'){
         const targets=optionId===undefined?plan.targets.filter(target=>target.writableFieldIds.includes(field.id)).map(target=>target.optionId):[optionId],candidate=value;
         if(targets.some(target=>quotationAiGenerationIssue(field,target,candidate,generationFacts,plan.generationPolicy))){warnings.push(`${field.label}: 근거가 부족한 대체값은 적용하지 않았습니다.`);continue;}
       }
@@ -386,10 +391,16 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
   const changes: QuotationAiResult['changes'] = [];
   for (const target of plan.targets) for (const field of plan.fields) {
     if (!target.writableFieldIds.includes(field.id)) continue;
+    if (savedSize && generationFacts && quotationAiExposedSize(field)) {
+      const value = quotationAiSavedSize(field, target.optionId, generationFacts);
+      if (value !== undefined) changes.push({ optionId: target.optionId, fieldKey: field.id, value });
+      else warnings.push(`${field.label}: 옵션에 저장된 실제 사이즈를 확인해주세요.`);
+      continue;
+    }
     const specific = byOption.get(target.optionId), value = specific?.has(field.id) ? specific.get(field.id) : commonValues.get(field.id);
     if (value !== undefined){const extra=extras.get(JSON.stringify([specific?.has(field.id)?target.optionId:'common',field.id]));changes.push({ optionId: target.optionId, fieldKey: field.id, value:extra?`${value} + ${extra}`:value });}
   }
-  if((plan.generationPolicy===QUOTATION_GENERATION_POLICY||plan.generationPolicy===CANONICAL_QUOTATION_GENERATION_POLICY)&&generationFacts)for(const target of plan.targets)for(const field of plan.fields){
+  if(canonicalMaterial&&generationFacts)for(const target of plan.targets)for(const field of plan.fields){
     if(!target.writableFieldIds.includes(field.id)||changes.some(change=>change.optionId===target.optionId&&change.fieldKey===field.id))continue;
     const value=quotationAiCanonicalMaterial(field,generationFacts);if(value===undefined)continue;
     changes.push({optionId:target.optionId,fieldKey:field.id,value});warnings.push(`${field.label}: 명시된 원문 재질을 정규화한 값을 사용했습니다.`);
@@ -405,8 +416,8 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
 export function validateCurrentQuotationResult(plan:QuotationAiPlan,changes:QuotationAiResult['changes'],warnings:string[]=[]):void{
  if(plan.generationPolicy!==undefined){
   if(!validQuotationGenerationPolicy(plan.generationPolicy))fail('AI_POLICY','견적 생성 정책을 확인해주세요.');
-  const facts=quotationAiGenerationFacts(plan.facts);
-  if(plan.generationPolicy===QUOTATION_GENERATION_POLICY){const issue=quotationAiCommonLegalIssue(plan.fields,changes);if(issue)fail('AI_RESPONSE_EVIDENCE',issue);}
+  const facts=quotationAiGenerationFacts(plan.facts,plan.generationPolicy);
+  if(isCouplusCommonLegalGenerationPolicy(plan.generationPolicy)){const issue=quotationAiCommonLegalIssue(plan.fields,changes);if(issue)fail('AI_RESPONSE_EVIDENCE',issue);}
   for(const change of changes){const field=plan.fields.find(field=>field.id===change.fieldKey);if(!field)fail('AI_RESPONSE_SCOPE','AI 제안 항목의 연결을 확인해주세요.');
    const issue=quotationAiGenerationIssue(field,change.optionId,change.value,facts,plan.generationPolicy);if(issue)fail('AI_RESPONSE_EVIDENCE',`${field.label}: ${issue}`);
   }

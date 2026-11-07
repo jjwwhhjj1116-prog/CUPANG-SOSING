@@ -5,6 +5,56 @@ import { quotationAiApiFixture } from './helpers/quotation-ai-api.mjs';
 import { curtain, provider, colors } from './helpers/quotation-generation-semantics.mjs';
 const policy = 'option-notice-material-evidence-v3';
 const json = async (response, status = 200) => { assert.equal(response.status, status, await response.clone().text()); return response.json(); };
+
+test('new 103689 jobs save only the known option size through normal proposal adoption', async () => {
+  const f = await quotationAiApiFixture();
+  try {
+    const snapshot = { ...f.snapshot, categoryId: '103689', categoryPath: ['운동', '요가 양말'] };
+    const raw = JSON.parse(snapshot.schemaString);
+    delete raw.properties.productPage.properties.unexposedAttributes;
+    const sizeEntry = raw.properties.productPage.properties.commonAttributes.properties.exposedAttributes.allOf
+      .find(entry => entry.contains.properties.attributeName.enum[0] === '사이즈');
+    sizeEntry.contains.properties.attributeName.enum = ['패션의류/잡화 사이즈'];
+    snapshot.schemaString = JSON.stringify(raw);
+    const profile = await f.h.load('db/category-profiles.ts').createCategoryProfile('owner', {
+      name: '합성 사이즈 연동', categoryId: snapshot.categoryId, categoryPath: snapshot.categoryPath, template: null, mappings: [], hubSchema: snapshot,
+    }, 'synthetic-saved-size');
+    assert.ok(profile);
+    const store = f.h.load('db/product-options.ts'), model = f.h.load('app/product-options.ts');
+    const previous = await store.readProductOptions('owner', f.id);
+    const rows = model.optionInputs(previous);
+    rows[0].size = '프리사이즈';
+    rows.push({ ...rows[0], id: 'missing-size', supplierSku: 'SYNTHETIC-MISSING', size: '상세설명 참조' });
+    const options = model.applyOptionRows(previous, rows, new Date().toISOString());
+    const productVersion = f.h.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(f.id).updated_at;
+    assert.ok(await store.saveProductOptions('owner', options, previous.revision, productVersion));
+    const query = '?profileId=' + profile.id, fieldsPath = f.base + '/quotation-fields' + query;
+    const calls = [];
+    f.setProvider({ async run(_model, input) {
+      const request = JSON.parse(input.messages[1].content); calls.push(request);
+      return { response: JSON.stringify(request.task === 'ANALYZE_SCHEMA_ATTRIBUTES' ? { differentiatedFieldIds: [] } : { changes: [] }) };
+    } });
+    const before = await json(await f.h.route(fieldsPath)), state = await json(await f.request(undefined, 'GET', query));
+    const request = { ...f.requestBody(state), profileId: profile.id };
+    const { job } = await json(await f.request(request, 'POST', query));
+    assert.equal(job.generationPolicy, 'couplus-common-legal-saved-size-v5');
+    const size = before.resolved.schema.fields.find(field => field.label === '패션의류/잡화 사이즈');
+    assert.ok(calls.every(call => call.fields.every(field => field.id !== size.id)));
+    assert.deepEqual(job.result.changes, [{ optionId: rows[0].id, fieldKey: size.id, value: 'Free' }]);
+    const count = calls.length, retry = await json(await f.request(request, 'POST', query));
+    assert.equal(retry.reused, true);
+    assert.equal(calls.length, count);
+    const saved = await json(await f.h.route(fieldsPath, { method: 'PUT', body: {
+      expectedRevision: before.revision, expectedInputFingerprint: before.inputFingerprint, changes: [],
+      generatedAdoption: { jobId: job.id, targets: [{ optionId: rows[0].id, fieldKey: size.id }] },
+    } }));
+    const row = id => saved.resolved.rows.find(row => row.optionId === id);
+    assert.equal(row(rows[0].id).fields[size.id].value, 'Free');
+    assert.equal(row('missing-size').fields[size.id].source, before.resolved.rows.find(row => row.optionId === 'missing-size').fields[size.id].source);
+    assert.ok(row('missing-size').productNameProposal.missing.includes('사이즈'));
+    assert.deepEqual(f.h.network, []);
+  } finally { f.close(); }
+});
 async function sixOptions(source = curtain(), p = provider()) {
   const f = await quotationAiApiFixture();
   const profiles = f.h.load('db/category-profiles.ts'), profile = await profiles.getCategoryProfile('owner', f.profile.id);

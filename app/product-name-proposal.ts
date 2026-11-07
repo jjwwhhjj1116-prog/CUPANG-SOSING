@@ -1,5 +1,5 @@
 const notApplicable = /해당\s*(?:사항\s*)?없음/u;
-const sizePlaceholder = /^(?:상세\s*페이지\s*참조|미확인|미입력)$/u;
+const sizePlaceholder = /^(?:상세\s*(?:페이지|설명|정보)\s*참조|미확인|미입력|확인\s*필요)$/u;
 const sizeNames = new Set(['사이즈', '패션의류/잡화 사이즈', '스포츠 의류/잡화 사이즈']);
 
 export function isProductSizeAttribute(name: string) {

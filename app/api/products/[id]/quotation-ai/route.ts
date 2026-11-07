@@ -1,4 +1,4 @@
-import { QUOTATION_GENERATION_POLICY, quotationAiGenerationFacts } from '@/app/quotation-ai-client';
+import { QUOTATION_GENERATION_POLICY, SAVED_SIZE_QUOTATION_GENERATION_POLICY, quotationAiGenerationFacts } from '@/app/quotation-ai-client';
 import {CURRENT_QUOTATION_RESULT_POLICY} from '@/app/current-quotation-attribute-rules';
 import { quotationScope } from '@/app/quotation-scopes';
 import type { GeneratedQuotationAdoption } from '@/app/quotation-generated-adoption';
@@ -35,7 +35,7 @@ async function executionFingerprint(saved:Awaited<ReturnType<typeof readSource>>
 }
 const publicJob = (job: QuotationAiJob, adoption?:GeneratedQuotationAdoption, active=false) => ({ id: job.id, status: job.status, fingerprint: job.review.fingerprint,
   quotationRevision: job.review.quotationRevision, profileId: job.review.profileId, scope: job.review.scope, model: quotationTextModel(job.review.executionPolicy),
-  ...(job.review.plan.generationPolicy?{generationPolicy:job.review.plan.generationPolicy,generationFacts:quotationAiGenerationFacts(job.review.plan.facts)}:{}),
+  ...(job.review.plan.generationPolicy?{generationPolicy:job.review.plan.generationPolicy,generationFacts:quotationAiGenerationFacts(job.review.plan.facts,job.review.plan.generationPolicy)}:{}),
   ...(job.review.plan.resultPolicy?{resultPolicy:job.review.plan.resultPolicy}:{}),
   ...(job.review.executionPolicy?{executionPolicy:job.review.executionPolicy}:{}),
   result: job.result, error: job.error, createdAt: job.createdAt, startedAt: job.startedAt, finishedAt: job.finishedAt, applied: Boolean(adoption?.entries.some(entry=>entry.jobId===job.id)),
@@ -119,8 +119,9 @@ export async function POST(request: Request, context: Context) {
     if (body.expectedFingerprint !== currentFingerprint || body.expectedQuotationRevision !== saved.state.revision) return sourceChanged();
     const scope = { optionId: body.optionId as string | null, applyToAllOptions: body.applyToAllOptions };
     const existing = await findQuotationAiJob(auth.owner,id,body.idempotencyKey);
+    const newPolicy = saved.categoryContext.categoryId === '103689' ? SAVED_SIZE_QUOTATION_GENERATION_POLICY : QUOTATION_GENERATION_POLICY;
     const plan = buildQuotationAiPlan(saved, scope,existing?existing.review.plan.resultPolicy??null:CURRENT_QUOTATION_RESULT_POLICY,
-      existing?existing.review.plan.generationPolicy??null:QUOTATION_GENERATION_POLICY);
+      existing?existing.review.plan.generationPolicy??null:newPolicy);
     const stablePlan = { ...plan, createdAt: null }; // Request time must not invalidate an idempotent retry.
     const requestFingerprint = await fingerprint({ owner: auth.owner, productId: id,
       company: auth.company, member: auth.member, profileId: saved.categoryContext.profileId, currentFingerprint, scope, plan: stablePlan, model:selected.model,...(executionPolicy?{executionPolicy}:{}) });

@@ -7,6 +7,33 @@ const policy = 'option-notice-material-evidence-v1';
 import { curtain, provider, colors } from './helpers/quotation-generation-semantics.mjs';
 function current(f) { const m = aiModule(); return { m, plan: m.buildQuotationAiPlan(f.saved, f.scope, undefined, policy) }; }
 
+test('new quotation generation copies verified option sizes and omits unresolved size fields', async () => {
+  const f = curtain(), m = aiModule();
+  const sizes = ['均码', 'L', '해당사항없음', '', 'Free', 'M'];
+  f.options.rows.forEach((row, i) => {
+    row.size = sizes[i]; row.provenance.size = i === 4 ? 'unverified' : i === 5 ? 'manual' : 'collected';
+  });
+  f.raw.properties.productPage.properties.commonAttributes.properties.exposedAttributes.allOf.push({
+    contains: { type: 'object', properties: {
+      attributeName: { type: 'string', enum: ['패션의류/잡화 사이즈'], requirement: '필수' },
+      attributeValue: { type: 'string', enum: ['FREE', 'L', 'M', '해당사항없음'] },
+    } },
+  });
+  f.syncSchema();
+  const plan = m.buildQuotationAiPlan(f.saved, f.scope, undefined, 'couplus-common-legal-saved-size-v5');
+  const size = plan.fields.find(field => field.label === '패션의류/잡화 사이즈');
+  const p = provider({ commonColor: '블랙' }), result = await m.executeQuotationAi(plan, p);
+  assert.ok(p.requests.every(request => request.fields.every(field => field.id !== size.id)));
+  assert.deepEqual(JSON.parse(JSON.stringify(result.changes.filter(change => change.fieldKey === size.id))), [
+    { optionId: f.options.rows[0].id, fieldKey: size.id, value: 'FREE' },
+    { optionId: f.options.rows[1].id, fieldKey: size.id, value: 'L' },
+    { optionId: f.options.rows[5].id, fieldKey: size.id, value: 'M' },
+  ]);
+  assert.ok(result.warnings.some(warning => warning.includes('실제 사이즈')));
+  assert.throws(() => m.validateCurrentQuotationResult(plan, [{ optionId: f.options.rows[2].id, fieldKey: size.id, value: 'FREE' }]), /실제 사이즈/);
+  assert.throws(() => m.validateCurrentQuotationResult(plan, [{ optionId: f.options.rows[1].id, fieldKey: size.id, value: '해당사항없음' }]), /실제 사이즈/);
+});
+
 test('new policy differentiates full legal color wires for six raw Chinese colors even when classifier omits notices', async () => {
   const f = curtain(), { m, plan } = current(f), p = provider(), result = await m.executeQuotationAi(plan, p);
   const color = plan.fields.find(field => field.group === 'notice' && field.label === '색상');
