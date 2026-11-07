@@ -318,6 +318,19 @@ test('the bounded extension preflight timeout reaches the app before its ACK tim
   assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);assert.equal(f.sent.length,1);assert.equal(f.calls.length,0);
 });
 
+test('preview explains the installed extension source-scope refusal without trusting other uncoded messages',async()=>{
+  const refusal='기존 전송 요청의 회원·회사·상품 또는 Chrome 창이 다릅니다.';
+  for(const [message,code] of [[refusal,'PRODUCT_DOCUMENT_ORIGINAL_SCOPE'],[refusal+' PRIVATE','PRODUCT_DOCUMENT_DISPATCH_FAILED']]){
+    const f=await fixture();f.bridge=async()=>undefined;
+    const pending=f.session();await f.wait(()=>f.sent.length===1);
+    f.emit(f.sent[0],null,{ok:false,error:message});
+    await assert.rejects(pending,error=>error.code===code&&error.uncertain===false&&
+      !error.message.includes('PRIVATE')&&(code!=='PRODUCT_DOCUMENT_ORIGINAL_SCOPE'||error.message.includes('보관된 전송 요청 확인')));
+    assert.deepEqual(f.sent.map(value=>value.payload.action),['preview']);
+    assert.equal(f.calls.length,0);assert.equal(f.listeners.size,0);
+  }
+});
+
 test('preview timeout or explicit cancellation removes listeners and ignores late positive ACKs without retry or mutation',async()=>{
   for(const mode of ['timeout','abort']){
     const f=await fixture(),controller=new AbortController();f.bridge=async()=>undefined;let succeeded=0;

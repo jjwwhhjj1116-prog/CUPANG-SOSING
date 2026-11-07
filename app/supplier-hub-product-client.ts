@@ -98,6 +98,11 @@ export function productDocumentExchange(action:'preview'|'auditUnexpectedLegal'|
       if(timedOut){if(observeLate&&!observeLate.signal.aborted&&object(envelope)&&envelope.ok===true&&Object.hasOwn(envelope,'result')){try{observeLate.onResult(copy(envelope.result));}catch{/* A late reply cannot settle the rejected operation. */}}return;}
       if(!object(envelope)||envelope.ok!==true||!Object.hasOwn(envelope,'result')){
         const coded=typeof envelope?.code==='string';
+        // The installed extension sends this specific scope refusal without an error code.
+        if(action==='preview'&&!coded&&envelope?.ok===false&&envelope.error==='기존 전송 요청의 회원·회사·상품 또는 Chrome 창이 다릅니다.'){
+          reject(new ProductDocumentBridgeError('현재 창에서 원래 등록 요청의 연결을 확인하지 못했습니다. 상품별 작업 이력의 ‘보관된 전송 요청 확인’에서 기존 문서번호의 기록을 조회해주세요.',false,'PRODUCT_DOCUMENT_ORIGINAL_SCOPE'));
+          return;
+        }
         reject(new ProductDocumentBridgeError(coded&&typeof envelope.error==='string'?envelope.error:'확장이 문서 요청을 완료하지 못했습니다. 원래 요청의 결과를 확인해주세요.',mutating,coded?envelope.code as string:'PRODUCT_DOCUMENT_DISPATCH_FAILED'));
       }
       else{
