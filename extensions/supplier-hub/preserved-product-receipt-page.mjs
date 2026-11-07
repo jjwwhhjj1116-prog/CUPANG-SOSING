@@ -1,4 +1,4 @@
-/** Serialize only into a trusted, same-window authenticated Hub document.
+/** Serialize only into a trusted Hub document in the current app window.
  * The caller must pin executeScript to browser.documentId and verify Chrome's
  * returned documentId. This reader has exactly one fixed GET and no DOM write,
  * record mutation, button click, file read, source compiler or submission path. */
@@ -9,11 +9,14 @@ export async function historicalProductReceiptReadPage(input){
   const id=value=>typeof value==='string'&&value===value.trim()&&value.length>0&&value.length<=200&&!/[\u0000-\u001f]|\.\.\.|…/.test(value)||Number.isSafeInteger(value)&&value>0;
   const hash=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
   const company={A01526306:'유앤채',A01464742:'와이홉'};
+  const originalWindow=browser?.windowId===identity?.windowId,originalTab=browser?.tabId===anchor?.ownedTarget?.tabId;
   if(!exact(input,['anchor','browser'])||anchor?.format!=='yoofam-historical-product-receipt-anchor-v1'||anchor.historicalRequestOnly!==true||anchor.currentBodyEqualityVerified!==false
     ||anchor.readOnly!==true||anchor.remoteWrites!==false||anchor.checkpointWrites!==false||anchor.canResume!==false||!identity||!target||!id(target.docId)||!id(target.qvtRequestId)
     ||!['identityDigest','packetDigest','originalBodySha256','preparedBodySha256'].every(key=>hash(anchor[key]))||!id(anchor.readId)
-    ||!exact(browser,['tabId','windowId','documentId','selection','originalTabId','originalTabAbsent'])||!Number.isSafeInteger(browser.tabId)||browser.tabId<0||browser.windowId!==identity.windowId||typeof browser.documentId!=='string'||!browser.documentId||browser.documentId.length>200
-    ||browser.originalTabId!==anchor.ownedTarget?.tabId||!(browser.selection==='original-owned-tab'&&browser.tabId===browser.originalTabId&&browser.originalTabAbsent===false||browser.selection==='existing-same-window-tab'&&browser.tabId!==browser.originalTabId&&browser.originalTabAbsent===true))
+    ||!exact(browser,['tabId','windowId','documentId','selection','originalTabId','originalTabAbsent'])||!Number.isSafeInteger(browser.tabId)||browser.tabId<0||!Number.isSafeInteger(browser.windowId)||browser.windowId<0||typeof browser.documentId!=='string'||!browser.documentId||browser.documentId.length>200
+    ||browser.originalTabId!==anchor.ownedTarget?.tabId||!(browser.selection==='original-owned-tab'&&originalWindow&&originalTab&&browser.originalTabAbsent===false
+      ||browser.selection==='existing-same-window-tab'&&originalWindow&&!originalTab&&browser.originalTabAbsent===true
+      ||browser.selection==='replacement-window-tab'&&!originalWindow&&!originalTab&&browser.tabId!==identity.appTabId&&browser.originalTabAbsent===true))
     throw Error('원래 문서의 읽기 전용 접수 범위를 확인해주세요.');
   const page=location.origin+location.pathname;
   const check=()=>{

@@ -42,8 +42,8 @@ async function fixture(company=SINGLE_COMPANIES[0]){
     calls.push({port:'hub-fetch',url,method:init.method});assert.equal(init.method,'GET');assert.equal(init.cache,'no-store');assert.equal(init.redirect,'error');await hook('hub',url);return withUrl(Response.json(f.rows),url);
   }});
   const originalTab=()=>({id:ownedTarget.tabId,windowId:f.originalWindowId,url:f.hubUrl});
-  const api={runtime:{id:'extension'},tabs:{get:async id=>{calls.push({port:'tab-get',id});if(id===sender.tab.id)return{id,windowId:context.identity.windowId,url:f.appUrl};if(id===ownedTarget.tabId){if(!f.originalPresent||f.originalGetFailure)throw Error('No tab with id: '+id);return originalTab();}const selected=f.otherTabs.find(tab=>tab.id===id);if(!selected)throw Error('No tab with id: '+id);return clone(selected);},
-    query:async query=>{calls.push({port:'tab-query',query});return[{id:sender.tab.id,windowId:context.identity.windowId,url:f.appUrl},...(f.originalPresent?[originalTab()]:[]),...clone(f.otherTabs)];},sendMessage:async(id,message)=>{
+  const api={runtime:{id:'extension'},tabs:{get:async id=>{calls.push({port:'tab-get',id});if(id===sender.tab.id)return{id,windowId:sender.tab.windowId,url:f.appUrl};if(id===ownedTarget.tabId){if(!f.originalPresent||f.originalGetFailure)throw Error('No tab with id: '+id);return originalTab();}const selected=f.otherTabs.find(tab=>tab.id===id);if(!selected)throw Error('No tab with id: '+id);return clone(selected);},
+    query:async query=>{calls.push({port:'tab-query',query});return[{id:sender.tab.id,windowId:sender.tab.windowId,url:f.appUrl},...(f.originalPresent?[originalTab()]:[]),...clone(f.otherTabs)];},sendMessage:async(id,message)=>{
     assert.equal(id,sender.tab.id);calls.push({port:'app-message',type:message.type});for(const fn of listeners){let pending;const promise=new Promise(resolve=>{pending=fn(message,{id:'extension'},resolve);});if(pending===true)return plain(await promise);}assert.fail('No isolated app reader');
   },create:()=>assert.fail('No new tab'),update:()=>assert.fail('No navigation')},scripting:{executeScript:async request=>{
     calls.push({port:'execute',name:request.func.name,tabId:request.target.tabId});assert.equal(request.target.tabId,f.expectedReadTab);hubContext.args=clone(request.args);const result=await vm.runInContext('('+request.func.toString()+')(...args)',hubContext);return[{frameId:0,documentId:f.documentId,result:plain(result)}];
@@ -116,6 +116,43 @@ test('an absent original tab reads one already-open same-window HTTPS Hub tab an
   assert.equal(result.provenance.tabId,145);assert.deepEqual(result.provenance.observedTab,{tabId:145,windowId:f.context.identity.windowId,documentId:f.documentId,selection:'existing-same-window-tab',originalTabId:71,originalTabAbsent:true});
   assert.equal(f.calls.filter(call=>call.port==='hub-fetch').length,1);assert.ok(f.calls.filter(call=>call.port==='execute').every(call=>call.tabId===145));
   assert.deepEqual(plain(await validateHistoricalProductReceiptCandidate(result,{scope:f.scope,currentSource:f.currentSource})),plain(result));
+});
+
+function moveToReplacementWindow(f){
+  f.sender.tab.id=140;f.sender.tab.windowId=f.context.identity.windowId+1;
+  f.originalPresent=false;f.expectedReadTab=145;
+  f.otherTabs=[{id:145,windowId:f.sender.tab.windowId,url:f.hubUrl}];
+}
+
+for(const company of SINGLE_COMPANIES)test(`${company.code}: a closed original Chrome window permits exact receipt readback from the current app window`,async()=>{
+  const f=await fixture(company),before=canonical(f.checkpoint);moveToReplacementWindow(f);
+  const result=await f.run();
+  assert.equal(result.receipt.state,'accepted');assert.equal(result.receipt.registered,false);
+  assert.equal(result.anchor.identity.windowId,f.context.identity.windowId);
+  assert.equal(result.anchor.ownedTarget.tabId,71);assert.equal(canonical(f.checkpoint),before);
+  assert.deepEqual(result.provenance.observedTab,{tabId:145,windowId:f.sender.tab.windowId,documentId:f.documentId,selection:'replacement-window-tab',originalTabId:71,originalTabAbsent:true});
+  assert.equal(f.calls.filter(call=>call.port==='hub-fetch').length,1);
+  assert.ok(f.calls.filter(call=>call.port.endsWith('fetch')).every(call=>call.method==='GET'));
+  assert.deepEqual(plain(await validateHistoricalProductReceiptCandidate(result,{scope:f.scope,currentSource:f.currentSource})),plain(result));
+});
+
+for(const mode of ['old-window', 'old-app-tab', 'old-hub-tab', 'no-current-hub', 'wrong-company', 'old-window-reappears', 'old-window-reappears-after-hub', 'forged-window'])test(`replacement window ${mode} cannot establish a receipt`,async()=>{
+  const f=await fixture();moveToReplacementWindow(f);
+  const oldTab={id:148,windowId:f.context.identity.windowId,url:'https://example.test/'};
+  if(mode==='old-window')f.otherTabs.push(oldTab);
+  if(mode==='old-app-tab')f.otherTabs.push({...oldTab,id:f.context.identity.appTabId,windowId:f.sender.tab.windowId});
+  if(mode==='old-hub-tab'){f.originalPresent=true;f.originalWindowId=f.sender.tab.windowId;}
+  if(mode==='no-current-hub')f.otherTabs[0].windowId++;
+  if(mode==='wrong-company')f.bodyText='Company Code: A01464742';
+  if(mode==='old-window-reappears')f.setHook(port=>{if(port==='hub')f.otherTabs.push(oldTab);});
+  if(mode==='old-window-reappears-after-hub')f.setHook((port,path)=>{
+    if(port==='app'&&path.includes('/native-assets')&&f.calls.some(call=>call.port==='hub-fetch'))f.otherTabs.push(oldTab);
+  });
+  if(mode==='forged-window'){
+    const value=clone(await f.run());value.provenance.observedTab.windowId=value.provenance.windowId=f.context.identity.windowId;
+    await assert.rejects(validateHistoricalProductReceiptCandidate(value,{scope:f.scope,currentSource:f.currentSource}));
+  }else await assert.rejects(f.run());
+  assert.equal(f.calls.filter(call=>call.port==='hub-fetch').length,['old-window-reappears','old-window-reappears-after-hub','forged-window'].includes(mode)?1:0);
 });
 
 for(const mode of ['original-get-blocked','original-foreign-window','original-wrong-company','no-same-window','fallback-wrong-company','fallback-wrong-name','fallback-hidden-name','original-reappears','fallback-moved','forged-observed-tab'])test(`historical fallback ${mode} cannot replace an existing anchor or authorize a receipt`,async()=>{

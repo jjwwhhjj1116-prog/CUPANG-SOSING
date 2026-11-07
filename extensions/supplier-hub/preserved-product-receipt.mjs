@@ -90,14 +90,17 @@ export async function historicalProductReceiptAnchor(input){
  * A DOM label or caller-supplied status cannot become an official receipt. */
 export function normalizeHistoricalProductReceipt({anchor:rawAnchor,readResult:rawResult,now=Date.now()}){
   const anchor=copy(rawAnchor),result=copy(rawResult),p=result?.provenance,row=result?.row;
+  const browser=p?.observedTab,originalWindow=p?.windowId===anchor?.identity?.windowId,originalTab=p?.tabId===anchor?.ownedTarget?.tabId;
   if(anchor.format!=='yoofam-historical-product-receipt-anchor-v1'||anchor.historicalRequestOnly!==true||anchor.currentBodyEqualityVerified!==false||anchor.readOnly!==true||anchor.remoteWrites!==false||anchor.checkpointWrites!==false||anchor.canResume!==false
     ||!exact(result,['format','readOnly','remoteWrites','provenance','row'])||result.format!=='yoofam-historical-product-receipt-read-v1'||result.readOnly!==true||result.remoteWrites!==false
     ||!exact(p,['method','url','status','redirected','contentType','cache','company','docId','qvtRequestId','identityDigest','packetDigest','requestId','tabId','windowId','documentId','observedTab','readId','observedAt'])
     ||p.method!=='GET'||p.url!==HISTORICAL_PRODUCT_RECEIPT_URL||p.status!==200||p.redirected!==false||!/^application\/json(?:\s*;[^\r\n]*)?$/i.test(p.contentType||'')||p.cache!=='no-store'
     ||!same(p.company,anchor.identity.company)||p.docId!==anchor.target.docId||p.qvtRequestId!==anchor.target.qvtRequestId||p.identityDigest!==anchor.identityDigest||p.packetDigest!==anchor.packetDigest||p.requestId!==anchor.target.requestId||p.readId!==anchor.readId
-    ||!integer(p.tabId)||p.windowId!==anchor.identity.windowId||!text(p.documentId,200)||!integer(p.observedAt,1)||p.observedAt<anchor.checkedAt||p.observedAt>now+5000||now-p.observedAt>60000
-    ||!exact(p.observedTab,['tabId','windowId','documentId','selection','originalTabId','originalTabAbsent'])||p.observedTab.tabId!==p.tabId||p.observedTab.windowId!==p.windowId||p.observedTab.documentId!==p.documentId||p.observedTab.originalTabId!==anchor.ownedTarget.tabId
-    ||!(p.observedTab.selection==='original-owned-tab'&&p.tabId===anchor.ownedTarget.tabId&&p.observedTab.originalTabAbsent===false||p.observedTab.selection==='existing-same-window-tab'&&p.tabId!==anchor.ownedTarget.tabId&&p.observedTab.originalTabAbsent===true)
+    ||!integer(p.tabId)||!integer(p.windowId)||!text(p.documentId,200)||!integer(p.observedAt,1)||p.observedAt<anchor.checkedAt||p.observedAt>now+5000||now-p.observedAt>60000
+    ||!exact(browser,['tabId','windowId','documentId','selection','originalTabId','originalTabAbsent'])||browser.tabId!==p.tabId||browser.windowId!==p.windowId||browser.documentId!==p.documentId||browser.originalTabId!==anchor.ownedTarget.tabId
+    ||!(browser.selection==='original-owned-tab'&&originalWindow&&originalTab&&browser.originalTabAbsent===false
+      ||browser.selection==='existing-same-window-tab'&&originalWindow&&!originalTab&&browser.originalTabAbsent===true
+      ||browser.selection==='replacement-window-tab'&&!originalWindow&&!originalTab&&p.tabId!==anchor.identity.appTabId&&browser.originalTabAbsent===true)
     ||!exact(row,['docId','status','qvtRequestId','productName','categoryPath','modifiedAt','remark'])||row.docId!==anchor.target.docId||row.qvtRequestId!==anchor.target.qvtRequestId||!Object.hasOwn(STATUS,row.status)
     ||row.productName!==anchor.currentSource.productName||row.categoryPath!==anchor.currentSource.categoryPath||row.modifiedAt!==null&&(typeof row.modifiedAt!=='string'||!Number.isFinite(Date.parse(row.modifiedAt)))||typeof row.remark!=='string'||row.remark.length>20000)fail('HISTORICAL_RECEIPT_UNCONFIRMED','원래 문서의 현재 공식 접수 JSON·회사·QVT 연결을 확인하지 못했습니다.');
   const receipt={state:STATUS[row.status],docId:anchor.target.docId,company:anchor.identity.company,identityDigest:anchor.identityDigest,preparedBodySha256:anchor.preparedBodySha256,observedAt:p.observedAt,

@@ -8,7 +8,7 @@ export type HistoricalReceiptAnchor=Claims&{format:'yoofam-historical-product-re
   ownedTarget:{tabId:number;windowId:number;origin:string;requestId:string;packetDigest:string};currentSource:HistoricalReceiptCurrentSource;checkedAt:number;readId:string};
 export type HistoricalReceiptRow={docId:string|number;status:'SUBMITTED'|'FINISHED'|'REJECTED';qvtRequestId:string|number;productName:string;categoryPath:string;modifiedAt:string|null;remark:string};
 export type HistoricalReceiptProvenance={method:'GET';url:string;status:200;redirected:false;contentType:string;cache:'no-store';company:ProductReceiptIdentity['company'];docId:string|number;qvtRequestId:string|number;identityDigest:string;packetDigest:string;requestId:string;tabId:number;windowId:number;documentId:string;
-  observedTab:{tabId:number;windowId:number;documentId:string;selection:'original-owned-tab'|'existing-same-window-tab';originalTabId:number;originalTabAbsent:boolean};readId:string;observedAt:number};
+  observedTab:{tabId:number;windowId:number;documentId:string;selection:'original-owned-tab'|'existing-same-window-tab'|'replacement-window-tab';originalTabId:number;originalTabAbsent:boolean};readId:string;observedAt:number};
 export type HistoricalProductReceiptCandidate=Claims&{format:'yoofam-historical-product-receipt-candidate-v1';anchor:HistoricalReceiptAnchor;receipt:NativeSingleReceipt;officialRow:HistoricalReceiptRow;provenance:HistoricalReceiptProvenance};
 export const HISTORICAL_PRODUCT_RECEIPT_URL:string;
 export function validateHistoricalProductReceiptTarget(value:unknown):Readonly<HistoricalReceiptTarget>;
