@@ -10,6 +10,51 @@ const sourceOverrides=process.env.FULL_STAGE_BEFORE?new Map(JSON.parse(fs.readFi
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const gate=()=>{let resolve;return{promise:new Promise(done=>resolve=done),resolve:()=>resolve()};};
 
+test('the registration source disclosure reads only on first open in each workspace',async()=>{
+ const {seoWorkspaceHarness}=await import('./helpers/seo-workspace.mjs');
+ const api=seoWorkspaceHarness(),sourceUrl='https://detail.1688.com/offer/999999990016.html',product={...api.product,source_url:sourceUrl},sourceReads=[];
+ let h;
+ try{
+  h=await stageDOM(async(url,init={})=>{
+   assert.equal(init.method??'GET','GET');
+   if(url==='/api/products')return Response.json({products:[product]});
+   if(url==='/api/settings')return Response.json({settings:null,scope:{ownerId:'owner',company:null}});
+   if(url==='/api/category-profiles')return Response.json({profiles:[]});
+   if(url==='/api/collection-jobs')return Response.json({jobs:[]});
+   if(url===`/api/products/${product.id}/translation-source`){
+    sourceReads.push(init);
+    return Response.json({productId:product.id,sourceUrl,sourceGaps:[],requestContext:{categoryId:'991234',categoryPath:['합성 분류']}});
+   }
+   return Response.json({error:'unexpected synthetic request'},{status:404});
+  },{components:{'product-source-context':true}});
+  const Dashboard=h.load('app/components/dashboard-client.tsx').default;
+  await h.render(Dashboard,{userName:'합성 테스트',workspaceOwnerId:'owner'});
+  const openProduct=async()=>{await h.React.act(async()=>h.records.get('registration-board').onOpen(product,'SEO'));await h.settle();};
+  const setOpen=async(selector,open)=>{
+   const disclosure=h.container.querySelector(selector);assert.ok(disclosure);
+   await h.React.act(async()=>{disclosure.open=open;disclosure.dispatchEvent(new h.window.Event('toggle'));});
+   await h.settle();
+  };
+  await openProduct();
+  assert.equal(sourceReads.length,0,'a closed source menu must not read the product');
+  await setOpen('.registration-context-menu',true);
+  assert.equal(sourceReads.length,0,'opening the outer menu does not open the source disclosure');
+  await setOpen('.registration-source-context',true);
+  assert.equal(sourceReads.length,1);
+  assert.equal(sourceReads[0].cache,'no-store');
+  assert.match(h.container.querySelector('.product-source-context').textContent,/합성 분류/);
+  await setOpen('.registration-source-context',false);
+  assert.equal(sourceReads[0].signal.aborted,false,'closing the menu must not unmount its source operations');
+  await setOpen('.registration-source-context',true);
+  assert.equal(sourceReads.length,1);
+  await h.React.act(async()=>h.container.querySelector('[aria-label="상품 작업 공간 닫기"]').click());
+  await h.settle();
+  assert.equal(sourceReads[0].signal.aborted,true);
+  await openProduct();
+  assert.equal(sourceReads.length,1,'the next drawer starts with an unopened source disclosure');
+ }finally{if(h)await h.close();api.close();}
+});
+
 for(const required of [true,false])test(`actual schema-driven ${required?'eight':'seven'} ordinary stages share full UI DTOs while size and label proofs stay native`,async()=>{
  const api=mobileIntakeHarness(),calls=[],gates=[];let h,phase='setup';
  try{

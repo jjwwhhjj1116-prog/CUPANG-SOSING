@@ -26,7 +26,7 @@ function fixture(snapshot = syntheticSnapshot()) {
     overrides: { common: { brand: '', packagedWeightG: '420' }, options: { one: { title: '수동 옵션 상품명', color: '' } } } };
 }
 function legacyPair(input) {
-  const automatic = { ...input }; delete automatic.overrides; delete automatic.packagingBasis;
+  const automatic = { ...input, labelManualQuotationOverrides: input.overrides }; delete automatic.overrides; delete automatic.packagingBasis;
   return { automatic: model.resolveQuotationFields(automatic), resolved: model.resolveQuotationFields(input) };
 }
 function parity(input) {
@@ -35,6 +35,10 @@ function parity(input) {
   assert.equal(JSON.stringify(input), before, 'resolution must not mutate its inputs');
   return actual;
 }
+const graphObjects = (value, found = new Set()) => {
+  if (value && typeof value === 'object' && !found.has(value)) { found.add(value); Object.values(value).forEach(child => graphObjects(child, found)); }
+  return found;
+};
 
 for (const company of companies) test(`paired resolution equals two legacy calls on recorded live schema (${company.code})`, () => {
   const categoryPath = ['패션의류잡화', '유니섹스/남녀공용 패션', '공용 잡화', '선글라스', '남녀공용패션선글라스'];
@@ -74,12 +78,8 @@ test('automatic ignores overrides and packaging history while resolved retains m
 
 test('both result graphs are independently mutable and cannot contaminate later calls', () => {
   const input = fixture(), pair = parity(input), baseline = plain(pair), inputBefore = JSON.stringify(input);
-  const objects = (value, found = new Set()) => {
-    if (value && typeof value === 'object' && !found.has(value)) { found.add(value); Object.values(value).forEach(child => objects(child, found)); }
-    return found;
-  };
-  const automaticObjects = objects(pair.automatic);
-  for (const value of objects(pair.resolved)) assert.equal(automaticObjects.has(value), false, 'views share a mutable object');
+  const automaticObjects = graphObjects(pair.automatic);
+  for (const value of graphObjects(pair.resolved)) assert.equal(automaticObjects.has(value), false, 'views share a mutable object');
   pair.automatic.schema.categoryPath.push('changed');
   pair.automatic.schema.fields.find(field => field.choices?.length).choices[0].label = 'changed';
   pair.automatic.schema.fields.find(field => field.hubWire).hubWire.path.push('changed');
@@ -91,6 +91,48 @@ test('both result graphs are independently mutable and cannot contaminate later 
   assert.deepEqual(plain(pair.automatic), automaticAfter);
   assert.deepEqual(plain(model.resolveQuotationFieldsPair(input)), baseline);
   assert.equal(JSON.stringify(input), inputBefore);
+});
+
+test('equivalent generated and label drafts resolve rows once and return independent exact views', () => {
+  const input = fixture(), labels = module('app/product-label-current-rules.ts'), generated = module('app/current-quotation-attribute-rules.ts');
+  const schema = model.getQuotationSchema(input.categoryId, input.categoryPath, input.hubSchema);
+  const material = schema.fields.find(field => field.hubWire?.path.join('.') === 'legalPage.notices' && field.label === '소재');
+  assert.ok(material);
+  input.overrides = { common: {}, options: { one: {} } };
+  input.content.label.material = contentModel.emptyProductContent(input.product.id).label.material;
+  input.labelsState = { schemaVersion: 1, productId: input.product.id, revision: 1, updatedAt: timestamp, overrides: { common: {}, options: {} },
+    automaticSuggestions: { policy: labels.CURRENT_LABEL_POLICY, basis: labels.labelSuggestionBasis({ ...input, schema }),
+      entries: [{ optionId: 'one', fieldKey: 'material', value: '합성 검토 직물', classification: 'suggestion' }] } };
+  input.generatedAdoption = { policy: 'owned-job-facts-v1', sourceBasis: 'a'.repeat(64), resultPolicy: generated.CURRENT_QUOTATION_RESULT_POLICY,
+    entries: [{ optionId: 'one', fieldKey: 'model', value: 'SYNTHETIC-MODEL', jobId: 'synthetic-pair' }] };
+  const expected = plain(legacyPair(input)), before = JSON.stringify(input);
+  const defaults = module('app/explicit-seo-quotation-defaults.ts'), resolver = defaults.explicitSeoQuotationDefaultsResolver;
+  let passes = 0;
+  defaults.explicitSeoQuotationDefaultsResolver = (...args) => { passes++; return resolver(...args); };
+  try {
+    const pair = model.resolveQuotationFieldsPair(input), row = pair.resolved.rows.find(item => item.optionId === 'one');
+    assert.deepEqual(plain(pair), expected);
+    assert.equal(row.fields.model.value, 'SYNTHETIC-MODEL'); assert.equal(row.fields.model.source, 'generated');
+    assert.equal(row.fields[material.id].value, '합성 검토 직물'); assert.equal(row.fields[material.id].source, 'label-draft');
+    const automaticObjects = graphObjects(pair.automatic);
+    for (const value of graphObjects(pair.resolved)) assert.equal(automaticObjects.has(value), false, 'views share a mutable object');
+    assert.equal(JSON.stringify(input), before);
+    assert.equal(passes, 1);
+    const packaged = fixture(null);
+    packaged.overrides = model.emptyQuotationOverrides();
+    packaged.packagingBasis = module('app/quotation-packaging-basis.ts').applyQuotationPackagingBasis(undefined, model.getQuotationSchema(packaged.categoryId).fields,
+      { one: 1, two: 2 }, [{ fieldKey: 'packagedWeightG', optionId: null, value: '420' }]);
+    for (const [name, separate] of [
+      ['manual blank', { ...input, overrides: { common: {}, options: { one: { model: '' } } } }],
+      ['separate label override', { ...input, labelManualQuotationOverrides: { common: { [material.id]: '다른 검토 소재' }, options: {} } }],
+      ['legacy saved overrides', fixture(null)],
+      ['packaging basis', packaged],
+    ]) {
+      const legacy = plain(legacyPair(separate)); passes = 0;
+      assert.deepEqual(plain(model.resolveQuotationFieldsPair(separate)), legacy, name);
+      assert.equal(passes, 2, name);
+    }
+  } finally { defaults.explicitSeoQuotationDefaultsResolver = resolver; }
 });
 
 test('a pair validates and compiles exactly once per invocation, without cross-call reuse', () => {

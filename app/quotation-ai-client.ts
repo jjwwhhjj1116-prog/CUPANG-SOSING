@@ -119,13 +119,17 @@ export function quotationAiCommonLegalIssue(fields:readonly QuotationField[],cha
 export function quotationAiGenerationIssue(field: QuotationField, optionId: string | null, value: string, facts: QuotationGenerationFacts, generationPolicy?:string): string | null {
   if (quotationAiMaterialField(field)) {
     if (value === quotationAiLegalMaterialReference(field, facts, generationPolicy)) return null;
-    if(generationPolicy===QUOTATION_GENERATION_POLICY||generationPolicy===CANONICAL_QUOTATION_GENERATION_POLICY){const expected=quotationAiCanonicalMaterial(field,facts);if(expected!==undefined&&value!==expected)return '원문 재질의 정규화 값과 제안값이 다릅니다.';}
+    const expected = generationPolicy === QUOTATION_GENERATION_POLICY || generationPolicy === CANONICAL_QUOTATION_GENERATION_POLICY
+      ? quotationAiCanonicalMaterial(field, facts) : undefined;
+    if (expected !== undefined && value !== expected) return '원문 재질의 정규화 값과 제안값이 다릅니다.';
     const priority = productFactPriorityIssue(value, 'material', '', facts.material);
     if (priority || unsupportedProductMaterial(value, facts.material.map(pair => pair.value).join('\n'), true)) return priority ?? '상품 원문의 명시된 재질 근거를 확인해주세요.';
     if(facts.material.some(pair=>pair.provenance==='collection-source')){
       const source=facts.material.map(pair=>pair.value).join('\n');
-      // Reuse explicit-field checks without relabeling seller receipt provenance as detail evidence.
-      const issue=productFactPriorityIssue(value,'material',facts.material.map(pair=>`material: ${pair.value}`).join('\n'));
+      // The v4 canonical value already proves that every whole material value agrees.
+      const explicit = generationPolicy === QUOTATION_GENERATION_POLICY && expected !== undefined
+        ? `material: ${expected}` : facts.material.map(pair => `material: ${pair.value}`).join('\n');
+      const issue=productFactPriorityIssue(value,'material',explicit);
       const percents=(text:string)=>Array.from(text.matchAll(/(\d+(?:[.,]\d+)*)\s*[%％]/gu),match=>'%:'+match[1]);
       const units=new Set([...productFactQuantityTokens(source),...percents(source)]);
       if(issue||[...productFactQuantityTokens(value),...percents(value)].some(token=>!units.has(token)))return issue??'원문 재질의 수치·단위 근거를 확인해주세요.';

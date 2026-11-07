@@ -432,10 +432,17 @@ export function resolveQuotationFieldsPair(input: QuotationResolverInput): { aut
   const automaticInput = { ...input,labelManualQuotationOverrides:input.overrides };
   delete automaticInput.overrides;
   delete automaticInput.packagingBasis;
+  const automatic = resolveQuotationFieldsWithSchema(automaticInput, schema, nativeColorId);
+  const overrides = input.overrides;
+  const equalLayers = input.packagingBasis === undefined && input.labelManualQuotationOverrides === undefined
+    && (!overrides || Object.getOwnPropertyNames(overrides.common).length === 0 && Object.getOwnPropertyNames(overrides.options).every(optionId => {
+      const values = overrides.options[optionId];
+      return values && Object.getOwnPropertyNames(values).length === 0;
+    }));
   return {
-    automatic: resolveQuotationFieldsWithSchema(automaticInput, schema, nativeColorId),
-    // Consumers may edit either view. Never share mutable schema fields/choices.
-    resolved: resolveQuotationFieldsWithSchema(input, structuredClone(schema), nativeColorId),
+    automatic,
+    // Consumers may edit either view, even when the saved layers yield the same values.
+    resolved: equalLayers ? structuredClone(automatic) : resolveQuotationFieldsWithSchema(input, structuredClone(schema), nativeColorId),
   };
 }
 

@@ -6,7 +6,7 @@ import {sizeChartApiFixture,companies,json,plain,allTables} from './helpers/supp
 
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const proofs=[];
-const files=['app/product-label-draft.ts','app/api/products/[id]/product-label-draft/route.ts','app/quotation-ai.ts','tests/product-label-draft-api.test.mjs'];
+const files=['app/product-label-draft.ts','app/api/products/[id]/product-label-draft/route.ts','app/quotation-ai.ts','app/quotation-ai-client.ts','tests/product-label-draft-api.test.mjs'];
 const hashes=()=>Object.fromEntries(files.map(file=>[file,sha(fs.readFileSync(file))]));
 let frozenHashes;
 const fields={content:'2개',material:'실리콘',type:'생활용품'};
@@ -153,7 +153,7 @@ for(const company of companies)test(`Stage6 draft rejects stale/auth/provider fa
  }finally{f.close();}
 });
 
-test('Stage6 verified processing preserves the canonical material used by the saved quotation',async()=>{
+test('Stage6 and v4 quotation save the same material from agreeing whole receipt synonyms',async()=>{
  frozenHashes??=hashes();
  const {fixture:receiptFixture}=await import('./helpers/quotation-receipt-source.mjs');
  const material={name:'材质',value:'涤纶'}, {f,h,receipt}=await receiptFixture([material]);
@@ -185,12 +185,23 @@ test('Stage6 verified processing preserves the canonical material used by the sa
   const manual=await save(quote,q0,{changes:[{optionId:option,fieldKey:field.id,value:'검토한 재질'}]});
   assert.equal((await generate(await read(labels))).values.material,'검토한 재질');
   const cleared=await save(quote,manual,{changes:[{optionId:option,fieldKey:field.id,value:null}]});
-  source([material,{name:'面料',value:'涤纶'}]);
+  source([material,{name:'面料',value:'聚酯纤维'}]);
   f.setProvider({async run(_model,input){
    const request=JSON.parse(input.messages[1].content),changes=request.fields.filter(item=>item.id===field.id).map(item=>({fieldKey:item.id,value:'涤纶'}));
    return {response:JSON.stringify(request.task==='ANALYZE_SCHEMA_ATTRIBUTES'?{differentiatedFieldIds:[]}:{changes})};
   }});
   const job=(await json(await f.request(f.requestBody(await json(await f.request(undefined,'GET')))))).job;
+  const client=h.load('app/quotation-ai-client.ts'),generationFacts=job.generationFacts;
+  assert.equal(job.generationPolicy,client.QUOTATION_GENERATION_POLICY);
+  assert.deepEqual(generationFacts.material.map(pair=>pair.value),['涤纶','聚酯纤维']);
+  assert.match(client.quotationAiGenerationIssue(field,option,'폴리에스테르',generationFacts,client.CANONICAL_QUOTATION_GENERATION_POLICY),/상충/);
+  const issue=(value,facts=generationFacts,target=field)=>client.quotationAiGenerationIssue(target,option,value,facts,job.generationPolicy);
+  assert.ok(issue('涤纶'));
+  assert.ok(issue('폴리에스테르',generationFacts,{...field,type:'select',choices:[{value:'면',label:'면'}]}));
+  for(const [raw,conflict,value] of [['涤纶','棉','폴리에스테르'],['80% 涤纶','90% 聚酯纤维','폴리에스테르 80%']]){
+   const material=generationFacts.material.map((pair,index)=>({...pair,value:index?conflict:raw}));
+   assert.match(issue(value,{...generationFacts,material}),/상충/);
+  }
   const adopted=await save(quote,await read(quote),{changes:[],generatedAdoption:{jobId:job.id,targets:[{optionId:option,fieldKey:field.id}]}});
   assert.equal(adopted.revision,cleared.revision+1);
   assert.equal(quoteMaterial(adopted).source,'generated');

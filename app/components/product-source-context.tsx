@@ -1,6 +1,6 @@
 'use client';
 import './product-source-context.css';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import type { CollectionSourceGap } from '@/app/collection-source-gaps';
 import { parseCollectionRequest } from '@/app/sourcing';
 import { capture1688FromChrome } from '@/app/browser-product-bridge';
@@ -28,6 +28,17 @@ function readContext(value: unknown, productId: string, sourceUrl: string): Sour
     throw Error('상품의 카테고리·수집 원문이 일치하지 않습니다. 다시 확인해주세요.');
   }
   return body;
+}
+
+export function ProductSourceDisclosure({ children, ...source }: ComponentProps<typeof ProductSourceContext> & { children: ReactNode }) {
+  const [requested, setRequested] = useState(false);
+  return <details className="registration-source-context" onToggle={event => {
+    if (event.currentTarget.open) setRequested(true);
+  }}>
+    <summary>카테고리 · 수집 자료</summary>
+    {children}
+    {requested && <ProductSourceContext {...source} />}
+  </details>;
 }
 
 export function ProductSourceContext({ productId, productVersion, sourceUrl, step, onNavigate, onBeforeSupplement, onBusy, onSaved }: {
