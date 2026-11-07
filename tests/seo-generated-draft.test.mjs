@@ -38,7 +38,7 @@ test('a short Korean brand does not consume a compound noun in a feature or prov
  }finally{f.api.close();}
 });
 
-test('a sparse signed AI title uses the same deduplicated feature-based example without changing the stored response',()=>{
+test('signed AI titles use the deduplicated feature-based example without changing the stored response',()=>{
  const f=fixture();try{
   const memo={brand:'유앤채, 보조 브랜드',features:'100x200cm 반짝이 스트링 장식 실커튼',keywords:'실커튼'};
   f.options.rows[0].originalName='浅紫 / 100*200cm';
@@ -55,6 +55,11 @@ test('a sparse signed AI title uses the same deduplicated feature-based example 
   assert.equal(seed.values.seo.title,'유앤채 100x200cm 반짝이 스트링 장식 실커튼');
   assert.deepEqual(JSON.parse(JSON.stringify(seed.values.optionNames)),{[f.options.rows[0].id]:'연보라 / 100*200cm'});
   assert.equal(JSON.stringify(f.job),before);
+  f.job.result.draft.title='유앤채 반짝이 장식 소품';
+  const fullProviderResult=JSON.stringify(f.job);
+  assert.equal(f.module.createSeoGeneratedDraft(input).values.seo.title,'유앤채 100x200cm 반짝이 스트링 장식 실커튼');
+  assert.equal(JSON.stringify(f.job),fullProviderResult);
+  f.job.result.draft.title='유앤채실커튼';
   f.content.seo.title={value:'직접 저장한 제목',provenance:'manual',updatedAt:f.api.version};
   assert.equal(f.module.createSeoGeneratedDraft(input).values.seo.title,undefined);
   f.job.review.seoComposition.memo={...memo,features:'150x200cm 반짝이 실커튼'};

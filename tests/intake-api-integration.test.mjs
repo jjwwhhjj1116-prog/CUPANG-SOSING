@@ -26,7 +26,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
   const original=payload.result.result.productSkuInfos[0];payload.result.result.productSkuInfos=Array.from({length:automatic==='maximum'?200:60},(_,i)=>({...structuredClone(original),skuId:String(5627721589407+i),...(automatic==='maximum'?{skuAttributes:[...original.skuAttributes,{attributeName:'尺码',value:'大号'}]}:{})}));
   payload.result.result.productAttribute=Array.from({length:50},(_,i)=>({attributeName:'属性'+i,value:'原文'}));
  }
- const deps={'cloudflare:workers':{env:{DB:db,FILES:{head:async key=>objects.has(key)?{size:objects.get(key).length,httpMetadata:{contentType:'image/png'}}:null,put:async(key,bytes)=>{objects.set(key,new Uint8Array(bytes));return {};}},OPENAI_API_KEY:'fixture-key',SOURCEFLOW_TEXT_MODEL:'fixture-model',SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'2000',ALIBABA_PRODUCT_API_ENABLED:'true',ALIBABA_APP_KEY:'12345',ALIBABA_APP_SECRET:'fixture-secret',ALIBABA_ACCESS_TOKEN:'fixture-token'}},'@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:true,userId:'owner',membership:{id:'owner',status:'approved',companyCode:'A01464742',companyName:'와이홉'}}),getWorkspaceOwnerId:async()=>'owner'},'next/server':{NextResponse:Response},parse5,'@/extensions/supplier-hub/product-jsonld.mjs':{parseProductJsonLd}};
+ const deps={'cloudflare:workers':{env:{DB:db,FILES:{head:async key=>objects.has(key)?{size:objects.get(key).length,httpMetadata:{contentType:'image/png'}}:null,put:async(key,bytes)=>{objects.set(key,new Uint8Array(bytes));return {};}},OPENAI_API_KEY:'fixture-key',SOURCEFLOW_TEXT_MODEL:'fixture-model',SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'2000',ALIBABA_PRODUCT_API_ENABLED:'true',ALIBABA_APP_KEY:'12345',ALIBABA_APP_SECRET:'fixture-secret',ALIBABA_ACCESS_TOKEN:'fixture-token'}},'@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:true,userId:'owner',email:'owner@example.test',membership:{id:'owner',email:'owner@example.test',role:'member',status:'approved',companyCode:'A01464742',companyName:'와이홉'}}),getWorkspaceOwnerId:async()=>'owner'},'next/server':{NextResponse:Response},parse5,'@/extensions/supplier-hub/product-jsonld.mjs':{parseProductJsonLd}};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Date,Response,Request,Blob,CompressionStream,DecompressionStream,TextEncoder,TextDecoder,Uint8Array,DataView,AbortController,AbortSignal,setTimeout,clearTimeout,structuredClone,crypto:webcrypto,process:{env:{NODE_ENV:'production'}},fetch:async (target,init)=>{const host=new URL(target).hostname;network.push(host);if(host==='detail.1688.com')return new Response('<html>fixture: metadata not available on the public server page</html>',{headers:{'content-type':'text/html'}});if(host==='gw.open.1688.com')return Response.json(payload);if(host==='api.openai.com'){
  const request=JSON.parse(init.body);assert.equal(request.model,'fixture-model');assert.equal(request.store,false);
  const source=JSON.parse(request.input[0].content[0].text);assert.equal(source.category.id,'80719');assert.equal(source.title,'原文商品');
@@ -106,7 +106,9 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
    const sequence=calls.slice(start);
    const firstImage=sequence.findIndex(path=>path.endsWith('/images')||path.endsWith('/images-batch'));
    const lastDraft=sequence.findLastIndex(path=>path.endsWith('/translation')||path.endsWith('/translation-apply'));
-   assert.ok(lastDraft>=0 && firstImage>lastDraft, 'draft writes must finish before image attachment mutations');
+   assert.ok(lastDraft>=0, 'intake applies the canonical SEO draft');
+   if(automatic==='fresh')assert.ok(firstImage>lastDraft, 'fresh draft writes finish before image attachment mutations');
+   else assert.equal(firstImage,-1,'an existing confirmed image receipt is reused without an attachment mutation');
    if(expiredJobId){const saved=sqlite.prepare('SELECT id,status FROM translation_jobs WHERE idempotency_key=?').get('intake-auto-v1');assert.equal(saved.id,expiredJobId);assert.equal(saved.status,'completed');}
    const content=JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload);
    if(automatic==='many'){assert.equal(content.categoryAttributes.categoryId,'80719');assert.equal(content.categoryAttributes.values.length,50);}
@@ -123,7 +125,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
    assert.equal(row.fields.title.value,automatic==='resume-completed-options'?expectedTitle+', 검정 옵션':expectedTitle);assert.equal(row.fields.supplyPrice.value,'17920');if(automatic===true){assert.equal(row.fields.basketShape.value,'사각형');assert.equal(row.fields.basketShape.source,'content');}
    for(const field of ['mainImage','additionalImages','detailImages'])assert.equal(row.fields[field].value,'',`unselected originals stay out of quotation ${field}`);
    assert.equal(content.detailDescriptionLinked,true);
-   assert.equal(row.fields.detailHtml.value,'<p>검토용 설명</p>','new URL draft follows its saved SEO explanation until stage five is saved');assert.equal(row.fields.altText.value,'','fresh alternate text stays blank');
+   assert.equal(row.fields.detailHtml.value,'<p>검토용 설명</p>','new URL draft follows its saved SEO explanation until stage five is saved');assert.equal(row.fields.altText.value,expectedTitle,'unwritten alternate text follows the saved SEO title');
    if(String(automatic).startsWith('hidden-off')){
     assert.equal(content.categoryAttributes.hiddenAttributes,false);
     assert.equal(row.fields.basketShape.value,'');assert.equal(row.fields.basketShape.source,'couplus-default');
@@ -138,7 +140,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
     assert.equal(savedContent.status,200,await savedContent.clone().text());
     view=await (await qr.GET(new Request(qu),qc)).json();
     const stageRow=view.resolved.rows.find(r=>r.optionId==='collected-1');
-    for(const [field,value] of Object.entries({title:'1단계 수정 상품명, 검정 옵션',searchTags:'1단계 검색어',noticeMaterial:'해당사항없음',noticeCountryOfOrigin:'해당사항없음',additionalImages:[keys[2],keys[1]].join('\n'),detailImages:[keys[3],keys[4],keys[5]].join('\n'),labelImages:keys[6],detailHtml:'<p>수정 설명 &amp; 줄바꿈<br>둘째 줄</p>'}))assert.equal(stageRow.fields[field].value,value,'source-stage edit '+field);
+    for(const [field,value] of Object.entries({title:'1단계 수정 상품명, 검정 옵션',searchTags:'1단계 검색어',noticeMaterial:'6단계 재질',noticeCountryOfOrigin:'해당사항없음',additionalImages:[keys[2],keys[1]].join('\n'),detailImages:[keys[3],keys[4],keys[5]].join('\n'),labelImages:keys[6],detailHtml:'<p>수정 설명 &amp; 줄바꿈<br>둘째 줄</p>'}))assert.equal(stageRow.fields[field].value,value,'source-stage edit '+field);
     const stageSix=JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload).label;
     assert.equal(stageSix.material.value,'6단계 재질');assert.equal(stageSix.countryOfOrigin.value,'중국');
    }
@@ -196,7 +198,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
     assert.deepEqual(Buffer.from(bundle.get(preview.filename)),Buffer.from(await (await exportRequest({action:'download',fingerprint:preview.fingerprint})).arrayBuffer()));
     const plan=JSON.parse(new TextDecoder().decode(bundle.get('supplier-hub-upload-plan.json'))); assert.deepEqual(plan.company,{code:'A01464742',name:'와이홉'});
     const originalIdentity=deps['@/app/chatgpt-auth'].getChatGPTUser;
-    deps['@/app/chatgpt-auth'].getChatGPTUser=async()=>({verifiedAccess:true,userId:'owner',membership:{id:'owner',status:'approved',companyCode:'A01526306',companyName:'유앤채'}});
+    deps['@/app/chatgpt-auth'].getChatGPTUser=async()=>({verifiedAccess:true,userId:'owner',email:'owner@example.test',membership:{id:'owner',email:'owner@example.test',role:'member',status:'approved',companyCode:'A01526306',companyName:'유앤채'}});
     assert.equal((await exportRequest({action:'export',fingerprint:preview.fingerprint})).status,409,'company change invalidates reviewed package');
     deps['@/app/chatgpt-auth'].getChatGPTUser=originalIdentity;
     assert.equal(plan.categoryId,'80719');assert.equal(plan.quotation.file.filename,preview.filename);
@@ -218,7 +220,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
     assert.equal((await exportRequest({action:'export',fingerprint:refreshed.fingerprint})).status,409,'editing a source stage invalidates a prepared package');
     const finalPreview=await(await exportRequest({action:'preview'})).json();
     assert.equal(finalPreview.rows[0][fields.indexOf('title')],'검토 완료 상품명','final quotation override survives later source edits');
-    assert.equal(finalPreview.rows[0][fields.indexOf('noticeCountryOfOrigin')],'해당사항없음','source label edit does not overwrite a fresh legal notice');
+    assert.equal(finalPreview.rows[0][fields.indexOf('noticeCountryOfOrigin')],'대한민국','an unedited legal notice follows the explicit source label edit');
     assert.equal(JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload).label.countryOfOrigin.value,'대한민국');
     assert.equal(finalPreview.rows[0][fields.indexOf('salePrice')],36000);
     assert.notEqual(finalPreview.fingerprint,refreshed.fingerprint);
