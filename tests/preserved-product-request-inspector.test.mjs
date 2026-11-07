@@ -18,14 +18,15 @@ function harness(){
  };
  const api={PreservedProductInspectionError:InspectionError,inspectPreservedProductRequest(selection,ownerId,signal){return new Promise((resolve,reject)=>calls.push({selection,ownerId,signal,resolve,reject}));}};
  const receiptApi={syncPreservedProductReceipt(selection,ownerId,signal){return new Promise((resolve,reject)=>receiptCalls.push({selection,ownerId,signal,resolve,reject}));}};
- const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/preserved-product-request-inspector.tsx',import.meta.url),'utf8'),{fileName:'inspector.tsx',compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,Date,require:name=>name==='react'?react:name==='react/jsx-runtime'?require(name):name==='@/app/preserved-product-request-client'?api:name==='@/app/preserved-product-receipt-client'?receiptApi:(()=>{throw Error(name);})()});
+ const NativeRegistration=()=>assert.fail('The parent only passes the persisted receipt to the native lookup');
+ const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/preserved-product-request-inspector.tsx',import.meta.url),'utf8'),{fileName:'inspector.tsx',compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,Date,require:name=>name==='react'?react:name==='react/jsx-runtime'?require(name):name==='@/app/preserved-product-request-client'?api:name==='@/app/preserved-product-receipt-client'?receiptApi:name==='@/app/components/supplier-hub-native-registration'?{SupplierHubNativeRegistration:NativeRegistration}:(()=>{throw Error(name);})()});
  const render=(next=props)=>{props=next;cursor=0;tree=exports.PreservedProductRequestInspector(props);effects.splice(0).forEach(run=>run());return tree;};
  const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'&&value.props?[value,...nodes(value.props.children)]:[];
  const find=predicate=>{const value=nodes(tree).find(predicate);assert.ok(value,'UI target exists');return value;};
  const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
  const input=(name,value)=>{find(node=>node.type==='input'&&node.props['aria-label']===name).props.onChange({target:{value}});render();};
  render();
- return{render,find,input,calls,receiptCalls,saved,text:()=>text(tree),sync(){input('보관 요청 상품 ID',productId);input('보관 요청번호',requestId);input('보관 문서번호','2347603');input('보관 등록 파일 번호','ae11c551-7bf0-49dd-81c9-1eb85400d6e2');find(node=>node.type==='button'&&text(node)==='기존 문서 접수 결과 동기화').props.onClick();render();},start(){input('보관 요청 상품 ID',productId);input('보관 요청번호',requestId);input('보관 문서번호','2347603');find(node=>node.type==='button'&&text(node)==='원래 전송 기록 조회').props.onClick();render();}};
+ return{render,find,input,calls,receiptCalls,saved,nativeLookup:()=>nodes(tree).find(node=>node.type===NativeRegistration),text:()=>text(tree),sync(){input('보관 요청 상품 ID',productId);input('보관 요청번호',requestId);input('보관 문서번호','2347603');input('보관 등록 파일 번호','ae11c551-7bf0-49dd-81c9-1eb85400d6e2');find(node=>node.type==='button'&&text(node)==='기존 문서 접수 결과 동기화').props.onClick();render();},start(){input('보관 요청 상품 ID',productId);input('보관 요청번호',requestId);input('보관 문서번호','2347603');find(node=>node.type==='button'&&text(node)==='원래 전송 기록 조회').props.onClick();render();}};
 }
 const settle=async()=>{for(let i=0;i<3;i++)await new Promise(resolve=>setImmediate(resolve));};
 
@@ -68,6 +69,15 @@ test('a blank registration file number sends the exact document lookup',async()=
  assert.equal(h.receiptCalls.length,1);assert.equal(h.receiptCalls[0].selection.docId,50123);assert.equal(h.receiptCalls[0].selection.qvtRequestId,null);
  h.receiptCalls[0].resolve({...receipt,docId:50123,receipt:{sourceStatus:'FINISHED',qvtRequestId:7901}});await settle();h.render();
  assert.match(h.text(),/50123.*7901.*파일 처리 완료/);assert.deepEqual(h.saved,[productId]);
+});
+test('the exact saved receipt unlocks explicit SKU lookup and changing the target retires it',async()=>{
+ const h=harness();assert.equal(h.nativeLookup(),undefined);
+ h.sync();assert.equal(h.nativeLookup(),undefined);
+ h.receiptCalls[0].resolve(receipt);await settle();h.render();
+ assert.equal(h.nativeLookup()?.props.receipt,receipt);assert.equal(h.nativeLookup().props.disabled,false);
+ h.input('보관 문서번호','50124');assert.equal(h.nativeLookup(),undefined);
+ h.sync();h.receiptCalls[1].resolve(receipt);await settle();h.render();
+ assert.ok(h.nativeLookup());h.render({ownerId:'member-b'});assert.equal(h.nativeLookup(),undefined);
 });
 test('receipt failures do not mark completion or refresh a product',async()=>{
  const h=harness();h.sync();h.receiptCalls[0].reject(Error('본문 연결이 다릅니다'));await settle();h.render();assert.deepEqual(h.saved,[]);assert.match(h.text(),/본문 연결이 다릅니다/);assert.doesNotMatch(h.text(),/목록에 반영했습니다/);

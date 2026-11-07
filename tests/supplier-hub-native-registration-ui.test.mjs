@@ -55,10 +55,19 @@ for(const company of companies)test(company.name+': read is explicit, renders ex
     await h.settle();assert.equal(h.calls.length,0);h.setProps({receipt:plain(h.props().receipt)});await h.settle();assert.equal(h.calls.length,0);
     h.click(read);await h.settle();assert.equal(h.calls.length,1);assert.equal(h.calls[0].row.company.code,company.code);
     const value=h.text();for(const expected of ['001752','002752','000456','검수 중','검수 완료','반려','미발급','원래 옵션과의 개별 연결은 확인 전'])assert.ok(value.includes(expected),expected);
+    assert.match(value,/SKU 발급\s*1\s*\/\s*3\s*개/);assert.match(value,/검수 완료 SKU\s*1\s*개/);
     assert.match(value,/상품\s*3\s*건/);assert.match(value,/페이지\s*2\s*개/);assert.equal(value.includes('등록 완료'),false);
     assert.equal(nodes(h.render()).some(node=>node.type==='select'||node.type==='input'),false);
     assert.equal(h.calls[0].signal.aborted,false);assert.equal(h.button(cancel),undefined);
   }finally{h.close();}
+});
+
+test('a SKU on a pending or rejected row is issued but never counted as an inspected SKU',async()=>{
+ const h=fixture();try{
+   h.setReader(async row=>{const value=observation(row);return {...value,rows:value.rows.map((item,index)=>({...item,skuId:String(7800+index)}))};});
+   h.click(read);await h.settle();assert.match(h.text(),/SKU 발급\s*3\s*\/\s*3\s*개/);
+   assert.match(h.text(),/검수 완료 SKU\s*1\s*개/);assert.doesNotMatch(h.text(),/등록 완료/);
+ }finally{h.close();}
 });
 
 test('busy locks synchronously against repeated stale callbacks; cancellation aborts and discards late rows',async()=>{

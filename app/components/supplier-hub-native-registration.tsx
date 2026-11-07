@@ -37,12 +37,15 @@ function NativeRegistrationScope({receipt,disabled,scope}:Props&{scope:string}){
   }
   const observation=!disabled&&result?.scope===scope?result.value:null;
   const message=!disabled&&error?.scope===scope?error.message:null;
+  const issuedSkus=observation?.rows.filter(row=>row.skuId!==null)??[];
+  const inspectedSkus=issuedSkus.filter(row=>row.status==='INSPECTION_COMPLETE').length;
   return <section aria-label="상품별 접수 상태" aria-busy={busy}>
     <div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void read()}>상품별 접수 상태 조회</button>
       {busy&&<button type="button" className="btn ghost" disabled={disabled} onClick={cancel}>조회 취소</button>}</div>
     {message&&<p role="alert">{message}</p>}
     {observation&&<>
       <p role="status">등록 파일의 상품 {observation.total}건 · 조회한 페이지 {observation.pagesRead}개</p>
+      <p>SKU 발급 {issuedSkus.length}/{observation.membersCount}개 · 검수 완료 SKU {inspectedSkus}개</p>
       {observation.rows.length>0?<table><caption>Supplier Hub 상품별 접수 결과</caption>
         <thead><tr><th scope="col">견적서 번호</th><th scope="col">SKU 번호</th><th scope="col">상품명</th><th scope="col">처리 상태</th></tr></thead>
         <tbody>{observation.rows.map((row,index)=><tr key={`${row.quotationId}:${row.skuId??'pending'}:${index}`}>

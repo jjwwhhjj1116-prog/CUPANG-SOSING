@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { inspectPreservedProductRequest, PreservedProductInspectionError, type PreservedProductInspection, type PreservedProductPendingDiagnostic } from '@/app/preserved-product-request-client';
 import { syncPreservedProductReceipt } from '@/app/preserved-product-receipt-client';
 import type { ProductReceiptRecord } from '@/app/supplier-hub-product-receipt';
+import { SupplierHubNativeRegistration } from '@/app/components/supplier-hub-native-registration';
 
 const states: Record<string, string> = {
   prepared: '전송 준비 기록', created: '문서 생성 확인', 'update-requested': '파일·본문 저장 결과 미확정', updated: '본문 저장 확인', validated: '단계 검증 완료',
@@ -79,7 +80,10 @@ export function PreservedProductRequestInspector({ ownerId, onReceiptSaved }: { 
         <div className="panel-stack" style={{ paddingTop: 12 }}>
           <label className="field"><span>등록 파일 번호(QVT, 선택)</span><input aria-label="보관 등록 파일 번호" value={qvtRequestId} disabled={busy} onChange={event => changed(setQvtRequestId, event.target.value)} /></label>
           <button type="button" className="btn primary" disabled={busy || !ownerId || !productId.trim() || !requestId.trim() || !/^[1-9]\d*$/.test(docId)} onClick={() => void syncReceipt()}>기존 문서 접수 결과 동기화</button>
-          {receipt && <p role="status">문서 {String(receipt.docId)} · 등록 파일 {String(receipt.receipt.qvtRequestId)} · {({ SUBMITTED: '접수 처리 중', FINISHED: '파일 처리 완료', REJECTED: '반려' })[receipt.receipt.sourceStatus]} · YOOFAM 목록에 반영했습니다.</p>}
+          {receipt && scope === ownerId && <>
+            <p role="status">문서 {String(receipt.docId)} · 등록 파일 {String(receipt.receipt.qvtRequestId)} · {({ SUBMITTED: '접수 처리 중', FINISHED: '파일 처리 완료', REJECTED: '반려' })[receipt.receipt.sourceStatus]} · YOOFAM 목록에 반영했습니다.</p>
+            <SupplierHubNativeRegistration receipt={receipt} disabled={busy} />
+          </>}
           <small>등록 파일 번호를 비워두면 원래 문서번호로 공식 접수 목록을 조회합니다. 결과가 확인되면 YOOFAM 목록에 반영합니다.</small>
         </div>
       </details>
