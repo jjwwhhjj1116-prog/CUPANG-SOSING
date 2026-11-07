@@ -43,6 +43,14 @@ test('the live quotation builds a proposal from saved options without rewriting 
   assert.equal(row.fields.title.value, base);
   assert.equal(row.fields[size.id].value, '해당사항없음');
   assert.equal(row.fields[hiddenQuantity.id].value, '');
+  const color = resolved.schema.fields.find(field => field.hubWire?.name === '색상');
+  options.rows[0].color = '';
+  options.rows[0].provenance.color = 'unverified';
+  input.generatedAdoption = { policy: 'owned-job-facts-v1', sourceBasis: 'a'.repeat(64),
+    entries: [{ jobId: 'fixture-job', optionId: 'green', fieldKey: color.id, value: '검정' }] };
+  const withSavedColor = model.resolveQuotationFields(input).rows[1];
+  assert.equal(withSavedColor.fields[color.id].source, 'generated');
+  assert.equal(withSavedColor.productNameProposal.value, base + ' 검정 Free 1개');
   const change = value => [{ fieldKey: size.id, optionId: 'green', value }];
   const context = { schema: resolved.schema, optionIds: ['green'] };
   assert.throws(() => model.validateQuotationChanges(change('해당 사항 없음'), context), /실제 사이즈/);

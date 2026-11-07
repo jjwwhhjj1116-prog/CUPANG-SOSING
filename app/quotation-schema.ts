@@ -879,10 +879,12 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
       const cell = field && fields[field.id];
       return cell && ['option', 'manual-option', 'manual-common', 'content'].includes(cell.source) ? cell.value : saved;
     };
+    const savedColor = exposedColor && fields[exposedColor.id];
     const productNameProposal = option ? proposeProductName({
       brand: fields.brand.value,
       productName: fields.title.source.startsWith('manual-') ? fields.title.value : savedTextOrFallback(content.seo.title, product.title),
-      color: proposalValue(exposedColor, option.color ?? ''),
+      color: savedColor?.source === 'generated' && !savedColor.validationIssues?.length
+        ? savedColor.value : proposalValue(exposedColor, option.color ?? ''),
       size: proposalValue(exposedSize, option.size ?? ''),
       count: option.unitsPerPack,
       quantity: proposalValue(exposedQuantity, labelSource('netContents', option, undefined, false).value),
