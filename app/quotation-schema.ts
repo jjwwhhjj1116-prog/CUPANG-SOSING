@@ -115,6 +115,7 @@ type FieldExtras = Partial<Omit<QuotationField, 'id' | 'section' | 'label'>>;
 const field = (id: string, section: QuotationSection, label: string, extra: FieldExtras = {}): QuotationField =>
   ({ id, section, label, type: 'text', required: false, visibility: 'common', maxLength: 2000, ...extra });
 const choices = (...values: string[]) => values.map(value => ({ value, label: value }));
+const requestCoupangBarcodeLabel = '바코드 없음(쿠팡 바코드 생성 요청)';
 const imageHelp = '이 상품에 저장된 비공개 이미지의 참조입니다. Supplier Hub에서 접근할 공개 URL이 만들어졌다는 의미는 아닙니다.';
 const commonFields: QuotationField[] = [
   field('title', 'start', '상품명', { required: true, maxLength: 500, help: '상품명은 SEO 설정에서 수정해주세요.' }),
@@ -131,7 +132,7 @@ const commonFields: QuotationField[] = [
   field('msrp', 'product', '권장소비자가격', { type: 'number', unit: '원', integer: true, min: 1, max: Number.MAX_SAFE_INTEGER,
     help: '배수로 자동 계산한 금액은 권장가 초안입니다. 제조사 권장가 또는 공식 판매처 가격의 근거와 가격 설정 권한을 확인해주세요. 직접 수정하거나 저장해도 Supplier Hub MSRP·OSRP 약관에 동의한 것으로 처리하지 않습니다.' }),
   field('barcodeMode', 'product', '바코드 입력 방식', { type: 'select', choices: [
-    { value: 'existing', label: '실제 바코드 입력' }, { value: 'request-coupang', label: '바코드 없음(쿠팡 바코드 생성 요청)' },
+    { value: 'existing', label: '실제 바코드 입력' }, { value: 'request-coupang', label: requestCoupangBarcodeLabel },
   ], reviewRequired: true, help: '없음을 선택해도 실제 쿠팡 바코드 생성 요청은 전송하지 않습니다.' }),
   field('barcode', 'product', '바코드', { maxLength: 100, reviewRequired: true, help: '실제 바코드 입력 방식을 선택한 경우 확인된 번호를 입력합니다.' }),
   field('mainImage', 'image', '대표 이미지', { type: 'images', maxLength: 512, maxItems: 1, help: imageHelp }),
@@ -857,7 +858,13 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
     if (fields.barcodeMode.value === 'existing' && !fields.barcode.value.trim()) { fields.barcode.needsReview = true; fields.barcode.issues.push('실제 바코드 번호를 입력해주세요.'); fields.barcode.validationIssues!.push('실제 바코드 번호를 입력해주세요.'); }
     const barcodeIssues = quotationBarcodeIssues(schema.categoryId, fields.barcodeMode.value, fields.barcode.value);
     if (barcodeIssues.length) { fields.barcode.needsReview = true; fields.barcode.issues.push(...barcodeIssues); fields.barcode.validationIssues!.push(...barcodeIssues); }
-    if (fields.barcodeMode.value === 'request-coupang' && fields.barcode.value.trim()) { fields.barcode.needsReview = true; fields.barcode.issues.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.'); fields.barcode.validationIssues!.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.'); }
+    const enteredBarcode = fields.barcode.value.trim();
+    if (fields.barcodeMode.value === 'request-coupang' && enteredBarcode && enteredBarcode !== requestCoupangBarcodeLabel) {
+      const issue = '바코드 생성 요청 방식과 입력된 번호가 충돌합니다.';
+      fields.barcode.needsReview = true;
+      fields.barcode.issues.push(issue);
+      fields.barcode.validationIssues!.push(issue);
+    }
     const priceIssues = quotationPriceIssues(schema, fields.supplyPrice.value, fields.salePrice.value);
     if (priceIssues.length) { fields.salePrice.needsReview = true; fields.salePrice.issues.push(...priceIssues); fields.salePrice.validationIssues!.push(...priceIssues); }
     const quantity = fields.quantity, quantityDefinition = schema.fields.find(field => field.id === 'quantity');

@@ -32,12 +32,13 @@ async function workbook(h, alert = 'false', allowBlank = true) {
   archive.set('xl/worksheets/sheet1.xml', new TextEncoder().encode(xml.replace('</worksheet>', `<dataValidations count="1">${rule}</dataValidations></worksheet>`)));
   return { bytes: workbookArchive([...archive].map(([name, bytes]) => [name, new TextDecoder().decode(bytes)])), rule };
 }
-async function setup(company) {
+async function setup(company, native = false) {
   const h = mobileIntakeHarness({ companyCode: company.code, companyName: company.name });
   const original = await workbook(h), sha256 = Buffer.from(await crypto.subtle.digest('SHA-256', original.bytes)).toString('hex');
   const storageKey = `owner/category-templates/${sha256}.xlsx`;
   await h.bindings.FILES.put(storageKey, original.bytes, { customMetadata: { sha256, format: 'xlsx' } });
   const hubSchema = snapshot(company);
+  if (native) hubSchema.nativeSerializationPolicy = 'supplier-hub-native-required-form-v1';
   const profile = await h.load('db/category-profiles.ts').createCategoryProfile('owner', {
     name: '바코드 추천·자유입력 회귀', categoryId: hubSchema.categoryId, categoryPath: schemaPath, hubSchema,
     template: { name: 'barcode.xlsx', format: 'xlsx', sheetName: '견적서', headerRow: 1, dataStartRow: 2,
@@ -49,6 +50,24 @@ async function setup(company) {
   const product = h.sqlite.prepare('SELECT * FROM products').get(), endpoint = `/api/products/${product.id}/quotation-fields`;
   return { h, original, profile, product, endpoint, storageKey };
 }
+test('a native no-barcode request accepts its exact preset and still rejects a conflicting actual number', async () => {
+  const f = await setup(schemaCompanies[0], true), { h } = f;
+  try {
+    const view = await json(await h.route(f.endpoint));
+    const included = view.resolved.rows.filter(row => row.optionId && row.included);
+    assert.ok(included.length);
+    for (const row of included) {
+      assert.equal(row.fields.barcodeMode.value, 'request-coupang');
+      assert.equal(row.fields.barcode.value, noBarcode);
+      assert.deepEqual(row.fields.barcode.validationIssues, []);
+    }
+    const saved = await json(await h.route(f.endpoint, { method: 'PUT', body: {
+      expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint,
+      changes: [{ optionId: included[0].optionId, fieldKey: 'barcode', value: 'ABC123' }],
+    } }));
+    assert.match(saved.resolved.rows.find(row => row.optionId === included[0].optionId).fields.barcode.validationIssues.join(' '), /충돌/);
+  } finally { h.close(); }
+});
 const preserved = h => JSON.stringify(['collection_results', 'collection_context', 'collection_images', 'product_content', 'product_options', 'category_profiles']
   .map(table => h.sqlite.prepare(`SELECT * FROM ${table}`).all()));
 async function mapped(f, view, bytes = f.original.bytes, overrides = {}) {
