@@ -22,7 +22,9 @@ function page({company=companies[0],path='/dashboard/KR',rows=[sample(1),sample(
 }
 
 test('direct category name GET retains every verified leaf with its own complete path, independent of prediction',async()=>{
-  const h=page({rows:[{...sample(1),leafCategory:false},...[2,3,4,5].map(number=>({...sample(number),leafCategory:true}))]});
+  const rows=[{...sample(1),leafCategory:false},...[2,3,4,5].map(number=>({...sample(number),leafCategory:true}))];
+  const h=page({response:(_url,init)=>new Headers(init.headers).get('accept')==='application/json, text/plain, */*'
+    ?Response.json(rows):new Response('<html>Bad request</html>',{status:400,headers:{'content-type':'text/html'}})});
   const result=plain(await h.run('양말 & 실내',true));
   assert.equal(h.calls[0].url,origin+'/sr/category/api/find-by-keyword?keyword='+encodeURIComponent('양말 & 실내'));
   assert.equal(h.calls[0].method,'GET');assert.equal(h.calls.length,1);

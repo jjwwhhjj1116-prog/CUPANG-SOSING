@@ -1,6 +1,7 @@
 'use client';
 import {CategoryRecommendationsPanel} from '@/app/components/category-recommendations-panel';
 import {loadSupplierHubCategorySearch,resolveCategoryPath,resolveRecommendedHubCategoryChoice,resolveSearchedHubCategoryChoice,type HubCategoryRecommendation,type HubCategoryRecommendations,type HubCategorySearch} from '@/app/supplier-hub-category-recommendations';
+import {supplierHubExtensionDownload,supplierHubExtensionVersion} from '@/app/supplier-hub-extension-download';
 import { loadCategoryProfiles, readCategoryJsonResponse } from '@/app/load-category-profiles';
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
@@ -362,7 +363,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
         <button type="button" className="btn primary" disabled={busy||catalogMode!=='direct'||!directName.trim()} onClick={()=>void searchDirect()}>검색</button>
       </div>
       {directSearch?.status==='loading'&&<p role="status">공식 카테고리를 검색하고 있습니다.</p>}
-      {directSearch?.status==='local'&&<p role="status">{directSearch.error?directSearch.error+' ':'확장 연결에서 전체 카테고리 이름 검색을 사용할 수 없습니다. '}저장·관찰 목록의 결과를 표시합니다.</p>}
+      {directSearch?.status==='local'&&<p role="status">{directSearch.error?directSearch.error+' ':'확장 연결에서 전체 카테고리 이름 검색을 사용할 수 없습니다. '}저장·관찰 목록의 결과를 표시합니다. <a href={supplierHubExtensionDownload} download>확장 {supplierHubExtensionVersion} 다운로드</a></p>}
       {directSearch&&!directMatches.length&&directSearch.status!=='loading'&&<p role="status">일치하는 최종 카테고리가 없습니다. 아래 단계별 목록에서 찾아주세요.</p>}
       {directMatches.length>0&&<div className="category-search-results" aria-label="카테고리 검색 결과">{directMatches.map(match=><button key={match.key} type="button" disabled={busy||catalogMode!=='direct'} onClick={()=>chooseDirectSearch(match)}><span><strong>{match.path.at(-1)}</strong><em>{match.path.join(' › ')}</em></span><small className="ready">최종</small></button>)}</div>}
     </div>

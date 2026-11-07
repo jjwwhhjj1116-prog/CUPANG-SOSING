@@ -20,7 +20,8 @@ export async function getRecommendations(productName,company,search=false){
   const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(Error(timeoutMessage));},14000);});
   try{
     const read=async()=>{
-      const response=await fetch(url,{method:'GET',credentials:'include',redirect:'error',cache:'no-store',signal:controller.signal});
+      const response=await fetch(url,{method:'GET',credentials:'include',redirect:'error',cache:'no-store',signal:controller.signal,
+        ...(search?{headers:{accept:'application/json, text/plain, */*'}}:{})});
       checkCompany();
       if(!response.ok||response.redirected||response.url!==url||!/^application\/json(?:\s*;|\s*$)/i.test(response.headers.get('content-type')||''))throw Error(`Supplier Hub 카테고리 ${action} 응답을 확인하지 못했습니다.`);
       const contentLength=response.headers.get('content-length');
