@@ -52,13 +52,13 @@ async function fixture(company=companies[0]){
   }
   const api=load(routeFile),model=load(modelFile),endpoint=f.base+'/supplier-hub-product-history-import';
   const post=(candidate,options={})=>api.POST(new Request(origin+endpoint,{method:'POST',headers:{'content-type':'application/json',origin,...options.headers},body:JSON.stringify(options.body??{action:'import-history',candidate}),signal:options.signal}),f.context);
-  const build=async({request=requestId,docId=897001,qvtRequestId='cccccccc-cccc-4ccc-8ccc-ccccccccc897',status='FINISHED',checkedAt=Date.now(),observedAt=checkedAt}={})=>{
+  const build=async({request=requestId,docId=897001,qvtRequestId='cccccccc-cccc-4ccc-8ccc-ccccccccc897',status='FINISHED',checkedAt=Date.now(),observedAt=checkedAt,discoverQvt=false}={})=>{
    const packet=await createProductDocumentPacket(review,{requestId:request}),context=await productDocumentIdentity(packet,SINGLE_SENDER),target={requestId:request,productId:f.id,docId,company:plain(company),qvtRequestId};
    const ownedTarget={tabId:71,windowId:context.identity.windowId,origin:'https://supplier.coupang.com',requestId:request,packetDigest:context.packetDigest};
    const checkpoint={format:review.format,draftOnly:true,state:'updated',key:context.key,laneKey:context.laneKey,identity:plain(context.identity),identityDigest:context.identityDigest,packetDigest:context.packetDigest,
     originalBodySha256:context.originalBodySha256,bodySha256:context.bodySha256,requestId:request,docId,sequence:12,updatedAt:checkedAt-1,baselineDocIds:[],ownedTarget,tab:{...ownedTarget,authenticated:true,company:plain(company)}};
    const currentSource=await historical.historicalProductReceiptSourceFromNativePlan({plan:blocked,requestedProfileId:review.identity.requestedProfileId,productName:blocked.body.productName,categoryPath:blocked.body.categoryPath});
-   const anchor=await historical.historicalProductReceiptAnchor({target,checkpoint,scope:{origin,ownerId:'owner',company},currentSource,checkedAt});
+   const anchor=await historical.historicalProductReceiptAnchor({target:discoverQvt?{...target,qvtRequestId:null}:target,checkpoint,scope:{origin,ownerId:'owner',company},currentSource,checkedAt});
    const readResult={format:'yoofam-historical-product-receipt-read-v1',readOnly:true,remoteWrites:false,row:{docId,status,qvtRequestId,productName:blocked.body.productName,categoryPath:blocked.body.categoryPath,modifiedAt:new Date(checkedAt).toISOString(),remark:''},
     provenance:{method:'GET',url:historical.HISTORICAL_PRODUCT_RECEIPT_URL,status:200,redirected:false,contentType:'application/json',cache:'no-store',company:plain(company),docId,qvtRequestId,
      identityDigest:context.identityDigest,packetDigest:context.packetDigest,requestId:request,tabId:71,windowId:context.identity.windowId,documentId:'dddddddd-dddd-4ddd-8ddd-ddddddddd897',readId:anchor.readId,observedAt,
@@ -72,11 +72,12 @@ async function fixture(company=companies[0]){
 
 for(const company of companies)test(`${company.code}: exact historical checkpoint plus official typed row imports and replays one local receipt despite selected legacy image readiness failure`,async()=>{
  const f=await fixture(company);try{
-  const source=f.state(),images=f.objectState(),result=await json(await f.post(f.candidate));
+  const source=f.state(),images=f.objectState(),discovered=await f.build({qvtRequestId:7901,discoverQvt:true});
+  const result=await json(await f.post(discovered));
   assert.equal(result.format,'yoofam-historical-product-receipt-import-v1');assert.equal(result.remoteWrites,false);assert.equal(result.canResume,false);
-  const saved=result.receipt;assert.equal(saved.receipt.sourceStatus,'FINISHED');assert.equal(saved.receipt.state,'accepted');assert.equal(saved.docId,897001);assert.equal(saved.receipt.qvtRequestId,f.candidate.anchor.target.qvtRequestId);
-  assert.equal(saved.requestId,requestId);assert.deepEqual(saved.identity,f.candidate.anchor.identity);assert.equal(saved.originalBodySha256,f.review.originalBodySha256);assert.equal(saved.preparedBodySha256,f.review.preparedBodySha256);assert.equal(saved.registered,false);
-  const row=f.rows()[0],again=await json(await f.post(f.candidate));assert.deepEqual(again,result);assert.equal(f.rows().length,1);assert.equal(f.rows()[0].rowid,row.rowid);assert.equal(f.rows()[0].created_at,row.created_at);
+  const saved=result.receipt;assert.equal(saved.receipt.sourceStatus,'FINISHED');assert.equal(saved.receipt.state,'accepted');assert.equal(saved.docId,897001);assert.equal(saved.receipt.qvtRequestId,7901);
+  assert.equal(saved.requestId,requestId);assert.deepEqual(saved.identity,discovered.anchor.identity);assert.equal(saved.originalBodySha256,f.review.originalBodySha256);assert.equal(saved.preparedBodySha256,f.review.preparedBodySha256);assert.equal(saved.registered,false);
+  const row=f.rows()[0],again=await json(await f.post(discovered));assert.deepEqual(again,result);assert.equal(f.rows().length,1);assert.equal(f.rows()[0].rowid,row.rowid);assert.equal(f.rows()[0].created_at,row.created_at);
   assert.equal(f.state(),source);assert.equal(f.objectState(),images);assert.deepEqual(f.h.network,[]);
  }finally{f.close();}
 });
@@ -85,7 +86,7 @@ test('initial history import rejects wrong typed document/QVT, actor, source, bo
  const f=await fixture();try{
   const before=f.state(),images=f.objectState(),mutations=[
    value=>value.anchor.target.docId=String(value.anchor.target.docId),value=>value.officialRow.docId++,value=>value.receipt.docId=String(value.receipt.docId),
-   value=>value.provenance.qvtRequestId=897002,value=>value.receipt.qvtRequestId=897002,value=>value.officialRow.productName+=' changed',value=>value.officialRow.categoryPath+=' changed',
+   value=>value.provenance.qvtRequestId=897002,value=>value.receipt.qvtRequestId=897002,value=>value.anchor.target.qvtRequestId=null,value=>value.officialRow.productName+=' changed',value=>value.officialRow.categoryPath+=' changed',
    value=>value.anchor.identity.ownerId='other',value=>value.anchor.identity.company=companies[1],value=>value.anchor.identity.source.optionRevision++,
    value=>value.anchor.currentSource.inputFingerprint='f'.repeat(64),value=>value.anchor.identity.schemaSha256='f'.repeat(64),value=>value.anchor.identity.members.reverse(),
    value=>value.anchor.originalBodySha256='f'.repeat(64),value=>value.anchor.preparedBodySha256='f'.repeat(64),value=>value.anchor.ownedTarget.requestId='different',

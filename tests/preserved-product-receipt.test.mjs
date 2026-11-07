@@ -124,6 +124,35 @@ function moveToReplacementWindow(f){
   f.otherTabs=[{id:145,windowId:f.sender.tab.windowId,url:f.hubUrl}];
 }
 
+for(const [company,qvt] of [[SINGLE_COMPANIES[0],7901],[SINGLE_COMPANIES[1],'other-test-qvt']])test(`${company.code}: discovers only the exact original document QVT when the submission response was lost`,async()=>{
+  const f=await fixture(company),before=canonical(f.checkpoint);moveToReplacementWindow(f);f.target.qvtRequestId=null;
+  f.rows[0].qvtRequestId=qvt;f.rows.push({...clone(f.rows[0]),docId:67890,qvtRequestId:'unrelated-qvt'});
+  const result=await f.run();
+  assert.equal(result.anchor.target.qvtRequestId,qvt);assert.equal(result.receipt.qvtRequestId,qvt);
+  assert.equal(result.receipt.registered,false);assert.equal(canonical(f.checkpoint),before);
+  assert.deepEqual(plain(await validateHistoricalProductReceiptCandidate(result,{scope:f.scope,currentSource:f.currentSource})),plain(result));
+  assert.equal(f.calls.filter(call=>call.port==='hub-fetch').length,1);
+  assert.ok(f.calls.filter(call=>call.port.endsWith('fetch')).every(call=>call.method==='GET'));
+});
+
+for(const mode of ['missing-row','missing-qvt','duplicate-doc','duplicate-qvt-alias','wrong-product','wrong-state'])test(`automatic QVT lookup rejects ${mode}`,async()=>{
+  const f=await fixture();f.target.qvtRequestId=null;f.rows[0].qvtRequestId=7901;
+  if(mode==='missing-row')f.rows=[];
+  if(mode==='missing-qvt')delete f.rows[0].qvtRequestId;
+  if(mode==='duplicate-doc')f.rows.push(clone(f.rows[0]));
+  if(mode==='duplicate-qvt-alias')f.rows.push({...clone(f.rows[0]),docId:67890,qvtRequestId:'7901'});
+  if(mode==='wrong-product')f.rows[0].productName+=' changed';
+  if(mode==='wrong-state')f.rows[0].status='UNFINISHED';
+  await assert.rejects(f.run());assert.equal(f.calls.filter(call=>call.port==='hub-fetch').length,1);
+});
+
+test('automatic QVT lookup preserves a previously recorded registration file ID',async()=>{
+  const f=await fixture();f.target.qvtRequestId=null;f.checkpoint.receipt={docId:f.target.docId,qvtRequestId:7901};
+  f.rows[0].qvtRequestId=7902;await assert.rejects(f.run());
+  assert.equal(f.calls.filter(call=>call.port==='hub-fetch').length,1);
+  assert.equal(f.checkpoint.receipt.qvtRequestId,7901);
+});
+
 for(const company of SINGLE_COMPANIES)test(`${company.code}: a closed original Chrome window permits exact receipt readback from the current app window`,async()=>{
   const f=await fixture(company),before=canonical(f.checkpoint);moveToReplacementWindow(f);
   const result=await f.run();

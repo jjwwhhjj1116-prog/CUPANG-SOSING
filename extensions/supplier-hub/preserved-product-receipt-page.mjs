@@ -11,7 +11,7 @@ export async function historicalProductReceiptReadPage(input){
   const company={A01526306:'유앤채',A01464742:'와이홉'};
   const originalWindow=browser?.windowId===identity?.windowId,originalTab=browser?.tabId===anchor?.ownedTarget?.tabId;
   if(!exact(input,['anchor','browser'])||anchor?.format!=='yoofam-historical-product-receipt-anchor-v1'||anchor.historicalRequestOnly!==true||anchor.currentBodyEqualityVerified!==false
-    ||anchor.readOnly!==true||anchor.remoteWrites!==false||anchor.checkpointWrites!==false||anchor.canResume!==false||!identity||!target||!id(target.docId)||!id(target.qvtRequestId)
+    ||anchor.readOnly!==true||anchor.remoteWrites!==false||anchor.checkpointWrites!==false||anchor.canResume!==false||!identity||!target||!id(target.docId)||target.qvtRequestId!==null&&!id(target.qvtRequestId)
     ||!['identityDigest','packetDigest','originalBodySha256','preparedBodySha256'].every(key=>hash(anchor[key]))||!id(anchor.readId)
     ||!exact(browser,['tabId','windowId','documentId','selection','originalTabId','originalTabAbsent'])||!Number.isSafeInteger(browser.tabId)||browser.tabId<0||!Number.isSafeInteger(browser.windowId)||browser.windowId<0||typeof browser.documentId!=='string'||!browser.documentId||browser.documentId.length>200
     ||browser.originalTabId!==anchor.ownedTarget?.tabId||!(browser.selection==='original-owned-tab'&&originalWindow&&originalTab&&browser.originalTabAbsent===false
@@ -36,16 +36,16 @@ export async function historicalProductReceiptReadPage(input){
     const text=await response.text();check();if(controller.signal.aborted||text.length>6*1024*1024)throw Error('공식 접수 조회 시간이 만료되었거나 응답이 너무 큽니다.');
     let rows;try{rows=JSON.parse(text);}catch{throw Error('공식 접수 JSON을 확인하지 못했습니다.');}
     if(!Array.isArray(rows)||rows.length>10000||rows.some(row=>!object(row)||!id(row.docId))||new Set(rows.map(row=>String(row.docId))).size!==rows.length)throw Error('공식 접수 목록의 문서 식별값이 없거나 중복되었습니다.');
-    const matches=rows.filter(row=>row.docId===target.docId),qvt=rows.filter(row=>row.qvtRequestId===target.qvtRequestId);
-    if(matches.length!==1||qvt.length!==1||matches[0]!==qvt[0])throw Error('원래 문서번호와 정확한 QVT 접수의 유일한 연결을 확인하지 못했습니다.');
-    const original=matches[0];
+    const original=rows.find(row=>row.docId===target.docId),qvtRequestId=original?.qvtRequestId;
+    if(!id(qvtRequestId)||target.qvtRequestId!==null&&qvtRequestId!==target.qvtRequestId
+      ||rows.filter(row=>id(row.qvtRequestId)&&String(row.qvtRequestId)===String(qvtRequestId)).length!==1)throw Error('원래 문서번호와 정확한 QVT 접수의 유일한 연결을 확인하지 못했습니다.');
     if(!['SUBMITTED','FINISHED','REJECTED'].includes(original.status)||original.productName!==anchor.currentSource.productName||original.categoryPath!==anchor.currentSource.categoryPath)
       throw Error('원래 문서의 공식 접수 상태·상품명·카테고리를 확인하지 못했습니다.');
     const row={docId:original.docId,status:original.status,qvtRequestId:original.qvtRequestId,productName:original.productName,categoryPath:original.categoryPath,
       modifiedAt:original.modifiedAt??null,remark:original.remark??''};
     const observedAt=Date.now();check();
     return {format:'yoofam-historical-product-receipt-read-v1',readOnly:true,remoteWrites:false,row,
-      provenance:{method:'GET',url,status:200,redirected:false,contentType,cache:'no-store',company:{code:identity.company.code,name:identity.company.name},docId:target.docId,qvtRequestId:target.qvtRequestId,
+      provenance:{method:'GET',url,status:200,redirected:false,contentType,cache:'no-store',company:{code:identity.company.code,name:identity.company.name},docId:target.docId,qvtRequestId,
         identityDigest:anchor.identityDigest,packetDigest:anchor.packetDigest,requestId:target.requestId,tabId:browser.tabId,windowId:browser.windowId,documentId:browser.documentId,observedTab:{...browser},readId:anchor.readId,observedAt}};
   }finally{clearTimeout(timer);}
 }

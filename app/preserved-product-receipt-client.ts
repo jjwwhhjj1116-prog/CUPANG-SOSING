@@ -3,7 +3,7 @@ import {exchange} from '@/app/supplier-hub-handoff';
 import {parseStoredProductReceipt,productReceiptCanonical,type ProductReceiptRecord} from '@/app/supplier-hub-product-receipt';
 import {validateHistoricalProductReceiptCandidate,validateHistoricalProductReceiptTarget,type HistoricalReceiptCurrentSource} from '../extensions/supplier-hub/preserved-product-receipt.mjs';
 
-export type PreservedProductReceiptSelection={requestId:string;productId:string;docId:string|number;qvtRequestId:string|number};
+export type PreservedProductReceiptSelection={requestId:string;productId:string;docId:string|number;qvtRequestId:string|number|null};
 const ORIGINS=['https://sourceflow.jjwwhhjj1116.workers.dev','http://localhost:3000','http://127.0.0.1:3000'];
 const object=(value:unknown):value is Record<string,unknown>=>Boolean(value&&typeof value==='object'&&!Array.isArray(value));
 const exact=(value:unknown,keys:readonly string[]):value is Record<string,unknown>=>object(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
@@ -28,6 +28,8 @@ export async function syncPreservedProductReceipt(selection:PreservedProductRece
   if(typeof version!=='string'||!/^(?:0|[1-9]\d{0,4})(?:\.(?:0|[1-9]\d{0,4})){2}$/.test(version)||version.split('.').some(part=>Number(part)>65535)
     ||capability.preservedProductReceiptReconciliation!==true||version.localeCompare('2.1.77','en',{numeric:true})<0)
     throw Error('원래 접수 동기화를 지원하는 YOOFAM 확장 2.1.77 이상으로 새로고침하고 웹도 새로고침해주세요. 새 전송은 요청하지 않았습니다.');
+  if(target.qvtRequestId===null&&version.localeCompare('2.1.95','en',{numeric:true})<0)
+    throw Error('등록 파일 번호 없이 조회하려면 YOOFAM 확장 2.1.95 이상이 필요합니다. 확장을 업데이트한 뒤 웹을 새로고침해주세요.');
   await assertCurrent();
   const result=await new Promise<unknown>((resolve,reject)=>{
     active(signal);const requestId=crypto.randomUUID();
@@ -47,7 +49,8 @@ export async function syncPreservedProductReceipt(selection:PreservedProductRece
   await assertCurrent();productReceiptCanonical(result);
   if(!object(result)||!object(result.anchor)||!object(result.anchor.currentSource))throw Error('원래 접수 조회의 저장 원천을 확인하지 못했습니다.');
   const candidate=await validateHistoricalProductReceiptCandidate(result,{scope:{origin,ownerId,company:before.company},currentSource:result.anchor.currentSource as HistoricalReceiptCurrentSource});
-  if(!same(candidate.anchor.target,target))throw Error('선택한 원래 요청·문서·등록 파일과 접수 조회 결과가 다릅니다.');
+  const resolvedQvt=target.qvtRequestId??candidate.anchor.target.qvtRequestId;
+  if(!same(candidate.anchor.target,{...target,qvtRequestId:resolvedQvt}))throw Error('선택한 원래 요청·문서·등록 파일과 접수 조회 결과가 다릅니다.');
   await assertCurrent();
   const endpoint=`/api/products/${encodeURIComponent(target.productId)}/supplier-hub-product-history-import`;
   // This is the only POST, and it records local receipt evidence. A missing
@@ -61,7 +64,7 @@ export async function syncPreservedProductReceipt(selection:PreservedProductRece
   if(!response.ok||!exact(body,['format','receipt','remoteWrites','canResume'])||body.format!=='yoofam-historical-product-receipt-import-v1'||body.remoteWrites!==false||body.canResume!==false)
     throw Error(object(body)&&typeof body.error==='string'&&body.error.length<=2000?body.error:'원래 접수 결과의 보관을 확인하지 못했습니다. 새 전송 없이 이력을 확인해주세요.');
   const saved=parseStoredProductReceipt(body.receipt),anchor=candidate.anchor;
-  if(saved.productId!==target.productId||saved.requestId!==target.requestId||saved.docId!==target.docId||saved.receipt.qvtRequestId!==target.qvtRequestId||!same(saved.company,before.company)
+  if(saved.productId!==target.productId||saved.requestId!==target.requestId||saved.docId!==target.docId||saved.receipt.qvtRequestId!==resolvedQvt||!same(saved.company,before.company)
     ||!same(saved.identity,anchor.identity)||saved.identityDigest!==anchor.identityDigest||saved.packetDigest!==anchor.packetDigest||saved.originalBodySha256!==anchor.originalBodySha256||saved.preparedBodySha256!==anchor.preparedBodySha256
     ||saved.receipt.observedAt<candidate.receipt.observedAt||candidate.receipt.state==='accepted'&&saved.receipt.state==='pending'||candidate.receipt.state==='rejected'&&saved.receipt.state!=='rejected')
     throw Error('보관된 접수 결과가 원래 요청·문서·등록 파일과 다릅니다. 새 전송 없이 이력을 확인해주세요.');

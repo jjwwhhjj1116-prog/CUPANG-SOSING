@@ -36,7 +36,7 @@ export function PreservedProductRequestInspector({ ownerId, onReceiptSaved }: { 
     const controller = new AbortController(), token = epoch.current; active.current = controller; setBusy(true); setReceipt(null); setError('');
     const current = () => epoch.current === token && active.current === controller && !controller.signal.aborted;
     try {
-      const result = await syncPreservedProductReceipt({ productId: productId.trim(), requestId: requestId.trim(), docId: Number(docId), qvtRequestId: qvtRequestId.trim() }, ownerId, controller.signal);
+      const result = await syncPreservedProductReceipt({ productId: productId.trim(), requestId: requestId.trim(), docId: Number(docId), qvtRequestId: qvtRequestId.trim() || null }, ownerId, controller.signal);
       if (current()) { setReceipt(result); onReceiptSaved?.(result.productId); }
     } catch (cause) { if (current()) setError(cause instanceof Error ? cause.message : '기존 문서의 접수 결과를 확인하지 못했습니다.'); }
     finally { if (current()) { active.current = null; setBusy(false); } }
@@ -77,10 +77,10 @@ export function PreservedProductRequestInspector({ ownerId, onReceiptSaved }: { 
       </section>}
       <details><summary>이미 제출한 문서의 접수 결과 연결</summary>
         <div className="panel-stack" style={{ paddingTop: 12 }}>
-          <label className="field"><span>등록 파일 번호(QVT)</span><input aria-label="보관 등록 파일 번호" value={qvtRequestId} disabled={busy} onChange={event => changed(setQvtRequestId, event.target.value)} /></label>
-          <button type="button" className="btn primary" disabled={busy || !ownerId || !productId.trim() || !requestId.trim() || !/^[1-9]\d*$/.test(docId) || !qvtRequestId.trim()} onClick={() => void syncReceipt()}>기존 문서 접수 결과 동기화</button>
+          <label className="field"><span>등록 파일 번호(QVT, 선택)</span><input aria-label="보관 등록 파일 번호" value={qvtRequestId} disabled={busy} onChange={event => changed(setQvtRequestId, event.target.value)} /></label>
+          <button type="button" className="btn primary" disabled={busy || !ownerId || !productId.trim() || !requestId.trim() || !/^[1-9]\d*$/.test(docId)} onClick={() => void syncReceipt()}>기존 문서 접수 결과 동기화</button>
           {receipt && <p role="status">문서 {String(receipt.docId)} · 등록 파일 {String(receipt.receipt.qvtRequestId)} · {({ SUBMITTED: '접수 처리 중', FINISHED: '파일 처리 완료', REJECTED: '반려' })[receipt.receipt.sourceStatus]} · YOOFAM 목록에 반영했습니다.</p>}
-          <small>열려 있는 같은 회사의 Supplier Hub에서 원래 문서의 결과만 조회합니다. 새 문서 생성·파일 업로드·본문 저장·제출은 하지 않습니다.</small>
+          <small>등록 파일 번호를 비워두면 원래 문서번호로 공식 접수 목록을 조회합니다. 결과가 확인되면 YOOFAM 목록에 반영합니다.</small>
         </div>
       </details>
     </div>

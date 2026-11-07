@@ -61,6 +61,14 @@ test('receipt sync is one explicit action, blocks repeated clicks and refreshes 
  const button=h.find(node=>node.type==='button'&&node.props.children==='기존 문서 접수 결과 동기화');assert.equal(button.props.disabled,true);button.props.onClick();assert.equal(h.receiptCalls.length,1);
  assert.deepEqual(h.saved,[]);h.receiptCalls[0].resolve(receipt);await settle();h.render();assert.deepEqual(h.saved,[productId]);assert.match(h.text(),/2347603.*파일 처리 완료.*목록에 반영/);
 });
+test('a blank registration file number sends the exact document lookup',async()=>{
+ const h=harness();h.input('보관 요청 상품 ID',productId);h.input('보관 요청번호',requestId);h.input('보관 문서번호','50123');
+ const button=h.find(node=>node.type==='button'&&node.props.children==='기존 문서 접수 결과 동기화');
+ assert.equal(button.props.disabled,false);button.props.onClick();
+ assert.equal(h.receiptCalls.length,1);assert.equal(h.receiptCalls[0].selection.docId,50123);assert.equal(h.receiptCalls[0].selection.qvtRequestId,null);
+ h.receiptCalls[0].resolve({...receipt,docId:50123,receipt:{sourceStatus:'FINISHED',qvtRequestId:7901}});await settle();h.render();
+ assert.match(h.text(),/50123.*7901.*파일 처리 완료/);assert.deepEqual(h.saved,[productId]);
+});
 test('receipt failures do not mark completion or refresh a product',async()=>{
  const h=harness();h.sync();h.receiptCalls[0].reject(Error('본문 연결이 다릅니다'));await settle();h.render();assert.deepEqual(h.saved,[]);assert.match(h.text(),/본문 연결이 다릅니다/);assert.doesNotMatch(h.text(),/목록에 반영했습니다/);
 });

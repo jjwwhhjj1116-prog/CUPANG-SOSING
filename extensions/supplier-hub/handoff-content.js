@@ -35,7 +35,7 @@ async function readHistoricalProductReceiptSource(expected){
   const exact=(value,keys)=>Boolean(value&&typeof value==='object'&&!Array.isArray(value))&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
   const target=expected?.target,profile=expected?.requestedProfileId;
   if(!exact(expected,['origin','target','requestedProfileId'])||!exact(target,['requestId','productId','docId','company','qvtRequestId'])
-    ||!(profile===null||typeof profile==='string'&&/^\w[\w-]{0,99}$/.test(profile))||!(typeof target.qvtRequestId==='string'&&target.qvtRequestId.trim()===target.qvtRequestId&&target.qvtRequestId.length>0&&target.qvtRequestId.length<=200||Number.isSafeInteger(target.qvtRequestId)&&target.qvtRequestId>0))throw Error('원래 상품 접수의 읽기 범위를 확인해주세요.');
+    ||!(profile===null||typeof profile==='string'&&/^\w[\w-]{0,99}$/.test(profile))||!(target.qvtRequestId===null||typeof target.qvtRequestId==='string'&&target.qvtRequestId.trim()===target.qvtRequestId&&target.qvtRequestId.length>0&&target.qvtRequestId.length<=200||Number.isSafeInteger(target.qvtRequestId)&&target.qvtRequestId>0))throw Error('원래 상품 접수의 읽기 범위를 확인해주세요.');
   const inspectionTarget=Object.fromEntries(Object.entries(target).filter(([key])=>key!=='qvtRequestId'));
   const before=await readPreservedProductInspectionScope({origin:expected.origin,target:inspectionTarget}),path='/api/products/'+encodeURIComponent(target.productId)+'/native-assets'+(profile===null?'':'?profileId='+encodeURIComponent(profile));
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);

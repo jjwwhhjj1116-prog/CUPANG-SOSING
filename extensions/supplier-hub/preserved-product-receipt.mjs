@@ -32,7 +32,7 @@ const source=value=>exact(value,['productVersion','contentRevision','optionRevis
 const members=value=>Array.isArray(value)&&value.length>0&&value.length<=200&&value.every((row,index)=>exact(row,['optionId','optionLabel','documentIndex'])&&ID.test(row.optionId||'')&&typeof row.optionLabel==='string'&&row.optionLabel.length<=10000&&row.documentIndex===index)
   &&new Set(value.map(row=>row.optionId)).size===value.length;
 export function validateHistoricalProductReceiptTarget(value){
-  const target=copy(value);if(!exact(target,['requestId','productId','docId','company','qvtRequestId'])||!identifier(target.qvtRequestId))invalid();
+  const target=copy(value);if(!exact(target,['requestId','productId','docId','company','qvtRequestId'])||target.qvtRequestId!==null&&!identifier(target.qvtRequestId))invalid();
   validatePreservedProductInspectionTarget(Object.fromEntries(Object.entries(target).filter(([key])=>key!=='qvtRequestId')));return freeze(target);
 }
 /** Read the identity that the existing authenticated native-assets GET still
@@ -82,7 +82,9 @@ export async function historicalProductReceiptAnchor(input){
     ||currentSource.profileId!==identity.profileId||currentSource.requestedProfileId!==identity.requestedProfileId||currentSource.categoryId!==identity.categoryId||!same(currentSource.source,identity.source)||!same(currentSource.members,identity.members)
     ||currentSource.inputFingerprint!==identity.inputFingerprint||currentSource.schemaSha256!==identity.schemaSha256
     ||!text(currentSource.productName,500)||!text(currentSource.categoryPath,10000)||!currentSource.categoryPath.endsWith(' ('+identity.categoryId+')'))fail('HISTORICAL_RECEIPT_SOURCE','원래 요청의 저장 버전·카테고리·포함 옵션이 변경되었습니다.');
-  return freeze({format:'yoofam-historical-product-receipt-anchor-v1',target:{...target,docId:checkpoint.docId},identity,identityDigest:checkpoint.identityDigest,packetDigest:checkpoint.packetDigest,
+  const recordedQvt=checkpoint.receipt?.qvtRequestId;
+  const qvtRequestId=target.qvtRequestId??(identifier(recordedQvt)?recordedQvt:null);
+  return freeze({format:'yoofam-historical-product-receipt-anchor-v1',target:{...target,docId:checkpoint.docId,qvtRequestId},identity,identityDigest:checkpoint.identityDigest,packetDigest:checkpoint.packetDigest,
     originalBodySha256:checkpoint.originalBodySha256,preparedBodySha256:checkpoint.bodySha256,checkpointSequence:checkpoint.sequence,checkpointUpdatedAt:checkpoint.updatedAt,
     ownedTarget:owned,currentSource,checkedAt,readId,historicalRequestOnly:true,currentBodyEqualityVerified:false,readOnly:true,remoteWrites:false,checkpointWrites:false,canResume:false});
 }
@@ -91,21 +93,22 @@ export async function historicalProductReceiptAnchor(input){
 export function normalizeHistoricalProductReceipt({anchor:rawAnchor,readResult:rawResult,now=Date.now()}){
   const anchor=copy(rawAnchor),result=copy(rawResult),p=result?.provenance,row=result?.row;
   const browser=p?.observedTab,originalWindow=p?.windowId===anchor?.identity?.windowId,originalTab=p?.tabId===anchor?.ownedTarget?.tabId;
+  const qvtRequestId=anchor?.target?.qvtRequestId??row?.qvtRequestId;
   if(anchor.format!=='yoofam-historical-product-receipt-anchor-v1'||anchor.historicalRequestOnly!==true||anchor.currentBodyEqualityVerified!==false||anchor.readOnly!==true||anchor.remoteWrites!==false||anchor.checkpointWrites!==false||anchor.canResume!==false
     ||!exact(result,['format','readOnly','remoteWrites','provenance','row'])||result.format!=='yoofam-historical-product-receipt-read-v1'||result.readOnly!==true||result.remoteWrites!==false
     ||!exact(p,['method','url','status','redirected','contentType','cache','company','docId','qvtRequestId','identityDigest','packetDigest','requestId','tabId','windowId','documentId','observedTab','readId','observedAt'])
     ||p.method!=='GET'||p.url!==HISTORICAL_PRODUCT_RECEIPT_URL||p.status!==200||p.redirected!==false||!/^application\/json(?:\s*;[^\r\n]*)?$/i.test(p.contentType||'')||p.cache!=='no-store'
-    ||!same(p.company,anchor.identity.company)||p.docId!==anchor.target.docId||p.qvtRequestId!==anchor.target.qvtRequestId||p.identityDigest!==anchor.identityDigest||p.packetDigest!==anchor.packetDigest||p.requestId!==anchor.target.requestId||p.readId!==anchor.readId
+    ||!identifier(qvtRequestId)||!same(p.company,anchor.identity.company)||p.docId!==anchor.target.docId||p.qvtRequestId!==qvtRequestId||p.identityDigest!==anchor.identityDigest||p.packetDigest!==anchor.packetDigest||p.requestId!==anchor.target.requestId||p.readId!==anchor.readId
     ||!integer(p.tabId)||!integer(p.windowId)||!text(p.documentId,200)||!integer(p.observedAt,1)||p.observedAt<anchor.checkedAt||p.observedAt>now+5000||now-p.observedAt>60000
     ||!exact(browser,['tabId','windowId','documentId','selection','originalTabId','originalTabAbsent'])||browser.tabId!==p.tabId||browser.windowId!==p.windowId||browser.documentId!==p.documentId||browser.originalTabId!==anchor.ownedTarget.tabId
     ||!(browser.selection==='original-owned-tab'&&originalWindow&&originalTab&&browser.originalTabAbsent===false
       ||browser.selection==='existing-same-window-tab'&&originalWindow&&!originalTab&&browser.originalTabAbsent===true
       ||browser.selection==='replacement-window-tab'&&!originalWindow&&!originalTab&&p.tabId!==anchor.identity.appTabId&&browser.originalTabAbsent===true)
-    ||!exact(row,['docId','status','qvtRequestId','productName','categoryPath','modifiedAt','remark'])||row.docId!==anchor.target.docId||row.qvtRequestId!==anchor.target.qvtRequestId||!Object.hasOwn(STATUS,row.status)
+    ||!exact(row,['docId','status','qvtRequestId','productName','categoryPath','modifiedAt','remark'])||row.docId!==anchor.target.docId||row.qvtRequestId!==qvtRequestId||!Object.hasOwn(STATUS,row.status)
     ||row.productName!==anchor.currentSource.productName||row.categoryPath!==anchor.currentSource.categoryPath||row.modifiedAt!==null&&(typeof row.modifiedAt!=='string'||!Number.isFinite(Date.parse(row.modifiedAt)))||typeof row.remark!=='string'||row.remark.length>20000)fail('HISTORICAL_RECEIPT_UNCONFIRMED','원래 문서의 현재 공식 접수 JSON·회사·QVT 연결을 확인하지 못했습니다.');
   const receipt={state:STATUS[row.status],docId:anchor.target.docId,company:anchor.identity.company,identityDigest:anchor.identityDigest,preparedBodySha256:anchor.preparedBodySha256,observedAt:p.observedAt,
     receiptId:row.qvtRequestId,qvtRequestId:row.qvtRequestId,sourceStatus:row.status,evidence:'document-receipt',registered:false};
-  return freeze({format:'yoofam-historical-product-receipt-candidate-v1',anchor,receipt,officialRow:row,provenance:p,historicalRequestOnly:true,currentBodyEqualityVerified:false,readOnly:true,remoteWrites:false,checkpointWrites:false,canResume:false});
+  return freeze({format:'yoofam-historical-product-receipt-candidate-v1',anchor:{...anchor,target:{...anchor.target,qvtRequestId}},receipt,officialRow:row,provenance:p,historicalRequestOnly:true,currentBodyEqualityVerified:false,readOnly:true,remoteWrites:false,checkpointWrites:false,canResume:false});
 }
 /** Server-side shape/hash/source validation for the dedicated import route.
  * Storage/Chrome provenance is established by the worker, never inferred here.
@@ -116,7 +119,7 @@ export async function validateHistoricalProductReceiptCandidate(raw,{scope,curre
     ||value.format!=='yoofam-historical-product-receipt-candidate-v1'||value.historicalRequestOnly!==true||value.currentBodyEqualityVerified!==false||value.readOnly!==true||value.remoteWrites!==false||value.checkpointWrites!==false||value.canResume!==false
     ||!exact(anchor,['format','target','identity','identityDigest','packetDigest','originalBodySha256','preparedBodySha256','checkpointSequence','checkpointUpdatedAt','ownedTarget','currentSource','checkedAt','readId','historicalRequestOnly','currentBodyEqualityVerified','readOnly','remoteWrites','checkpointWrites','canResume']))invalid();
   const target=validateHistoricalProductReceiptTarget(anchor.target),identity=anchor.identity;
-  if(!exact(scope,['origin','ownerId','company'])||!HANDOFF_ORIGINS.includes(scope.origin)||!ID.test(scope.ownerId||'')||!company(scope.company)||!same(target.company,scope.company)
+  if(target.qvtRequestId===null||!exact(scope,['origin','ownerId','company'])||!HANDOFF_ORIGINS.includes(scope.origin)||!ID.test(scope.ownerId||'')||!company(scope.company)||!same(target.company,scope.company)
     ||!object(identity)||identity.origin!==scope.origin||identity.ownerId!==scope.ownerId||identity.productId!==target.productId||!same(identity.company,scope.company)
     ||!same(anchor.currentSource,currentSource)||!integer(anchor.checkpointSequence,1)||!integer(anchor.checkpointUpdatedAt,1)||anchor.checkpointUpdatedAt>anchor.checkedAt+5000||!integer(anchor.checkedAt,1)||anchor.checkedAt>now+5000||now-anchor.checkedAt>120000
     ||!HASH.test(anchor.identityDigest||'')||anchor.identityDigest!==await digest(identity)||![anchor.packetDigest,anchor.originalBodySha256,anchor.preparedBodySha256].every(hash=>HASH.test(hash||'')))invalid();

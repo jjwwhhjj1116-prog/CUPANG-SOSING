@@ -68,6 +68,29 @@ test('receipt sync validates actual retained evidence for both companies then im
  }
 });
 
+test('a missing QVT searches only the exact original request, then imports the verified resolved receipt once',async()=>{
+ const f=await fixture(SINGLE_COMPANIES[0],{docId:50123,qvtRequestId:7901});
+ f.selection.qvtRequestId=null;f.capability.version='2.1.95';
+ const {promise}=await start(f);assert.deepEqual(plain(f.sent[0]?.payload.target),{...f.selection,company:f.scope.company});assert.equal(f.posts.length,0);
+ f.reply();const saved=await promise;assert.equal(saved.receipt.qvtRequestId,7901);assert.equal(saved.registered,false);
+ assert.equal(f.posts.length,1);assert.equal(f.sent.length,1);
+ assert.equal(JSON.parse(f.posts[0].init.body).candidate.anchor.target.qvtRequestId,7901);
+});
+
+test('a missing QVT needs the current extension; wrong documents and unresolved results never import',async()=>{
+ const old=await fixture();old.selection.qvtRequestId=null;old.capability.version='2.1.94';
+ await assert.rejects(old.api.syncPreservedProductReceipt(old.selection,old.scope.ownerId,new AbortController().signal),/2\.1\.95/);
+ assert.equal(old.sent.length,0);assert.equal(old.posts.length,0);
+ for(const mode of ['wrong-doc','unresolved']){
+  const f=await fixture();f.selection.qvtRequestId=null;f.capability.version='2.1.95';
+  const {promise}=await start(f),rejected=assert.rejects(promise);
+  const value=clone(f.candidate);
+  if(mode==='wrong-doc')value.anchor.target.docId=String(value.anchor.target.docId);
+  else value.anchor.target.qvtRequestId=null;
+  f.reply(value);await rejected;assert.equal(f.posts.length,0);
+ }
+});
+
 test('unsupported worker, wrong actor or malformed selection fails before any receipt command or import',async()=>{
  for(const capability of[{version:'2.1.76',preservedProductReceiptReconciliation:true},{version:'2.1.77'},{version:'2.1.77',preservedProductReceiptReconciliation:false},{version:'not-a-version',preservedProductReceiptReconciliation:true},{version:'2.1.65536',preservedProductReceiptReconciliation:true}]){
   const f=await fixture();f.capability=capability;await assert.rejects(f.api.syncPreservedProductReceipt(f.selection,f.scope.ownerId,new AbortController().signal),/2.1.77/);assert.equal(f.sent.length,0);assert.equal(f.posts.length,0);assert.equal(f.listeners.size,0);assert.equal(f.timers.size,0);
