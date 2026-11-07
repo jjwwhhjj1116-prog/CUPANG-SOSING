@@ -19,7 +19,7 @@ const dimensions=field('packagedDimensionsMm',{label:'포장 크기',section:'lo
 
 test('a missing package size stays one missing fact while generic/default/image reviews remain collapsed and navigable',async()=>{
  const choice=field('optionalChoice',{label:'선택 속성',type:'select',required:true,choices:[{value:'',label:'해당사항없음'},{value:'value',label:'선택값'}]}),review=field('reviewed',{label:'확인값',reviewRequired:true}),image=field('proof',{label:'상품 이미지',section:'image',type:'images'});
- const view=fixture([dimensions,choice,review,image],{packagedDimensionsMm:cell('','empty'),optionalChoice:cell('','couplus-default'),reviewed:cell('저장값'),proof:cell('image/owned.jpg')}),before=JSON.stringify(view),ui=quotationTitleUI({view});
+ const view=fixture([dimensions,choice,review,image],{packagedDimensionsMm:cell('','empty'),optionalChoice:cell('','couplus-default'),reviewed:cell('저장값'),proof:cell('image/owned.jpg')}),before=JSON.stringify(view),ui=quotationTitleUI({view,props:{adminTools:'visible'}});
  try{await ui.idle();assert.equal(titleText(summary(ui).props.children[0]),'상품 공통값 · 필수 미입력 1개 · 입력 오류 0개');
   assert.match(titleText(summary(ui)),/포장 크기 입력하기/);assert.doesNotMatch(titleText(summary(ui)),/실제 상품·증빙|쿠플러스 참조|첨부 이미지 파일명/);
   const notes=references(ui);assert.ok(notes);assert.ok(!notes.props.open);assert.doesNotMatch(visibleText(notes),/실제 상품·증빙|쿠플러스 참조|첨부 이미지 파일명/);
@@ -32,16 +32,21 @@ test('a missing package size stays one missing fact while generic/default/image 
 });
 
 test('structured validation remains visible even when its message resembles a review, with global errors separate from references',async()=>{
- const reminder='실제 상품·증빙과 일치하는지 확인해주세요.',invalid=field('invalid',{label:'오류 항목'}),view=fixture([dimensions,invalid],{packagedDimensionsMm:cell('','empty'),invalid:cell('기존값','content',[reminder],[reminder,'별도 검토 메시지'])},['전체 입력 제약 오류']);
- const before=JSON.stringify(view),ui=quotationTitleUI({view});try{await ui.idle();assert.match(titleText(summary(ui)),/필수 미입력 1개 · 입력 오류 2개/);assert.match(titleText(summary(ui)),/전체 입력 제약 오류/);assert.match(titleText(summary(ui)),/오류 항목 확인하기/);assert.match(titleText(summary(ui)),/실제 상품·증빙/);
-  assert.doesNotMatch(titleText(references(ui)),/전체 입력 제약 오류|실제 상품·증빙/);assert.match(titleText(references(ui)),/별도 검토 메시지/);assert.equal(JSON.stringify(view),before);assert.equal(mutations(ui).length,0);
+ const reminder='실제 상품·증빙과 일치하는지 확인해주세요.',reference='쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.',invalid=field('invalid',{label:'오류 항목'}),view=fixture([dimensions,invalid],{packagedDimensionsMm:cell('','empty'),invalid:cell('기존값','content',[reminder],[reminder,reference])},['전체 입력 제약 오류']);
+ const before=JSON.stringify(view),ui=quotationTitleUI({view,props:{adminTools:'visible'}});try{await ui.idle();assert.match(titleText(summary(ui)),/필수 미입력 1개 · 입력 오류 2개/);assert.match(titleText(summary(ui)),/전체 입력 제약 오류/);assert.match(titleText(summary(ui)),/오류 항목 확인하기/);assert.match(titleText(summary(ui)),/실제 상품·증빙/);
+  assert.doesNotMatch(titleText(references(ui)),/전체 입력 제약 오류|실제 상품·증빙/);assert.match(titleText(references(ui)),/쿠플러스 참조 화면/);
+  const standard=ui.render({adminTools:false});
+  assert.match(visibleText(standard),/실제 상품·증빙/);
+  assert.doesNotMatch(visibleText(standard),/검토·참고 안내|쿠플러스 참조 화면/);
+  assert.match(titleText(titleNodes(standard).filter(node=>node.props?.role==='alert')),/전체 입력 제약 오류/);
+  assert.equal(JSON.stringify(view),before);assert.equal(mutations(ui).length,0);
  }finally{ui.close();}
 });
 
 test('current common and option counts follow unsaved inputs without turning required blanks into a save restriction',async()=>{
  const note=field('note',{label:'메모'}),view=fixture([dimensions,note],{packagedDimensionsMm:cell('100*200*300'),note:cell('저장값')});
  for(const data of [view.resolved,view.automatic])data.rows.find(row=>row.optionId==='blue').fields.packagedDimensionsMm=cell('잘못된 크기');
- const before=JSON.stringify(view),ui=quotationTitleUI({view});try{await ui.idle();assert.match(titleText(summary(ui)),/상품 공통값 · 필수 미입력 0개 · 입력 오류 0개/);
+ const before=JSON.stringify(view),ui=quotationTitleUI({view,props:{adminTools:'visible'}});try{await ui.idle();assert.match(titleText(summary(ui)),/상품 공통값 · 필수 미입력 0개 · 입력 오류 0개/);
   ui.select('red');ui.field('packagedDimensionsMm').props.onChange({target:{value:''}});ui.render();assert.match(titleText(summary(ui)),/현재 옵션 · 필수 미입력 1개 · 입력 오류 0개/);assert.equal(ui.button('견적 입력 저장').props.disabled,false,'a required blank can still be saved as a draft');assert.match(titleText(summary(ui)),/작성 중 상태로 저장할 수 있습니다/);
   ui.select('blue');assert.match(titleText(summary(ui)),/현재 옵션 · 필수 미입력 0개 · 입력 오류 1개/);assert.match(titleText(summary(ui)),/포장 크기 확인하기/);assert.match(titleText(summary(ui)),/양의 정수 3개/);
   ui.select(null);assert.match(titleText(summary(ui)),/상품 공통값 · 필수 미입력 0개 · 입력 오류 0개/);ui.select('red');assert.equal(ui.field('packagedDimensionsMm').props.value,'');assert.equal(ui.button('견적 입력 저장').props.disabled,false);

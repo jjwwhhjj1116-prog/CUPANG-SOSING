@@ -49,7 +49,7 @@ function form(f, calls = [], amend) {
     const replacement = await amend?.(call); if (replacement) return replacement;
     return f.h.route(url, { method: call.method, ...(call.body ? { body: call.body } : {}) });
   };
-  return quotationLabelFormUI({ productId: f.product().id, load: f.h.load, request, renderDocument() { throw Error('Model editing cannot generate images.'); } });
+  return quotationLabelFormUI({ productId: f.product().id, load: f.h.load, request, adminTools: 'visible', renderDocument() { throw Error('Model editing cannot generate images.'); } });
 }
 async function change(f, changes) {
   const view = await json(await f.h.route(f.endpoint));
@@ -211,7 +211,7 @@ test('manual linking requires exact model/official peer identity and preserves t
   } finally { f.h.close(); }
 });
 
-test('failed saves retain the paired manual draft and the next save writes the exact pair once', { skip: !available }, async () => {
+test('failed saves retain the paired manual draft and require readback before retrying the exact pair', { skip: !available }, async () => {
   const f = await setup(schemaCompanies[1]), calls = []; let ui, fail = true;
   try {
     ui = form(f, calls, call => call.method === 'PUT' && fail ? (fail = false, Response.json({ error: 'offline save failure' }, { status: 500 })) : null);
@@ -219,6 +219,12 @@ test('failed saves retain the paired manual draft and the next save writes the e
     const before = f.h.sqlite.prepare('SELECT * FROM product_quotation_fields').get(); await ui.click('견적 입력 저장');
     assert.ok(ui.alerts().includes('offline save failure')); assert.equal(ui.savedNotifications, 0);
     assert.equal(ui.field('model').props.value, modelValue); assert.equal(ui.field(f.peer.id).props.value, modelValue); assert.deepEqual(f.h.sqlite.prepare('SELECT * FROM product_quotation_fields').get(), before);
+    assert.equal(ui.button('견적 입력 저장').props.disabled, true, 'a server error leaves the original save result uncertain');
+    const beforeReadback = calls.length;
+    await ui.click('저장 상태 확인');
+    assert.deepEqual(calls.slice(beforeReadback).map(call => call.method), ['GET']);
+    assert.equal(ui.field('model').props.value, modelValue); assert.equal(ui.field(f.peer.id).props.value, modelValue);
+    assert.deepEqual(f.h.sqlite.prepare('SELECT * FROM product_quotation_fields').get(), before);
     await ui.click('견적 입력 저장'); assert.equal(ui.savedNotifications, 1); assert.equal(calls.filter(call => call.method === 'PUT').length, 2);
     const result = await output(f); assert.equal(modelError(result.preview), false); assert.deepEqual(result.cells, Array(6).fill(modelValue));
   } finally { ui?.close(); f.h.close(); }

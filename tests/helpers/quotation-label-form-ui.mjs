@@ -11,7 +11,7 @@ const same=(before,after)=>before&&after&&before.length===after.length&&before.e
 
 /** Execute both real React components, including child keys and effect cleanup.
  * Rendering PNG pixels is a fixture; all saves use the supplied real API. */
-export function quotationLabelFormUI({productId,load,request,renderDocument}){
+export function quotationLabelFormUI({productId,load,request,renderDocument,adminTools}){
  const modules=new Map(),form={slots:[],pending:[],cursor:0};let current=form,child=null,childKey=null,remounts=0,savedNotifications=0,renderNeeded=true,rendered;
  const hooks={
   useState(initial){const target=current,i=target.cursor++;if(!(i in target.slots))target.slots[i]=typeof initial==='function'?initial():initial;return[target.slots[i],value=>{const next=typeof value==='function'?value(target.slots[i]):value;if(!Object.is(next,target.slots[i])){target.slots[i]=next;renderNeeded=true;}}];},
@@ -36,7 +36,7 @@ export function quotationLabelFormUI({productId,load,request,renderDocument}){
  }
  const Form=component('app/components/quotation-fields-editor.tsx').QuotationFieldsEditor;
  const Panel=component('app/components/quotation-label-panel.tsx').QuotationLabelPanel;
- const props={productId,navigationTarget:{optionId:'collected-1',fieldId:'salePrice',categoryId:'80719'},onSaved(){savedNotifications++;}};
+ const props={productId,adminTools,navigationTarget:{optionId:'collected-1',fieldId:'salePrice',categoryId:'80719'},onSaved(){savedNotifications++;}};
  const finish=instance=>{const effects=instance.pending.splice(0);effects.forEach(fn=>fn());};
  const cleanup=instance=>instance?.slots.forEach(value=>value?.cleanup?.());
  function render(force=false){

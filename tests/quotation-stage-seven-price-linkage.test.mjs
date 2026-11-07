@@ -7,6 +7,7 @@ import {createRequire} from 'node:module';
 import ts from 'typescript';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
+import {quotationTitleUI} from './helpers/quotation-seo-title-ui.mjs';
 
 const cache=new Map();
 function load(file,replacements={}){
@@ -42,46 +43,52 @@ function fixture(overrides={common:{},options:{}}){
   resolved:{schema,rows:rows(overrides),issues:[]},automatic:{schema,rows:rows({common:{},options:{}})},categoryContext:{source:'collection',profileId:'p',categoryId:'69900',categoryPath:path}};
 }
 
-function renderedEditor(view){
- const states=[],refs=[];let cursor=0,refCursor=0;const focused=[];
+function renderedEditor(view,{adminTools=false}={}){
+ const states=[],refs=[];let cursor=0,refCursor=0;
  const react={useState(initial){const index=cursor++;if(!(index in states))states[index]=index===0?view:index===3?false:typeof initial==='function'?initial():initial;return[states[index],value=>states[index]=typeof value==='function'?value(states[index]):value];},useRef(initial){const index=refCursor++;return refs[index]??={current:initial};},useEffect(){},useCallback:fn=>fn,useId:()=> 'stage7-price'};
- const loadedForm=load('app/components/quotation-fields-editor.tsx',{react,document:{getElementById(id){focused.push(id);return{scrollIntoView(){},focus(){}};}}});
- const render=()=>{cursor=0;refCursor=0;const root=loadedForm.QuotationFieldsEditor({productId:'p'});return root.type(root.props);};
+ const loadedForm=load('app/components/quotation-fields-editor.tsx',{react});
+ const render=()=>{cursor=0;refCursor=0;const root=loadedForm.QuotationFieldsEditor({productId:'p',adminTools});return root.type(root.props);};
  // Brand is the real suggestion-select component boundary; price inputs stay
  // native text controls. Do not substitute a fake brand input for the form.
  const control=id=>nodes(render()).find(node=>node.props.id==='stage7-price-'+id
   &&(node.type==='input'||typeof node.type==='function'&&node.type.name==='QuotationBrandInput'));
- render();return{render,control,focused,get changes(){return states[1];},select(value){nodes(render()).find(node=>node.type==='select').props.onChange({target:{value}});}};
+ render();return{render,control,get changes(){return states[1];},select(value){nodes(render()).find(node=>node.type==='select').props.onChange({target:{value}});}};
 }
 
-for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])test(`stage seven renders one primary price control, keeps separate OSRP and routes canonical issues to it (${company.code})`,()=>{
+for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])test(`stage seven renders one primary price control, keeps separate OSRP and routes canonical issues to it (${company.code})`,async()=>{
  const view=fixture({common:{},options:{red:{supplyPrice:'150','wire-supplyPrice':'160'}}});view.company=company;
  for(const field of view.resolved.schema.fields.filter(field=>['supplyPrice','wire-supplyPrice','salePrice','wire-salePrice'].includes(field.id)))field.required=true;
- const before=JSON.stringify(view),ui=renderedEditor(view);ui.select('red');
- for(const input of inputs){assert.equal(ui.control(input),undefined);assert.ok(ui.control('wire-'+input));
+ const before=JSON.stringify(view),focused=[];
+ const ui=quotationTitleUI({view,document:{getElementById(id){return{scrollIntoView(){},focus(){focused.push(id);}};}}});
+ try{await ui.idle();ui.select('red');
+ const control=id=>ui.nodes().find(node=>node.props.id==='seo-title-test-'+id);
+ for(const input of inputs){assert.equal(control(input),undefined);assert.ok(control('wire-'+input));
   const target=editor.resolveQuotationEditorNavigation(view.resolved,{optionId:'red',fieldId:input,categoryId:'69900'});
-  assert.equal(target.ok,true);assert.equal(target.fieldId,'wire-'+input);assert.equal(target.optionId,'red');assert.ok(ui.control(target.fieldId));
+  assert.equal(target.ok,true);assert.equal(target.fieldId,'wire-'+input);assert.equal(target.optionId,'red');assert.ok(control(target.fieldId));
   assert.equal(load('app/quotation-field-groups.ts').quotationFieldGroup(view.resolved.schema.fields.find(field=>field.id===target.fieldId),view.resolved.schema.fields),'가격 정보');
  }
- assert.ok(ui.control('wire-osrp'));assert.ok(ui.control('brand'));assert.equal(ui.control('brand').type.name,'QuotationBrandInput');assert.equal(ui.control('brand').props.disabled,false);assert.equal(nodes(ui.render()).filter(node=>node.type==='input'&&/^stage7-price-(?:wire-(?:supplyPrice|salePrice|msrp|osrp))$/.test(node.props.id??'')).length,4);
+ assert.ok(control('wire-osrp'));assert.ok(control('brand'));assert.equal(control('brand').type.name,'QuotationBrandInput');assert.equal(control('brand').props.disabled,false);assert.equal(nodes(ui.render()).filter(node=>node.type==='input'&&/^seo-title-test-(?:wire-(?:supplyPrice|salePrice|msrp|osrp))$/.test(node.props.id??'')).length,4);
  assert.equal(load('app/quotation-field-groups.ts').quotationFieldGroup(view.resolved.schema.fields.find(field=>field.id==='wire-osrp'),view.resolved.schema.fields),'가격 정보','independent official price remains distinct but belongs in the price subsection');
  assert.match(JSON.stringify(ui.render()),/이전 요약 가격/);assert.match(JSON.stringify(ui.render()),/150/);
  assert.equal(editor.quotationSectionProgress(view,[],'red').find(section=>section.id==='product').required,2);
- const supply=ui.control('wire-supplyPrice');supply.props.onChange({target:{value:'160'}});
+ const supply=control('wire-supplyPrice');supply.props.onChange({target:{value:'160'}});
  assert.deepEqual(plain(ui.changes),[edit('supplyPrice','160')],'retyping unchanged primary repairs only divergent retained summary through an explicit edit');
  const plan=editor.quotationSavePlan(view,ui.changes,'red',false);assert.equal(plan.changes.length,2);assert.ok(plan.changes.every(change=>change.value==='160'));
  assert.doesNotMatch(JSON.stringify(ui.render()),/이전 요약 가격/);
- ui.control('wire-msrp').props.onChange({target:{value:''}});assert.equal(editor.resolveQuotationEditorCell(view,ui.changes,'red','msrp').value,'');
- ui.control('wire-salePrice').props.onChange({target:{value:'90'}});assert.match(editor.resolveQuotationEditorCell(view,ui.changes,'red','wire-salePrice').validationIssues.join(' '),/공급가보다/);
- const errorButton=nodes(ui.render()).find(node=>node.type==='button'&&text(node)==='salePrice 확인하기');assert.ok(errorButton);errorButton.props.onClick();assert.equal(ui.focused.at(-1),'stage7-price-wire-salePrice');
+ control('wire-msrp').props.onChange({target:{value:''}});assert.equal(editor.resolveQuotationEditorCell(view,ui.changes,'red','msrp').value,'');
+ control('wire-salePrice').props.onChange({target:{value:'90'}});assert.match(editor.resolveQuotationEditorCell(view,ui.changes,'red','wire-salePrice').validationIssues.join(' '),/공급가보다/);
+ const standardError=nodes(ui.render()).find(node=>node.props?.id==='seo-title-test-wire-salePrice-notes');
+ assert.match(text(standardError),/공급가보다/);
+ const errorButton=nodes(ui.render({adminTools:'visible'})).find(node=>node.type==='button'&&text(node)==='salePrice 확인하기');assert.ok(errorButton);errorButton.props.onClick();await ui.idle();assert.equal(focused.at(-1),'seo-title-test-wire-salePrice');
  assert.equal(JSON.stringify(view),before);
+ }finally{ui.close();}
 });
 
 test('visible primary price resets alias-only common and option overrides, including blanks, without resetting inherited aliases or OSRP',()=>{
  for(const optionId of [null,'red'])for(const input of inputs)for(const value of ['175','']){
   const overrides={common:{brand:'공통 보존','wire-osrp':'777'},options:{blue:{brand:'다른 옵션 보존'},excluded:{msrp:'999'}}};
   if(optionId===null)overrides.common[input]=value;else overrides.options.red={[input]:value,brand:'선택 옵션 보존'};
-  const view=fixture(overrides),before=JSON.stringify(view),ui=renderedEditor(view);
+  const view=fixture(overrides),before=JSON.stringify(view),ui=renderedEditor(view,{adminTools:'visible'});
   const priceField=()=>nodes(ui.render()).find(node=>node.type==='div'&&node.props.className?.startsWith('quotation-field ')
    &&nodes(node).some(child=>child.type==='input'&&child.props.id==='stage7-price-wire-'+input));
   const reset=()=>nodes(priceField()).find(node=>node.type==='button'&&typeof node.props.children==='string'&&node.props.children.startsWith('수정 해제'));

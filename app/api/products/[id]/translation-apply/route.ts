@@ -28,7 +28,7 @@ import {assertWorkersRecoveryJobQuality} from '@/app/product-translation-quality
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {GOOGLE_TEXT_MODEL,WORKERS_TEXT_MODEL,WORKERS_QWEN_MODEL,validateQwenTranslationDraft} from '@/app/automation/translation';
 import {intakeSupplierSourceMatches,intakeSupplierFactsMatch} from '@/app/intake-supplier-source';
-import { applyInitialIntakeSeoGuidance, initialIntakeSeoGuidancePending, applySeoGuidanceComposition, validateSeoGuidanceComposition, type SeoGuidanceComposition } from '@/app/seo-guidance-composition';
+import { applyInitialIntakeSeoGuidance, applyInitialIntakeSignedSeoTitle, initialIntakeSeoGuidancePending, applySeoGuidanceComposition, validateSeoGuidanceComposition, type SeoGuidanceComposition } from '@/app/seo-guidance-composition';
 import { verifyCapturedCollectionCompany } from '@/app/collection-company';
 
 type Context = { params: Promise<{ id: string }> };
@@ -186,6 +186,15 @@ export async function POST(request: Request, context: Context) {
         pendingGuidance=composed.pendingFields;
         initialGuidanceFields=composed.adoptedFields;
         intakeSeoGuidance={jobId:job.id,contentRevision:content.revision,needsReview:composed.warnings.length>0,warnings:composed.warnings};
+      } else if (canonicalIntake && job.status === 'completed' && job.result?.model === WORKERS_QWEN_MODEL
+        && job.review.model === WORKERS_QWEN_MODEL && job.review.destination === 'Cloudflare Workers AI'
+        && job.review.instructionsVersion === 'sourceflow-translation-v6' && job.review.source.guidance && job.review.seoComposition
+        && !['optionsRetry','intakeOptions','seoRetry','workersRecovery'].some(key => Object.hasOwn(job.review,key))) {
+        const { memo } = job.review.seoComposition;
+        if (typeof capturedSettings?.brand === 'string' && memo.brand === capturedSettings.brand.trim()
+          && memo.features === job.review.source.guidance.features && memo.keywords === job.review.source.guidance.keywords) {
+          plan = applyInitialIntakeSignedSeoTitle(plan, planningContent, applicationJob);
+        }
       }
     }
     catch (error) { return json({ error: error instanceof Error ? error.message : '번역 연결을 확인해주세요.' }, 409); }

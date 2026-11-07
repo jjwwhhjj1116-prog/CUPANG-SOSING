@@ -111,6 +111,22 @@ test('interleaved production Product Page fields form one ordered group each whi
  }finally{ui.close();}
 });
 
+test('cleaning brush quotation follows the observed retail price and packaged weight order without changing schema',()=>{
+ const grouping=load('app/quotation-field-groups.ts'),view=quotationPresentationFixture();
+ const fields=view.resolved.schema.fields;
+ addField(view,{id:'native-box-weight',section:'logistics',label:'한 개 단품 포장 무게',type:'text',numericText:true,required:true,visibility:'common',
+  hubInput:'packagedWeightG',hubWire:{path:['logisticsPage','skuUnitBoxWeight']}},'150');
+ const dimensions=fields.findIndex(field=>field.id==='packagedDimensionsMm'),[dimensionField]=fields.splice(dimensions,1);
+ fields.unshift(dimensionField);
+ const before=JSON.stringify(fields),order=(section,ids,category='64455')=>grouping.quotationSectionDisplayFields(fields,section,category).filter(field=>ids.includes(field.id)).map(field=>field.id);
+ const prices=['supplyPrice','salePrice','msrp','barcodeMode','barcode'];
+ assert.deepEqual(order('product',prices),prices);
+ const packaging=['packagedWeightG','native-box-weight','packagedDimensionsMm'];
+ assert.deepEqual(order('logistics',packaging),packaging);
+ assert.equal(order('logistics',packaging,'103689')[0],'packagedDimensionsMm');
+ assert.equal(JSON.stringify(fields),before);
+});
+
 test('OSRP-only native price stays after barcode with its explicit blank and original linked save targets',async()=>{
  const view=quotationPresentationFixture();addField(view,{id:'native-osrp',section:'product',label:'공식 판매처 가격',type:'number',required:false,visibility:'common',hubInput:'msrp',hubWire:{path:['productPage','commonAttributes','osrp']}},'');
  const before=JSON.stringify(view),ui=quotationTitleUI({view});try{await ui.idle();

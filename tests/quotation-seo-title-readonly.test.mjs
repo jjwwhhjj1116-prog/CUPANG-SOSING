@@ -7,7 +7,9 @@ const load=quotationTitleLoader(),model=load('app/quotation-schema.ts'),policy=l
 const plain=value=>JSON.parse(JSON.stringify(value));
 test('the quotation form defers expensive native transmission reads while preserving its primary review action',async()=>{
  const ui=quotationTitleUI({view:fixture({native:true})});try{
-  await ui.idle();const review=titleNodes(ui.render()).find(node=>node.props?.primaryProduct===true);
+  await ui.idle();
+  assert.equal(titleNodes(ui.render()).some(node=>node.props?.primaryProduct===true),false);
+  const review=titleNodes(ui.render({adminTools:'visible'})).find(node=>node.props?.primaryProduct===true);
   assert.ok(review);assert.equal(review.props.autoRead,false);assert.equal(review.props.disabled,false);
  }finally{ui.close();}
 });
@@ -43,7 +45,9 @@ for(const native of [false,true])test(`quotation ${native?'native Hub and canoni
   ui.button('SEO 설정에서 상품명 수정').props.onClick();assert.deepEqual(navigated,['seo']);
   assert.equal(ui.calls.some(call=>call.init?.method),false);assert.equal(JSON.stringify(view),before);
   assert.equal(ui.field('brand')?.props.readOnly??child(ui,'QuotationBrandInput')?.props.disabled,false);
-  assert.equal(ui.nodes().filter(node=>node.props?.className==='quotation-field-select-copy'&&titleNodes(node).some(item=>item.props?.checked!==undefined)).length>0,true);
+  const copyControl=node=>node.props?.className==='quotation-field-select-copy'&&titleNodes(node).some(item=>item.props?.checked!==undefined);
+  assert.equal(ui.nodes().some(copyControl),false);
+  assert.equal(titleNodes(ui.render({adminTools:'visible'})).some(copyControl),true);
  }finally{ui.close();}
 });
 
@@ -69,7 +73,7 @@ test('historical manual values and manual blank stay visible until an explicit c
  let view=fixture({native:true,alias:true});const wire=wireTitle(view);
  view=fixture({native:true,alias:true,overrides:{common:{title:'예전 공통 제목',[wire.id]:'예전 공식 제목'},options:{red:{title:'',[wire.id]:'옵션 공식 제목'},blue:{title:'다른 옵션 제목'}}}});
  const before=JSON.stringify(view),puts=[];
- const ui=quotationTitleUI({view,request:async(_url,init)=>{
+ const ui=quotationTitleUI({view,props:{adminTools:'visible'},request:async(_url,init)=>{
   if(init?.method==='PUT'){
    const body=JSON.parse(init.body);puts.push(body);const next=plain(view);next.revision++;next.overrides=model.applyQuotationChanges(view.overrides,body.changes);next.inputFingerprint='b'.repeat(64);next.productVersion='2026-10-21T00:00:00.001Z';next.updatedAt=next.productVersion;
    const editor=load('app/components/quotation-fields-editor.tsx');for(const row of next.resolved.rows)for(const key of Object.keys(row.fields))row.fields[key]=editor.resolveQuotationEditorCell(next,[],row.optionId,key);
@@ -92,7 +96,7 @@ test('historical manual values and manual blank stay visible until an explicit c
 
 test('captured title/navigation/reset handlers cannot bypass draft, busy, option or changed-schema guards',async()=>{
  const view=fixture({overrides:{common:{title:'기존 제목'},options:{red:{title:'옵션 기존 제목'}}}}),opened=[];
- const ui=quotationTitleUI({view,props:{onEditSeo:()=>opened.push('seo')}});
+ const ui=quotationTitleUI({view,props:{adminTools:'visible',onEditSeo:()=>opened.push('seo')}});
  try{await ui.idle();
   const navigate=ui.button('SEO 설정에서 상품명 수정').props.onClick;
   const reset=ui.button('상품명 수정 해제').props.onClick;

@@ -13,6 +13,7 @@ function load(file,replacements={}){
  const cached=!Object.keys(replacements).length;
  if(cached&&cache.has(file))return cache.get(file);
  const exports={};
+ if(cached)cache.set(file,exports);
  const source=ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  vm.runInNewContext(source,{exports,Error,TextEncoder,URLSearchParams,structuredClone,AbortController,fetch:replacements.fetch,document:replacements.document,window:replacements.window,require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
   if(name==='parse5')return parse5;
@@ -24,7 +25,7 @@ function load(file,replacements={}){
   if(name==='react'||name==='react/jsx-runtime')return requireNative(name);
   throw Error('Unexpected dependency '+name);
  }});
- if(cached)cache.set(file,exports);return exports;
+ return exports;
 }
 const editor=load('app/components/quotation-fields-editor.tsx');
 const requiredBlank='필수 값이 비어 있습니다.';
@@ -135,7 +136,7 @@ test('missing-field navigation focuses the remaining SKU after a removed selecti
   window:{addEventListener(){},removeEventListener(){}},
   document:{getElementById(id){const control=committed.find(node=>node.props?.id===id);lookups.push(id);return control?{scrollIntoView(){},focus(){focuses.push({id,option:committed.find(node=>node.type==='select')?.props.value,value:control.props.value});}}:null;}},
  });
- const render=()=>{stateIndex=0;refIndex=0;effectIndex=0;callbackIndex=0;const root=loaded.QuotationFieldsEditor({productId:'p'}),tree=root.type(root.props);committed=nodes(tree);queued.splice(0).forEach(run=>run());return tree;};
+ const render=()=>{stateIndex=0;refIndex=0;effectIndex=0;callbackIndex=0;const root=loaded.QuotationFieldsEditor({productId:'p',adminTools:'visible'}),tree=root.type(root.props);committed=nodes(tree);queued.splice(0).forEach(run=>run());return tree;};
  const settle=async()=>{for(let index=0;index<5;index++){render();await new Promise(resolve=>setImmediate(resolve));}return render();};
  const select=value=>committed.find(node=>node.type==='select').props.onChange({target:{value}});
  const editBrand=value=>{
@@ -147,7 +148,8 @@ test('missing-field navigation focuses the remaining SKU after a removed selecti
   render();await settle();select('removed');render();
   editBrand('retained removed-SKU draft');render();
   responseView=clone(responseView);responseView.resolved.rows=responseView.resolved.rows.filter(row=>row.optionId!=='removed');responseView.automatic.rows=responseView.automatic.rows.filter(row=>row.optionId!=='removed');
-  committed.find(node=>node.type==='button'&&node.props.children==='기본값 다시 반영').props.onClick();await settle();
+  const refresh=committed.find(node=>node.type==='button'&&node.props.children==='기본값 다시 반영');
+  assert.ok(refresh);assert.equal(refresh.props.disabled,false);refresh.props.onClick();await settle();
   assert.equal(committed.find(node=>node.type==='select').props.value,'removed');assert.equal(committed.filter(node=>node.type==='fieldset').length,0);
   const overview=committed.find(node=>node.type===loaded.QuotationOptionOverview),navigation=nodes(loaded.QuotationOptionOverview(overview.props)).find(node=>node.type==='button'&&[].concat(node.props.children).join('')==='live_weight 입력하기');
   assert.ok(navigation);assert.equal(navigation.props.disabled,false);navigation.props.onClick();
@@ -164,7 +166,7 @@ test('missing-field navigation focuses the remaining SKU after a removed selecti
   mountedNavigation.props.onClick();assert.equal(focuses.length,1,'a mounted previous-option input is not focused before the next selection commits');render();
   assert.deepEqual(focuses[1],{id:'required-navigation-live_weight',option:'remaining',value:''});
   select('');render();assert.equal(focuses.length,2,'the second queued target is consumed too');
-  assert.ok(reads.every(request=>request.method==='GET'));
+  assert.deepEqual(reads,[{url:'/api/products/p/quotation-fields',method:'GET'},{url:'/api/products/p/quotation-fields',method:'GET'}]);
   assert.ok(lookups.includes('required-navigation-live_weight'));
  }finally{effects.forEach(effect=>effect?.cleanup?.());}
 });

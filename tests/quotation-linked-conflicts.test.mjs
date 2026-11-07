@@ -126,15 +126,21 @@ test('ambiguous, readonly and removed peers remain reviewable and accepting save
 });
 
 function renderedEditor(view){
- const states=[],refs=[],effects=[];let cursor=0,refCursor=0,responseView=view;
+ const states=[],refs=[],effects=[],requests=[];let cursor=0,refCursor=0,responseView=view,adminTools;
  const react={useState(initial){const index=cursor++;if(!(index in states))states[index]=index===0?view:index===3?false:typeof initial==='function'?initial():initial;return[states[index],value=>states[index]=typeof value==='function'?value(states[index]):value];},useRef(initial){const index=refCursor++;return refs[index]??={current:initial};},useEffect(fn){if(String(fn).includes('modelActionState.current =')||String(fn).includes('explicitRefreshAction.current ='))effects.push(fn);},useCallback:fn=>fn,useId:()=> 'linked-conflict'};
- const form=load('app/components/quotation-fields-editor.tsx',{react,fetch:async()=>Response.json(responseView),document:{getElementById:()=>null}});
- const render=()=>{cursor=0;refCursor=0;const root=form.QuotationFieldsEditor({productId:'p'}),tree=root.type(root.props);effects.splice(0).forEach(effect=>effect());return tree;};
+ const form=load('app/components/quotation-fields-editor.tsx',{react,fetch:async(_url,init)=>{requests.push(init?.method??'GET');return Response.json(responseView);},document:{getElementById:()=>null}});
+ const render=()=>{cursor=0;refCursor=0;const root=form.QuotationFieldsEditor({productId:'p',adminTools}),tree=root.type(root.props);effects.splice(0).forEach(effect=>effect());return tree;};
  const button=(tree,label)=>nodes(tree).find(node=>node.type==='button'&&text(node.props.children)===label);
  render();return{render,get changes(){return states[1];},get conflicts(){return states[2];},
   select(){nodes(render()).find(node=>node.type==='select').props.onChange({target:{value:'red'}});},
   field(id){return nodes(render()).find(node=>(node.type==='input'||node.type?.name==='QuotationBrandInput')&&node.props.id==='linked-conflict-'+id);},
-  async refresh(next){responseView=next;button(render(),'기본값 다시 반영').props.onClick();await new Promise(resolve=>setImmediate(resolve));assert.equal(states[3],false);},
+  async refresh(next){
+   assert.equal(button(render(),'기본값 다시 반영'),undefined);
+   responseView=next;adminTools='visible';
+   const action=button(render(),'기본값 다시 반영');assert.ok(action);assert.equal(action.props.disabled,false);action.props.onClick();
+   await new Promise(resolve=>setImmediate(resolve));assert.equal(states[3],false);assert.deepEqual(requests,['GET']);
+   adminTools=undefined;assert.equal(button(render(),'기본값 다시 반영'),undefined);
+  },
   choose(field,label){const conflict=nodes(render()).find(node=>node.type==='li'&&text(node.props.children).startsWith(field+' · '));assert.ok(conflict);const action=button(conflict,label);assert.ok(action);assert.equal(action.props.disabled,false);action.props.onClick();},
  };
 }

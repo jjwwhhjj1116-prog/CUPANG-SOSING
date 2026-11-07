@@ -16,16 +16,18 @@ async function fixture(company={companyCode:'A01464742',companyName:'와이홉'}
  await h.intake();const product=h.sqlite.prepare('SELECT * FROM products').get(),endpoint='/api/products/'+product.id+'/quotation-fields';
  const calls=[];let fail=false,hold=null,writeHold=null;
  const request=async(url,init={})=>{calls.push({url,method:init.method??'GET',body:init.body});if(url===endpoint&&init.method==='PUT'&&writeHold)return writeHold.promise;if(url===endpoint&&!init.method){if(hold)return hold.promise;if(fail)return Response.json({error:'synthetic recovery GET unavailable'},{status:503});}return h.route(url,{method:init.method??'GET',...(init.body?{body:JSON.parse(init.body)}:{})});};
- const ui=quotationLabelFormUI({productId:product.id,load:h.load,request,renderDocument:()=>assert.fail('read-only recovery must not render or upload PNG')});await ui.idle();
+ const ui=quotationLabelFormUI({productId:product.id,load:h.load,request,adminTools:'visible',renderDocument:()=>assert.fail('read-only recovery must not render or upload PNG')});await ui.idle();
  return{h,ui,calls,endpoint,setFail:value=>{fail=value;},setHold:value=>{hold=value;},setWriteHold:value=>{writeHold=value;},
   async latch(){const boundary=ui.render().boundary;boundary.props.onBusyChange(true);fail=true;await boundary.props.onFailed('synthetic label failure');boundary.props.onBusyChange(false);await ui.idle();},
   close(){ui.close();h.close();}};
 }
 for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test('explicit label recovery retries GET while editing stays locked, then releases only after success ('+company.companyCode+')',async()=>{
  const f=await fixture(company);try{
-  await f.latch();assert.equal(f.ui.fieldDisabled('salePrice'),true);assert.equal(f.ui.button('전체 포함 옵션 라벨 생성·연결').props.disabled,true);assert.equal(f.ui.button('기본값 다시 반영').props.disabled,false);
-  const before=f.calls.length;await f.ui.click('기본값 다시 반영');assert.equal(f.calls.length,before+1);assert.ok(f.ui.alerts().some(value=>value.includes('synthetic recovery GET unavailable')));assert.equal(f.ui.fieldDisabled('salePrice'),true);
-  f.setFail(false);await f.ui.click('기본값 다시 반영');assert.equal(f.calls.length,before+2);assert.equal(f.ui.fieldDisabled('salePrice'),false);assert.equal(f.ui.button('전체 포함 옵션 라벨 생성·연결').props.disabled,false);
+  assert.equal(f.ui.button('저장 상태 확인'),undefined);
+  await f.latch();assert.equal(f.ui.fieldDisabled('salePrice'),true);assert.equal(f.ui.button('전체 포함 옵션 라벨 생성·연결').props.disabled,true);assert.equal(f.ui.button('저장 상태 확인').props.disabled,false);
+  const before=f.calls.length;await f.ui.click('저장 상태 확인');assert.equal(f.calls.length,before+1);assert.ok(f.ui.alerts().some(value=>value.includes('synthetic recovery GET unavailable')));assert.equal(f.ui.fieldDisabled('salePrice'),true);
+  f.setFail(false);await f.ui.click('저장 상태 확인');assert.equal(f.calls.length,before+2);assert.equal(f.ui.fieldDisabled('salePrice'),false);assert.equal(f.ui.button('전체 포함 옵션 라벨 생성·연결').props.disabled,false);
+  assert.equal(f.ui.button('저장 상태 확인'),undefined);
   assert.ok(f.calls.every(call=>call.url===f.endpoint&&call.method==='GET'));
  }finally{f.close();}
 });
@@ -41,14 +43,14 @@ test('captured explicit refresh refuses same-tick task, split, option, draft and
   select.props.onChange({target:{value:'collected-2'}});old();assert.equal(f.calls.length,before);await f.ui.idle();old();assert.equal(f.calls.length,before,'a committed different option also rejects the old callback');
   old=f.ui.button('기본값 다시 반영').props.onClick;f.ui.field('salePrice').props.onChange({target:{value:'23456'}});old();assert.equal(f.calls.length,before,'same-tick field draft is never lost to an old refresh');await f.ui.idle();
   await f.ui.click('기본값 다시 반영');assert.equal(f.ui.field('salePrice').props.value,'23456','ordinary explicit refresh reconciles and preserves the current unsaved draft');
-  await f.latch();assert.equal(f.ui.button('기본값 다시 반영').props.disabled,true,'recovery exception cannot bypass an unsaved field draft');assert.equal(f.ui.field('salePrice').props.value,'23456');
+  await f.latch();assert.equal(f.ui.button('저장 상태 확인').props.disabled,true,'recovery exception cannot bypass an unsaved field draft');assert.equal(f.ui.field('salePrice').props.value,'23456');
   old=f.ui.button('기본값 다시 반영').props.onClick;before=f.calls.length;f.ui.close();old();assert.equal(f.calls.length,before);
  }finally{f.close();}
 });
 test('an explicit recovery read synchronously blocks duplicate and loading callbacks without mutations',async()=>{
  const f=await fixture();try{
   await f.latch();f.setFail(false);let resolve;const promise=new Promise(done=>{resolve=done;});f.setHold({promise});
-  const old=f.ui.button('기본값 다시 반영').props.onClick,before=f.calls.length;old();old();assert.equal(f.calls.length,before+1);assert.equal(f.ui.button('기본값 다시 반영').props.disabled,true);old();assert.equal(f.calls.length,before+1);
+  const old=f.ui.button('저장 상태 확인').props.onClick,before=f.calls.length;old();old();assert.equal(f.calls.length,before+1);assert.equal(f.ui.button('저장 상태 확인').props.disabled,true);old();assert.equal(f.calls.length,before+1);
   f.setHold(null);resolve(await f.h.route(f.endpoint));await f.ui.idle();assert.equal(f.ui.fieldDisabled('salePrice'),false);old();assert.equal(f.calls.length,before+1,'a handler captured for a different saved view cannot start another read');assert.ok(f.calls.every(call=>call.method==='GET'));
  }finally{f.close();}
 });

@@ -761,7 +761,7 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
       if (net.source === 'content' && (!value.trim() || isCouplusNotApplicableValue(value))) current = { value, source: 'content' };
       else if (match && ['manual', 'collected'].includes(option.provenance.unitsPerPack) && Number(match[1]) === option.unitsPerPack) current = { value: `${match[1]}${match[2]}`, source: 'content' };
     }
-    if(current.source==='option' && option && ['색상','사이즈'].includes(definition.label)){
+    if(current.source==='option' && current.value !== '' && option && ['색상','사이즈'].includes(definition.label)){
       const key=definition.label==='색상'?'color':'size';
       if(option.provenance[key]!=='manual' && (/\p{Script=Han}/u.test(current.value)||quotationValueIssues(definition,current.value,ownedKeys).length))current={value:'',source:'empty'};
     }

@@ -6,12 +6,8 @@ import type {ProductOptions} from '@/app/product-options';
 import type {SeoWorkspaceView} from '@/app/seo-workspace';
 import type {SeoWorkspaceDraft} from '@/app/seo-workspace-client';
 import {untouchedIntakeKeywords} from '@/app/translation-batch-adoption';
-import {translationAttributeFactText,translationAttributeIssue,translationNumbers} from '@/app/translation-attribute-evidence';
-import {guardCurrentSeoDraft,normalizeSeoQuantityNumbers,SeoFactEmptyError} from '@/app/seo-current-policy';
-import {quotationKeywordPlan} from '@/app/quotation-keywords';
-import {unsupportedProductMaterial} from '@/app/product-material-evidence';
-import {unsupportedTranslatedProductClaim} from '@/app/product-translation-quality';
-import {seoGuidanceTitle,seoGuidanceTags,validateSeoGuidanceComposition,type SeoGuidanceComposition} from '@/app/seo-guidance-composition';
+import {translationAttributeIssue} from '@/app/translation-attribute-evidence';
+import {seoGuidanceTitle,seoGuidanceTags,signedSeoGuidanceTitle,validateSeoGuidanceComposition,type SeoGuidanceComposition} from '@/app/seo-guidance-composition';
 
 type NameSource={id:string;originalName:string;supplierSku:string;translatedName:string;provenance:string;included:boolean};
 export type SeoGeneratedDraft={
@@ -30,31 +26,6 @@ export function seoRegenerationOptionBatch(options:ProductOptions,limit:number,a
  const names=options.rows.filter(row=>row.included&&row.originalName.trim()).map(row=>({name:'option:'+row.id,value:row.originalName}));
  const all=[...names,...additional.filter(pair=>!/^option:/u.test(pair.name))],count=Math.max(0,Math.floor(limit));
  return {attributes:all.slice(0,count),remaining:Math.max(0,all.length-count)};
-}
-
-/** Use the same feature-based title as the example when the signed guidance passes source checks. */
-function signedSeoGuidanceTitle(job:TranslationJob):string|undefined{
- const policy=job.review.seoComposition;
- if(!policy?.memo.features.trim())return;
- const {memo}=policy;
- const keywords=quotationKeywordPlan(memo.keywords);
- if(!keywords.kept.length||keywords.omitted.some(item=>item.reason!=='중복 검색어'))return;
- const candidate=seoGuidanceTitle({title:''},memo);
- if(!candidate||candidate.length>100)return;
- const {source,seoCompositionContext:context}=job.review;
- const selectedFacts=context?.selectedOptions.flatMap(option=>[option.name,option.nameTrans,option.color,option.size])??[];
- const facts=[source.title,source.description,...source.attributes.map(translationAttributeFactText),
-  ...selectedFacts].join(' ');
- const confirmedFacts=facts+' '+memo.features;
- if(unsupportedProductMaterial(candidate,confirmedFacts)||unsupportedTranslatedProductClaim(candidate,confirmedFacts))return;
- const numbers=new Set(translationNumbers(normalizeSeoQuantityNumbers(facts+' '+memo.brand)));
- if(translationNumbers(candidate).some(number=>!numbers.has(number)))return;
- try{
-  const checked=guardCurrentSeoDraft({title:candidate,description:'',keywords:[],attributes:[],warnings:[]},source,policy,context?{...context,bundleQuantity:null}:undefined);
-  if(checked.title===candidate)return candidate;
- }catch(error){
-  if(!(error instanceof SeoFactEmptyError))throw error;
- }
 }
 
 /** A completed provider job becomes editable input only. No content, option or

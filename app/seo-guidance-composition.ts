@@ -3,6 +3,10 @@ import { validateContentInput, type ProductContent } from '@/app/product-content
 import { untouchedIntakeKeywords } from '@/app/translation-batch-adoption';
 import { GOOGLE_TEXT_MODEL, type TranslationDraft, type TranslationJob } from '@/app/automation/translation';
 import type { integratedTranslationPlan } from '@/app/translation-integrated-adoption';
+import { translationAttributeFactText, translationNumbers } from '@/app/translation-attribute-evidence';
+import { guardCurrentSeoDraft, normalizeSeoQuantityNumbers, SeoFactEmptyError } from '@/app/seo-current-policy';
+import { unsupportedProductMaterial } from '@/app/product-material-evidence';
+import { unsupportedTranslatedProductClaim } from '@/app/product-translation-quality';
 
 /** Explicit owner-written SEO, separate from the provider's translated facts. */
 export type SeoGuidanceComposition = { brand: string; features: string; keywords: string; title: string; replaceTitle?: boolean; replaceKeywords?: boolean };
@@ -55,6 +59,31 @@ export function seoGuidanceTitle(draft: Pick<TranslationDraft,'title'>, memo: Pi
   for(const target of targets)if(!contains(product,target))product=[product,target].filter(Boolean).join(' ');
   return [brand,product].filter(Boolean).join(' ');
 }
+/** Use the same feature-based title as the example when the signed guidance passes source checks. */
+export function signedSeoGuidanceTitle(job:TranslationJob):string|undefined{
+ const policy=job.review.seoComposition;
+ if(!policy?.memo.features.trim())return;
+ const {memo}=policy;
+ const keywords=quotationKeywordPlan(memo.keywords);
+ if(!keywords.kept.length||keywords.omitted.some(item=>item.reason!=='중복 검색어'))return;
+ const candidate=seoGuidanceTitle({title:''},memo);
+ if(!candidate||candidate.length>100)return;
+ const {source,seoCompositionContext:context}=job.review;
+ const selectedFacts=context?.selectedOptions.flatMap(option=>[option.name,option.nameTrans,option.color,option.size])??[];
+ const facts=[source.title,source.description,...source.attributes.map(translationAttributeFactText),
+  ...selectedFacts].join(' ');
+ const confirmedFacts=facts+' '+memo.features;
+ if(unsupportedProductMaterial(candidate,confirmedFacts)||unsupportedTranslatedProductClaim(candidate,confirmedFacts))return;
+ const numbers=new Set(translationNumbers(normalizeSeoQuantityNumbers(facts+' '+memo.brand)));
+ if(translationNumbers(candidate).some(number=>!numbers.has(number)))return;
+ try{
+  const checked=guardCurrentSeoDraft({title:candidate,description:'',keywords:[],attributes:[],warnings:[]},source,policy,context?{...context,bundleQuantity:null}:undefined);
+  if(checked.title===candidate)return candidate;
+ }catch(error){
+  if(!(error instanceof SeoFactEmptyError))throw error;
+ }
+}
+
 export function seoGuidanceTags(draft: Pick<TranslationDraft,'keywords'>, input: SeoGuidanceComposition, generatedCandidates=false) {
   const tags = targetKeywords(input.keywords), omitted: string[] = [];
   for (const value of draft.keywords) {
@@ -148,6 +177,15 @@ export function applyInitialIntakeSeoGuidance(plan: ReturnType<typeof integrated
   if(eligibleTitle&&values.title!==undefined&&composed.patch?.seo?.title!==undefined&&(memo.brand.trim()||memo.features.trim()||targetCount))adoptedFields.push('title');
   if(eligibleTags&&values.keywords!==undefined&&composed.patch?.seo?.keywords!==undefined&&targetCount)adoptedFields.push('keywords');
   return {plan:composed,adoptedFields,warnings:[...new Set(Object.values(pendingFields).filter((value):value is string=>typeof value==='string'))],pendingFields};
+}
+
+/** The caller has verified the canonical intake receipt and captured memo.
+ * Keep the integrated plan's authority to write a previously untouched title. */
+export function applyInitialIntakeSignedSeoTitle(plan: ReturnType<typeof integratedTranslationPlan>, content: ProductContent,
+  job: TranslationJob): ReturnType<typeof integratedTranslationPlan> {
+  if (plan.patch?.seo?.title === undefined) return plan;
+  const title = signedSeoGuidanceTitle(job);
+  return title ? applyGuidanceCandidates(plan, content, job, { title }) : plan;
 }
 
 function applyGuidanceCandidates(plan: ReturnType<typeof integratedTranslationPlan>, content: ProductContent,

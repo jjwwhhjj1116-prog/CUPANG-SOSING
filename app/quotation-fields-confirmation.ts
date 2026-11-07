@@ -2,7 +2,7 @@ import { applyQuotationChanges, quotationGeneratedSourceWritable, type Quotation
 import { quotationPackagedWeightManual } from '@/app/quotation-packaged-weight';
 import { applyQuotationPackagingBasis, quotationPackagingBasisIssues, isQuotationPackagingBasisIssue, validatePackQuantities, validateQuotationPackagingBasis,type QuotationPackagingDraftInput } from '@/app/quotation-packaging-basis';
 
-const unconfirmed = () => new Error('저장 응답이 요청한 견적 입력과 다릅니다. 직접 수정값을 유지했습니다. 기본값 다시 반영으로 저장본을 확인해주세요.');
+const unconfirmed = () => new Error('저장 응답이 요청한 견적 입력과 다릅니다. 직접 수정값을 유지했습니다. 저장 상태 확인을 눌러 다시 조회해주세요.');
 function overrideSignature(value: QuotationOverrides): string {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).some(key => !['common', 'options'].includes(key))) throw unconfirmed();

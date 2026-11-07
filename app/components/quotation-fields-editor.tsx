@@ -606,7 +606,7 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, init
     } catch (cause) {
       if (id === requests.current) {
         const reason = cause instanceof Error ? cause.message : '최신 자료 확인 실패';
-        setError(failureMessage ? `${failureMessage} 현재 저장본을 확인하지 못했습니다: ${reason} 기본값 다시 반영을 눌러 저장본을 확인해주세요.` : reason);
+        setError(failureMessage ? `${failureMessage} 현재 저장본을 확인하지 못했습니다: ${reason} 저장 상태 확인을 눌러 다시 조회해주세요.` : reason);
       }
     }
     finally { if (id === requests.current) setLoading(false); }
@@ -671,7 +671,7 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, init
   }
   function changeAllOptions(next: boolean) {
     const current = modelActionState.current, action = aiRequestOwner.current;
-    if (current.view !== view || current.selectedOption !== selectedOption || current.busy || current.loading || activeWrite.current
+    if (current.view !== view || current.selectedOption !== selectedOption || current.busy || current.loading || activeWrite.current || readbackNeeded
       || action?.sourceKey === aiRequestSource && action.scopeLocked || next === current.applyAll) return;
     titleActionEpoch.current++;
     modelActionState.current = { ...current, applyAll: next };
@@ -734,10 +734,12 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, init
     const controller = new AbortController(); activeWrite.current=controller;
     setBusy(true); setError(''); setMessage(''); setBulk(null);
     let verifyStoredState = false;
+    let attemptedBulkChanges: QuotationEditorChange[] | undefined;
     try {
       const plan = quotationSavePlan(view, changes, selectedOption, applyAll);
       assertQuotationSeoTitleDraft(view.resolved.schema.fields, plan.changes);
       const requested = validateQuotationChanges(plan.changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides });
+      if (plan.propagated.length) attemptedBulkChanges = requested;
       const drafted=validateQuotationPackagingDraftInputs(quotationPackagingDraftInputsForChanges(packagingDrafts.current,view.resolved.schema.fields,requested),view.resolved.schema.fields,view.optionPackQuantities??{},requested);
       const generatedSave = quotationGeneratedSave(requested, generatedDraft.current);
       uiMutation.current??=onBeginSourceWrite?.()??null;
@@ -758,6 +760,12 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, init
       uiMutation.current?.confirm();uiMutation.current=null;setView(confirmed); setChanges([]); setConflicts([]); setApplyAll(false); setMessage(`견적 입력 저장 완료${plan.propagated.length ? ` · 다른 옵션 ${new Set(plan.propagated.map(item => item.optionId)).size}개에도 적용했습니다.` : ' · 출력 미리보기에 반영됩니다.'}`); onSaved?.();
     } catch (cause) {
       if (!controller.signal.aborted) {
+        if (verifyStoredState && attemptedBulkChanges) {
+          // Reconcile the attempted targets, even if another writer saved only the source option.
+          modelActionState.current = { ...modelActionState.current, changes: attemptedBulkChanges, applyAll: false };
+          setChanges(attemptedBulkChanges);
+          setApplyAll(false);
+        }
         setReadbackNeeded(verifyStoredState);
         setError(cause instanceof Error ? cause.message : '견적 입력 저장 실패');
       }
@@ -947,7 +955,7 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, init
         return [heading, foldedWeight ? showAdminTools && <details key={`compat-${field.id}`} className="quotation-field-diagnostics" style={{gridColumn:'1 / -1'}}><summary>이전 포장 무게 입력 확인</summary><p>아래 원본 양식의 포장 무게와 연결된 값입니다. 기존 수정값을 개별 해제할 때 펼쳐 확인하세요.</p>{fieldCard}</details> : fieldCard];
       })}</div></fieldset>)}
       <div className="quotation-fields-actions">
-        {selectedOption !== null && row && optionCount > 1 && <label className="quotation-apply-all"><input type="checkbox" role="switch" checked={applyAll} disabled={busy || loading || Boolean(aiRequestAction?.sourceKey === aiRequestSource && aiRequestAction.scopeLocked)} onChange={event => changeAllOptions(event.target.checked)}/>모든 옵션에 적용</label>}
+        {selectedOption !== null && row && optionCount > 1 && <label className="quotation-apply-all"><input type="checkbox" role="switch" checked={applyAll} disabled={busy || loading || readbackNeeded || Boolean(aiRequestAction?.sourceKey === aiRequestSource && aiRequestAction.scopeLocked)} onChange={event => changeAllOptions(event.target.checked)}/>모든 옵션에 적용</label>}
         <button type="button" className="btn primary" aria-label="견적 입력 저장" title={dirty ? `${savePlan.changes.length || changes.length}개 입력 저장` : '견적 입력 저장'} disabled={busy || loading || !dirty || !row || conflicts.length > 0 || hasInvalidDraft || readbackNeeded} onClick={() => void save()}>{operationBusy ? '저장 중…' : '저장'}</button>
       </div>
       {applyAll && !showAdminTools && <p className="quotation-fields-notice" role="status">수정한 항목을 견적 제외 옵션까지 모든 옵션에 적용합니다. 대상 옵션의 같은 항목에 직접 입력한 값도 바뀝니다.</p>}

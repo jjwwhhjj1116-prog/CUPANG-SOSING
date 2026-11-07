@@ -6,11 +6,13 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import ts from 'typescript';
+import { syntheticSnapshot } from './helpers/supplier-hub-single-projection.mjs';
 
 const cache = new Map();
 function load(file) {
   if (cache.has(file)) return cache.get(file);
   const exports = {};
+  cache.set(file, exports);
   const compiled = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   vm.runInNewContext(compiled, { exports, structuredClone, TextEncoder, require(name) {if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
     if (name === 'parse5') return parse5;
@@ -18,7 +20,7 @@ function load(file) {
     if (!name.startsWith('@/app/')) throw Error(name);
     return load(name.slice(2) + '.ts');
   } });
-  cache.set(file, exports); return exports;
+  return exports;
 }
 const model = load('app/quotation-schema.ts');
 const contentModel = load('app/product-content.ts');
@@ -243,7 +245,8 @@ test('103495 preserves observed marathon form while deriving notices from each o
   assert.equal(schema.fields.filter(f => f.id === 'noticeMaterial').length, 1);
   assert.equal(schema.fields.find(f => f.id === 'model').required, false);
   input.options.rows[0].color = '그레이'; input.options.rows[0].size = 'Free';
-  input.content.label.precautions.value = '실제 취급 주의사항';
+  input.content.label.precautions = { value: '실제 취급 주의사항', provenance: 'manual', updatedAt: '2026-09-24T00:00:00Z' };
+  input.content.label.material = { value: '면', provenance: 'manual', updatedAt: '2026-09-24T00:00:00Z' };
   let row = model.resolveQuotationFields(input).rows[1].fields;
   assert.equal(row.marathon_noticeColor.value, '그레이');
   assert.equal(row.marathon_noticeSize.value, 'Free');
@@ -287,6 +290,7 @@ test('81452 follows official empty select values, required attributes, option ca
 
 test('observed brace quotation exposes its own attributes and notices without certifying saved example values', () => {
   const input = fixture(); input.categoryId = '81452';
+  input.content.label.material = { value: '면', provenance: 'translated', updatedAt: '2026-09-24T00:00:00Z' };
   const resolved = model.resolveQuotationFields(input);
   const schema = resolved.schema;
   assert.equal(schema.status, 'observed'); assert.equal(schema.submissionReady, false);
@@ -447,9 +451,10 @@ test('observed Couplus defaults fill only 80719 missing fields and preserve sour
   assert.equal(row.fields[id].value,value);assert.equal(row.fields[id].source,'couplus-default');assert.equal(row.fields[id].needsReview,true);
  }
  assert.equal(row.fields.lidIncluded.value,'');assert.equal(row.fields.lidIncluded.source,'couplus-default');
- assert.equal(row.fields.quantity.value,'1');assert.equal(row.fields.noticeMaterial.value,'면');
- input.content.label.countryOfOrigin.value='중국';input.content.seo.title.value='수정 상품명';input.content.assets.detail.value=['owner/detail.png'];
- row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.noticeCountryOfOrigin.value,'중국');assert.equal(row.fields.title.value,'수정 상품명, 빨강');assert.equal(row.fields.detailImages.value,'owner/detail.png');
+ assert.equal(row.fields.quantity.value,'1');assert.equal(row.fields.noticeMaterial.value,'해당사항없음','unverified material cannot fill a legal notice');
+ input.content.label.material={value:'면',provenance:'translated',updatedAt:'2026-09-24T00:00:00Z'};
+ input.content.label.countryOfOrigin={value:'중국',provenance:'manual',updatedAt:'2026-09-24T00:00:00Z'};input.content.seo.title.value='수정 상품명';input.content.assets.detail.value=['owner/detail.png'];
+ row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.noticeMaterial.value,'면');assert.equal(row.fields.noticeCountryOfOrigin.value,'중국');assert.equal(row.fields.title.value,'수정 상품명, 빨강');assert.equal(row.fields.detailImages.value,'owner/detail.png');
  input.overrides={common:{taxType:'면세',handlingReason:''},options:{red:{taxType:'영세'}}};row=model.resolveQuotationFields(input).rows[1];
  assert.equal(row.fields.taxType.value,'영세');assert.equal(row.fields.handlingReason.value,'');assert.equal(row.fields.handlingReason.source,'manual-common');
  input.categoryId='unknown';input.overrides=undefined;row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.taxType.value,'');assert.equal(row.fields.kcMarkType.value,'');
@@ -1141,7 +1146,7 @@ test('cleared option measurements stay empty through save, quotation and export'
     assert.equal(input.options.rows[0].provenance[key], 'manual');
     const resolved = model.resolveQuotationFields(input);
     for (const id of ['size', 'noticeDimensions']) {
-      assert.equal(resolved.rows[1].fields[id].value, '');
+      assert.equal(resolved.rows[1].fields[id].value, '', `${key} cleared in ${id}`);
       assert.equal(resolved.rows[1].fields[id].source, 'option');
     }
     assert.equal(resolved.rows[0].fields.noticeDimensions.value, '20 × 30 × 40 cm');
@@ -1151,6 +1156,34 @@ test('cleared option measurements stay empty through save, quotation and export'
     assert.equal(before.rows[0][key] > 0, true);
     input.overrides = { common: { noticeDimensions: '직접 확인한 치수' }, options: {} };
     assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticeDimensions.value, '직접 확인한 치수');
+  }
+});
+
+test('a required native size stays missing after a deliberate clear or untranslated option value', () => {
+  const input = fixture(), snapshot = syntheticSnapshot(), raw = JSON.parse(snapshot.schemaString);
+  raw.properties.productPage.properties.commonAttributes.properties.exposedAttributes.allOf.push({
+    contains: { type: 'object', required: ['attributeName', 'attributeValue'], properties: {
+      attributeName: { type: 'string', enum: ['사이즈'], requirement: '필수' }, attributeValue: { type: 'string' },
+    } },
+  });
+  snapshot.schemaString = JSON.stringify(raw);
+  snapshot.nativeSerializationPolicy = 'supplier-hub-native-required-form-v1';
+  input.categoryId = snapshot.categoryId;
+  input.categoryPath = snapshot.categoryPath;
+  input.hubSchema = snapshot;
+  input.content.quotationWorkflow = 'collected-native-v1';
+  const option = input.options.rows[0];
+  option.color = '검정';
+  option.provenance.color = 'manual';
+  for (const [size, provenance] of [['', 'manual'], ['待确认', 'collected']]) {
+    option.size = size;
+    option.provenance.size = provenance;
+    const resolved = model.resolveQuotationFields(input), row = resolved.rows[1];
+    const field = resolved.schema.fields.find(item => item.hubWire?.name === '사이즈');
+    assert.equal(field.required, true);
+    assert.equal(row.fields[field.id].value, '');
+    assert.deepEqual(clone(row.fields[field.id].validationIssues), ['필수 값이 비어 있습니다.']);
+    assert.deepEqual(clone(row.productNameProposal), { value: '', missing: ['사이즈'] });
   }
 });
 
@@ -1573,7 +1606,7 @@ test('all observed categories carry saved stages into quotation without leaking 
   const input=fixture();input.categoryId=categoryId;
   input.product.image_keys=JSON.stringify(['owner/main.png','owner/option.png','owner/detail.png','owner/add.png','owner/label.png']);
   input.content.assets.additional.value=['owner/add.png'];input.content.assets.label.value=['owner/label.png'];
-  input.content.label.contact.value='고객지원 02-123-4567';
+  input.content.label.contact={value:'고객지원 02-123-4567',provenance:'manual',updatedAt:'2026-09-24T00:00:00Z'};
   const before=JSON.stringify(input),resolved=model.resolveQuotationFields(input),row=resolved.rows.find(r=>r.optionId==='red');
   const expected={title:'번역된 가방, 빨강',searchTags:'가방, 대용량',model:'A-100',manufacturer:'실제 제조사',brand:'입력 브랜드',mainImage:'owner/option.png',additionalImages:'owner/add.png',labelImages:'owner/label.png',detailImages:'owner/detail.png',boxSkuQuantity:'50'};
   for(const [key,value] of Object.entries(expected))assert.equal(row.fields[key].value,value,`${categoryId}:${key}`);

@@ -9,7 +9,7 @@ import ts from 'typescript';
 import * as parse5 from 'parse5';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { webcrypto } from 'node:crypto';
+import { createHash, webcrypto } from 'node:crypto';
 import { mobileIntakeHarness } from './helpers/mobile-intake.mjs';
 import { quotationWorkbook } from './helpers/quotation-workbook.mjs';
 import { submissionPackageUI } from './helpers/submission-package-ui.mjs';
@@ -45,7 +45,8 @@ const settingsModel = load('app/workspace-settings.ts');
 const clone = value => JSON.parse(JSON.stringify(value));
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 function acknowledgedView(view,changes){
- const next=clone(view);next.revision=view.revision+1;next.overrides=model.applyQuotationChanges(view.overrides,changes);next.inputFingerprint='b'.repeat(64);
+ const next=clone(view);next.revision=view.revision+1;next.overrides=model.applyQuotationChanges(view.overrides,changes);
+ next.inputFingerprint=createHash('sha256').update(`${view.inputFingerprint}:${next.revision}`).digest('hex');
  next.productVersion=new Date(Date.parse(view.productVersion)+1).toISOString();next.updatedAt=next.productVersion;
  next.resolved.rows.forEach(row=>Object.keys(row.fields).forEach(key=>{row.fields[key]=editor.resolveQuotationEditorCell(next,[],row.optionId,key);}));
  return next;
@@ -275,12 +276,12 @@ test('explicit packaging edits and copy previews normalize millimetres without r
  assert.equal(editor.resolveQuotationEditorCell(view,applied,'excluded','packagedDimensionsMm').value,'160×70×50');assert.equal(JSON.stringify(view),before);
 });
 
-function renderEditor(view, section = 'start', changes = []) {
+function renderEditor(view, section = 'start', changes = [], adminTools) {
   let slot = 0;
   const states = [view, changes, [], false, false, '', '', section, null, [], true, null];
   const hooks = { useState: initial => [slot < states.length ? states[slot++] : (typeof initial === 'function' ? initial() : initial), () => {}], useEffect() {}, useCallback: callback => callback, useRef: value => ({ current: value }), useId: () => 'editor-test' };
   const { QuotationFieldsEditor } = load('app/components/quotation-fields-editor.tsx', { react: hooks });
-  return renderToStaticMarkup(React.createElement(QuotationFieldsEditor, { productId: 'p1' }));
+  return renderToStaticMarkup(React.createElement(QuotationFieldsEditor, { productId: 'p1', adminTools }));
 }
 
 test('stage-seven overview and selector show saved numbers while opening, selecting and saving use original option IDs',async()=>{
@@ -317,7 +318,7 @@ test('malformed display maps in refreshed or saved quotation responses preserve 
   const states=[view,edits,[],false,false,'','','start','red',[],true,null,false],effects=[];let slot=0,notices=0,calls=0;
   const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>states[i]=typeof value==='function'?value(states[i]):value];},useEffect(fn){if(String(fn).includes('explicitRefreshAction.current = explicitRefreshBlocked'))effects.push(fn);},useCallback:fn=>fn,useRef:value=>({current:value}),useId:()=> 'invalid-display'};
   const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(_url,init)=>{calls++;const reply=init?.method==='PUT'?acknowledgedView(view,JSON.parse(init.body).changes):clone(view);reply.optionRegistrationNumbers=numbers;return Response.json(reply);}});
-  const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}}),tree=wrapper.type(wrapper.props);
+  const wrapper=loaded.QuotationFieldsEditor({productId:'p1',adminTools:operation==='refresh'?'visible':undefined,onSaved(){notices++;}}),tree=wrapper.type(wrapper.props);
   effects.splice(0).forEach(effect=>effect());
   const walk=value=>Array.isArray(value)?value.flatMap(walk):value&&typeof value==='object'?[value,...walk(value.props?.children)]:[];
   const button=walk(tree).find(node=>node.type==='button'&&(operation==='refresh'?node.props.children==='기본값 다시 반영':node.props['aria-label']==='견적 입력 저장'));
@@ -328,21 +329,26 @@ test('malformed display maps in refreshed or saved quotation responses preserve 
 });
 test('non-JSON save ACK preserves drafts and confirms an already completed save only through explicit readback',async()=>{
  const view=fixture(),edits=[change('brand','검토한 새 브랜드','red'),change('manufacturer','')],before=JSON.stringify(view);
- const states=[view,edits,[],false,false,'','','product','red',[],true,null,false];let slot=0,notices=0,server=view;const calls=[];
- const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>states[i]=typeof value==='function'?value(states[i]):value];},useEffect(){},useCallback:fn=>fn,useRef:value=>({current:value}),useId:()=> 'unreadable-save'};
+ const states=[view,edits,[],false,false,'','','product','red',[],true,null,false],effects=[],refs=[],calls=[];
+ let slot=0,refIndex=0,notices=0,server=view;
+ const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>states[i]=typeof value==='function'?value(states[i]):value];},useEffect(fn){if(String(fn).includes('explicitRefreshAction.current = explicitRefreshBlocked'))effects.push(fn);},useCallback:fn=>fn,useRef(value){const index=refIndex++;return refs[index]??(refs[index]={current:value});},useId:()=> 'unreadable-save'};
  const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init={})=>{
   calls.push({url,init});if(init.method==='PUT'){const body=JSON.parse(init.body);assert.equal(body.expectedRevision,view.revision);assert.equal(body.expectedInputFingerprint,view.inputFingerprint);assert.deepEqual(body.changes,edits);server=acknowledgedView(view,body.changes);return new Response('<html>Temporary upstream failure</html>',{status:503,headers:{'content-type':'text/html'}});}return Response.json(server);
  }});
  const walk=value=>Array.isArray(value)?value.flatMap(walk):value&&typeof value==='object'?[value,...walk(value.props?.children)]:[];
- const render=()=>{slot=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}});return walk(wrapper.type(wrapper.props));};
- const save=render().find(node=>node.type==='button'&&node.props['aria-label']==='견적 입력 저장');assert.equal(save.props.disabled,false);save.props.onClick();
+ const render=()=>{slot=0;refIndex=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}});const tree=walk(wrapper.type(wrapper.props));effects.splice(0).forEach(effect=>effect());return tree;};
+ const saveButton=tree=>tree.find(node=>node.type==='button'&&node.props['aria-label']==='견적 입력 저장');
+ const save=saveButton(render());assert.equal(save.props.disabled,false);save.props.onClick();
  for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));
  assert.equal(calls.length,1);assert.equal(calls[0].init.method,'PUT');assert.equal(notices,0);assert.equal(states[0],view);assert.deepEqual(states[1],edits);assert.equal(states[4],false);
- assert.match(states[5],/저장 완료 여부를 확인하지 못했습니다/);assert.match(states[5],/중복 저장 전에.*입력 버리고 저장본 불러오기/);assert.doesNotMatch(states[5],/Unexpected|<html>|Temporary/);assert.equal(states[6],'');
+ assert.match(states[5],/저장 완료 여부를 확인하지 못했습니다/);assert.match(states[5],/현재 입력은 유지했습니다/);assert.doesNotMatch(states[5],/Unexpected|<html>|Temporary/);assert.equal(states[6],'');
  assert.equal(server.overrides.options.red.brand,'검토한 새 브랜드');assert.equal(server.overrides.common.manufacturer,'');assert.equal(JSON.stringify(view),before);
- const reload=render().find(node=>node.type==='button'&&node.props.children==='입력 버리고 저장본 불러오기');assert.equal(reload.props.disabled,false);reload.props.onClick();
+ const pending=render();
+ assert.equal(saveButton(pending).props.disabled,true);saveButton(pending).props.onClick();
+ assert.equal(calls.length,1,'an uncertain acknowledgement must prevent a second PUT');
+ const reload=pending.find(node=>node.type==='button'&&node.props.children==='저장 상태 확인');assert.equal(reload.props.disabled,false);reload.props.onClick();
  for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));
- assert.equal(calls.length,2);assert.equal(calls[1].init.method,undefined);assert.equal(calls.filter(call=>call.init.method==='PUT').length,1);assert.equal(notices,0);assert.equal(states[1].length,0);assert.equal(JSON.stringify(states[0]),JSON.stringify(server));assert.match(states[6],/저장본을 불러왔습니다/);
+ assert.equal(calls.length,2);assert.equal(calls[1].init.method,undefined);assert.equal(calls.filter(call=>call.init.method==='PUT').length,1);assert.equal(notices,0);assert.equal(states[1].length,0);assert.equal(JSON.stringify(states[0]),JSON.stringify(server));assert.match(states[6],/최신 상품·옵션·기본값을 반영했습니다/);
 });
 
 test('unreadable quotation GET reports a read failure while preserving the saved view and every manual draft',async()=>{
@@ -350,7 +356,7 @@ test('unreadable quotation GET reports a read failure while preserving the saved
   const view=fixture(),edits=[change('brand','보존할 직접 입력','red'),change('manufacturer','')],states=[view,edits,[],false,false,'','','product','red',[],true,null,false],effects=[];let slot=0,notices=0;const calls=[];
   const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>states[i]=typeof value==='function'?value(states[i]):value];},useEffect(fn){if(String(fn).includes('explicitRefreshAction.current = explicitRefreshBlocked'))effects.push(fn);},useCallback:fn=>fn,useRef:value=>({current:value}),useId:()=> 'unreadable-read'};
   const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init={})=>{calls.push({url,init});return new Response(reply.body,{status:reply.status});}});
-  const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}}),tree=wrapper.type(wrapper.props);effects.splice(0).forEach(effect=>effect());
+  const wrapper=loaded.QuotationFieldsEditor({productId:'p1',adminTools:'visible',onSaved(){notices++;}}),tree=wrapper.type(wrapper.props);effects.splice(0).forEach(effect=>effect());
   const walk=value=>Array.isArray(value)?value.flatMap(walk):value&&typeof value==='object'?[value,...walk(value.props?.children)]:[];
   const reload=walk(tree).find(node=>node.type==='button'&&node.props.children==='기본값 다시 반영');assert.equal(reload.props.disabled,false);reload.props.onClick();
   for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));
@@ -362,23 +368,25 @@ test('unreadable quotation GET reports a read failure while preserving the saved
 test('rendered editor has five groups, marks schema uncertainty, marks observed defaults as reviewable and escapes manual HTML', () => {
   const view = fixture();
   const start = renderEditor(view);
-  for (const section of ['시작 정보', '상품 정보', '이미지', '법적 정보', '물류 정보']) assert.ok(start.includes(section));
-  assert.ok(start.includes('Supplier Hub 공식 화면')); assert.ok(start.includes('최종 접수는 추가 검증'));
-  const legal = renderEditor(view, 'legal');
-  assert.ok(legal.includes('인증')); assert.ok(/selected=""[^>]*>해당사항없음<\/option>/.test(legal));
-  assert.ok(legal.includes('쿠플러스 양식 기본값')); assert.ok(legal.includes('검토 필요'));
+  const sections = Array.from(start.matchAll(/<h4>([^<]+)<\/h4>/g), match => match[1]);
+  assert.deepEqual(sections, ['1. Start Page (시작 페이지)', '2. Product Page (상품 페이지)', '3. Image Page (이미지 페이지)', '4. Legal Page (법적 정보)', '5. Logistics Page (물류 정보)']);
+  assert.ok(!start.includes('견적 양식 확인 정보'));
+  assert.ok(start.includes('인증')); assert.ok(/selected=""[^>]*>해당사항없음<\/option>/.test(start));
+  const admin = renderEditor(view, 'start', [], 'visible');
+  assert.ok(admin.includes('견적 양식 확인 정보')); assert.ok(admin.includes('Supplier Hub 공식 화면')); assert.ok(admin.includes('최종 접수는 추가 검증'));
+  assert.ok(admin.includes('쿠플러스 양식 기본값')); assert.ok(admin.includes('검토 필요'));
   const malicious = '<script>alert("x")</script><img src="https://external.invalid/secret">';
   const image = renderEditor(view, 'image', [change('detailHtml', malicious)]);
   assert.ok(!image.includes('<script>alert')); assert.ok(!image.includes('<img src="https://external.invalid'));
   assert.ok(image.includes('&lt;script&gt;')); assert.ok(image.includes('/api/files/owner/main.png'));
   const unknown = clone(view); unknown.resolved.schema.status = 'unconfirmed'; unknown.resolved.schema.categoryId = 'other';
-  assert.ok(renderEditor(unknown).includes('이 카테고리의 세부 규격은 미확인'));
+  assert.ok(renderEditor(unknown, 'start', [], 'visible').includes('이 카테고리의 세부 규격은 미확인'));
 });
 
 test('rendered official dropdowns have a single blank choice and preserve an out-of-list saved value for correction',()=>{
   const view=fixture();
   for(const set of [view.resolved,view.automatic]){const material=set.rows.find(row=>row.optionId===null).fields.storageMaterial;material.value='면';material.source='content';material.issues=['지원하는 선택값을 확인해주세요.'];material.needsReview=true;}
-  const html=renderEditor(view,'product');
+  const html=renderEditor(view,'product',[],'visible');
   const select=id=>{const match=html.match(new RegExp(`<select[^>]*id="editor-test-${id}"[^>]*>([\\s\\S]*?)</select>`));assert.ok(match,id);return match[1];};
   for(const id of ['lidIncluded','storageMaterial','transparent']){const body=select(id);assert.equal((body.match(/>해당사항없음<\/option>/g)||[]).length,1);assert.ok(body.includes('해당사항없음</option>'));}
   const material=select('storageMaterial');assert.ok(material.includes('면 · 목록 외 저장값'));assert.ok(material.includes('value="legacy" selected'));assert.ok(html.includes('지원하는 선택값을 확인해주세요.'));
@@ -453,7 +461,7 @@ test('legacy import blocks removed options, unsupported fields, readonly cells, 
 
 test('legacy comparison renders explicit selection and escapes previous HTML values',()=>{
  const view=fixture();view.legacyOverrides={common:{brand:'<script>legacy()</script>',retired:'이전 필드'},options:{}};
- const html=renderEditor(view);
+ const html=renderEditor(view,'start',[],'visible');
  assert.ok(html.includes('분류 미지정 이전 입력 비교'));
  assert.ok(html.includes('&lt;script&gt;legacy()&lt;/script&gt;'));
  assert.ok(!html.includes('<script>legacy()'));
@@ -1121,21 +1129,25 @@ test('price validation also checks an excluded option receiving an all-option ed
 
 /** Actual form callbacks with retained hook refs and the current action-state
  * effect. Passive initial loading is replaced by the supplied saved fixture. */
-function allOptionForm(view,edits,sourceOptionId,formProps={},dom={getElementById:()=>null}){
+function allOptionForm(view,edits,sourceOptionId,formProps={},dom={getElementById:()=>null},interceptPut){
  const states=[view,edits,[],false,false,'','','start',sourceOptionId,[],true,null,false],refs=[],effects=[],calls=[];
  let stateIndex=0,refIndex=0,saved=0,server=clone(view);
- const hooks={useState(initial){const index=stateIndex++;if(!(index in states))states[index]=typeof initial==='function'?initial():initial;return[states[index],value=>{states[index]=typeof value==='function'?value(states[index]):value;}];},useRef(value){const index=refIndex++;return refs[index]??(refs[index]={current:value});},useEffect(fn){if(String(fn).includes('modelActionState.current ='))effects.push(fn);},useCallback:fn=>fn,useId:()=> 'all-options-form'};
+ const hooks={useState(initial){const index=stateIndex++;if(!(index in states))states[index]=typeof initial==='function'?initial():initial;return[states[index],value=>{states[index]=typeof value==='function'?value(states[index]):value;}];},useRef(value){const index=refIndex++;return refs[index]??(refs[index]={current:value});},useEffect(fn){const body=String(fn);if(body.includes('modelActionState.current =')||body.includes('const fieldId = pendingFocus.current')||body.includes('explicitRefreshAction.current = explicitRefreshBlocked'))effects.push(fn);},useCallback:fn=>fn,useId:()=> 'all-options-form'};
  const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,document:dom,fetch:async(url,init={})=>{
   calls.push({url,method:init.method??'GET',...(init.body?{body:JSON.parse(init.body)}:{})});
-  if(init.method==='PUT'){server=acknowledgedView(server,JSON.parse(init.body).changes);return Response.json(server);}
+  if(init.method==='PUT'){
+   const response=interceptPut?.(server,calls,next=>{server=next;});
+   if(response)return response;
+   server=acknowledgedView(server,JSON.parse(init.body).changes);return Response.json(server);
+  }
   return Response.json(server);
  }});
  const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
  const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
- const render=(updates={})=>{formProps={...formProps,...updates};stateIndex=0;refIndex=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){saved++;},...formProps}),tree=wrapper.type(wrapper.props);effects.splice(0).forEach(effect=>effect());return tree;};
+ const render=(updates={})=>{formProps={...formProps,...updates};stateIndex=0;refIndex=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1',adminTools:'visible',onSaved(){saved++;},...formProps}),tree=wrapper.type(wrapper.props);effects.splice(0).forEach(effect=>effect());return tree;};
  const primarySwitch=()=>nodes(render()).find(node=>node.type==='input'&&node.props.role==='switch');
  const saveButton=()=>nodes(render()).find(node=>node.type==='button'&&typeof node.props.children==='string'&&node.props['aria-label']==='견적 입력 저장');
- const settle=async()=>{const deadline=Date.now()+5000;while(states[4]){assert.ok(Date.now()<deadline,'all-option form save did not settle');await new Promise(resolve=>setImmediate(resolve));}render();};
+ const settle=async()=>{const deadline=Date.now()+5000;while(states[3]||states[4]){assert.ok(Date.now()<deadline,'all-option form request did not settle');await new Promise(resolve=>setImmediate(resolve));}render();};
  render();return{calls,states,render,nodes,text,primarySwitch,saveButton,settle,get saved(){return saved;},get server(){return server;}};
 }
 
@@ -1235,9 +1247,12 @@ test('native input focus resolves a folded weight field using the destination op
  const wire=model.getQuotationSchema(snapshot.categoryId,snapshot.categoryPath,snapshot).fields.find(field=>field.numericText&&field.hubInput==='packagedWeightG');assert.ok(wire);
  for(const destinationFolded of [true,false]){
   const view=fixture({common:{},options:{red:{packagedWeightG:'420',[wire.id]:destinationFolded?'500':'420'},blue:{packagedWeightG:'600',[wire.id]:destinationFolded?'600':'610'}}},undefined,source=>{source.categoryId=snapshot.categoryId;source.categoryPath=snapshot.categoryPath;source.hubSchema=snapshot;});
-  const focused=[],h=allOptionForm(view,[],'red',{}, {getElementById:id=>{focused.push(id);return null;}}),entry=submissionEntry(h),review=h.nodes(entry.details).find(node=>node.props?.primaryProduct===true);
+  const focused=[],scrolls=[],h=allOptionForm(view,[],'red',{}, {getElementById:id=>({scrollIntoView:()=>scrolls.push(id),focus:()=>focused.push(id)})}),entry=submissionEntry(h),review=h.nodes(entry.details).find(node=>node.props?.primaryProduct===true);
   review.props.onInspect({optionId:'blue',fieldId:'packagedWeightG',categoryId:view.resolved.schema.categoryId});
-  assert.ok(focused.at(-1).endsWith('-'+(destinationFolded?wire.id:'packagedWeightG')));assert.equal(h.states[8],'blue');assert.equal(h.calls.length,0);
+  assert.deepEqual(focused,[],'the destination control is focused after selecting the new option');
+  const tree=h.render(),destinationId='all-options-form-'+(destinationFolded?wire.id:'packagedWeightG');
+  assert.ok(h.nodes(tree).some(node=>node.type==='input'&&node.props.id===destinationId));
+  assert.deepEqual(focused,[destinationId]);assert.deepEqual(scrolls,[destinationId]);assert.equal(h.states[8],'blue');assert.equal(h.calls.length,0);
  }
 });
 
@@ -1281,13 +1296,51 @@ test('turning the primary all-options switch back off rejects its captured broad
  assert.equal(h.saved,1);assert.equal(Object.hasOwn(h.server.overrides.options,'red'),false);assert.equal(Object.hasOwn(h.server.overrides.options,'blue'),false);
 });
 
+test('ambiguous all-option save retries only unfulfilled original targets after explicit readback',async()=>{
+ const view=fixture(),value='검토한 일괄 브랜드',source=change('brand',value,'red');
+ const h=allOptionForm(view,[source],'red',{adminTools:'hidden'},undefined,(server,calls,update)=>{
+  if(calls.length!==1)return;
+  // A different editor saved only the source value and added another option.
+  const concurrent=acknowledgedView(server,[source]);
+  for(const resolved of [concurrent.resolved,concurrent.automatic]){
+   const row=resolved.rows.find(item=>item.optionId==='blue');
+   resolved.rows.push({...clone(row),optionId:'added-later',optionLabel:'추가 옵션'});
+  }
+  update(concurrent);
+  return new Response('<html>Upstream failure</html>',{status:503});
+ });
+ h.primarySwitch().props.onChange({target:{checked:true}});
+ h.saveButton().props.onClick();await h.settle();
+ const targets=[change('brand',value,'blue'),change('brand',value,'excluded')];
+ assert.deepEqual(h.calls.map(call=>call.method),['PUT']);
+ assert.deepEqual(h.calls[0].body.changes,[source,...targets]);
+ assert.equal(h.saveButton().props.disabled,true);
+ assert.equal(h.primarySwitch().props.disabled,true);
+ const check=h.nodes(h.render()).find(node=>node.type==='button'&&node.props.children==='저장 상태 확인');
+ assert.equal(check.props.disabled,false);check.props.onClick();await h.settle();
+ assert.deepEqual(h.calls.map(call=>call.method),['PUT','GET']);
+ assert.deepEqual(clone(h.states[1]),targets);
+ assert.equal(h.primarySwitch().props.checked,false);
+ assert.equal(h.saved,0);
+ const selector=h.nodes(h.render()).find(node=>node.type==='select'&&node.props.value==='red');
+ selector.props.onChange({target:{value:'blue'}});
+ const retryFingerprint=h.server.inputFingerprint;
+ const retry=h.saveButton();assert.equal(retry.props.disabled,false);retry.props.onClick();await h.settle();
+ assert.deepEqual(h.calls.map(call=>call.method),['PUT','GET','PUT']);
+ assert.deepEqual(h.calls[2].body.changes,targets);
+ assert.equal(h.calls[2].body.expectedRevision,view.revision+1);
+ assert.equal(h.calls[2].body.expectedInputFingerprint,retryFingerprint);
+ assert.equal(h.saved,1,h.states[5]);assert.equal(h.states[1].length,0);
+ assert.equal(Object.hasOwn(h.server.overrides.options,'added-later'),false);
+});
+
 test('deleting the active option on refresh keeps its identity and draft instead of switching to common edits',async()=>{
  const view=fixture(),edits=[change('brand','미저장 값','red')],states=[view,edits,[],false,false,'','','start','red',[],true,null,false],effects=[];let slot=0;
  const next=clone(view);next.resolved.rows=next.resolved.rows.filter(row=>row.optionId!=='red');next.automatic.rows=next.automatic.rows.filter(row=>row.optionId!=='red');
  const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=initial;return[states[i],v=>states[i]=typeof v==='function'?v(states[i]):v];},useEffect(fn){if(String(fn).includes('explicitRefreshAction.current = explicitRefreshBlocked'))effects.push(fn);},useCallback:f=>f,useRef:v=>({current:v}),useId:()=> 'deleted-option'};
  let reads=0,writes=0;const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init)=>{if(init?.method==='PUT')writes++;else reads++;return Response.json(next);}});
  const nodes=v=>Array.isArray(v)?v.flatMap(nodes):v&&typeof v==='object'?[v,...nodes(v.props?.children)]:[];
- const render=()=>{slot=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1'}),tree=wrapper.type(wrapper.props);effects.splice(0).forEach(effect=>effect());return nodes(tree);};
+ const render=()=>{slot=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1',adminTools:'visible'}),tree=wrapper.type(wrapper.props);effects.splice(0).forEach(effect=>effect());return nodes(tree);};
  render().find(n=>n.type==='button'&&n.props.children==='기본값 다시 반영').props.onClick();await new Promise(r=>setTimeout(r,20));
  assert.equal(reads,1);assert.equal(states[8],'red');assert.equal(states[1][0].value,'미저장 값');
  let tree=render();assert.ok(tree.some(n=>n.props?.role==='alert'&&String(n.props.children).includes('공통값으로 자동 전환하지')));
@@ -1299,16 +1352,19 @@ test('deleting the active option on refresh keeps its identity and draft instead
 
 test('all-option save ignores duplicate clicks and aborted late responses without clearing edits',async()=>{
  for(const abort of [false,true]){
-  const view=fixture(),edits=[change('brand','전체 브랜드','red')];const states=[view,edits,[],false,false,'','','start','red',[],true,null,true];let slot=0,calls=0,notices=0,finish,signal;const effects=[];
+  const view=fixture(),edits=[change('brand','전체 브랜드','red')];const states=[view,edits,[],false,false,'','','start','red',[],true,null,true];let slot=0,notices=0,finish,signal;const calls=[],effects=[];
   const pending=new Promise(resolve=>finish=resolve);
-  const hooks={useState(initial){const i=slot++;return[i<states.length?states[i]:initial,v=>states[i]=typeof v==='function'?v(states[i]):v];},useEffect(fn){effects.push(fn);},useCallback:f=>f,useRef:v=>({current:v}),useId:()=> 'save-race'};
-  const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(_url,init)=>{if(init?.method!=='PUT')return Response.json(view);calls++;signal=init.signal;await pending;return Response.json(acknowledgedView(view,JSON.parse(init.body).changes));}});
-  const root=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}});const tree=root.type(root.props);
+  const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],v=>states[i]=typeof v==='function'?v(states[i]):v];},useEffect(fn){effects.push(fn);},useCallback:f=>f,useRef:v=>({current:v}),useId:()=> 'save-race'};
+  const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(_url,init)=>{calls.push(init?.method??'GET');if(init?.method!=='PUT')return Response.json(view);signal=init.signal;await pending;return Response.json(acknowledgedView(view,JSON.parse(init.body).changes));}});
+  const root=loaded.QuotationFieldsEditor({productId:'p1',adminTools:'visible',onSaved(){notices++;}});const tree=root.type(root.props);
+  const findEffect=source=>{const effect=effects.find(fn=>String(fn).includes(source));assert.ok(effect,source);return effect;};
+  findEffect('explicitRefreshAction.current = explicitRefreshBlocked')();
+  const cleanup=findEffect('() => invalidateRequests()')();
   const nodes=v=>Array.isArray(v)?v.flatMap(nodes):v&&typeof v==='object'?[v,...nodes(v.props?.children)]:[];
   const click=nodes(tree).find(n=>n.type==='button'&&n.props['aria-label']==='견적 입력 저장').props.onClick;
   const refresh=nodes(tree).find(n=>n.type==='button'&&n.props.children==='기본값 다시 반영').props.onClick;
-  click();click();refresh();assert.equal(calls,1);
-  if(abort){signal.throwIfAborted();const initial=effects.find(fn=>String(fn).includes('fetchView(endpoint'));assert.ok(initial);const cleanup=initial();cleanup();assert.equal(signal.aborted,true);}
+  click();click();refresh();assert.deepEqual(calls,['PUT']);
+  if(abort){signal.throwIfAborted();cleanup();assert.equal(signal.aborted,true);}
   finish();await new Promise(resolve=>setTimeout(resolve,20));assert.equal(notices,abort?0:1);
   assert.equal(states[1].length,abort?1:0);
  }

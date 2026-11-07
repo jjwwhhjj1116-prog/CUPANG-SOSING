@@ -2,6 +2,7 @@ import type { QuotationField } from '@/app/quotation-schema';
 import { quotationPriceEditInput, quotationPriceVisibleFields } from '@/app/quotation-price-edits';
 const basicOrder = ['model','brand','manufacturer','tradeType','taxType','importType','searchTags'];
 const yogaSockBasicOrder = [...basicOrder.slice(1), 'model'];
+const cleaningBrushLogisticsOrder = ['boxSkuQuantity', 'shelfLifeDays', 'handlingReason', 'packagedWeightG', 'packagedDimensionsMm', '출시 연도', '계절'];
 function imageRole(field: QuotationField): string {
   const wire=field.hubWire;
   if(['mainImage','additionalImages','labelImages','detailImages','detailHtml','altText'].includes(field.id))return field.id;
@@ -45,6 +46,15 @@ export function quotationFieldGroup(field: QuotationField, fields?: readonly Quo
  * Unknown fields retain their relative order after the known inputs. */
 export function quotationSectionDisplayFields(fields:readonly QuotationField[],section:QuotationField['section'],categoryId?:string|null):QuotationField[]{
   const visible=quotationPriceVisibleFields(fields).filter(field=>field.section===section);
+  if(section==='logistics'&&categoryId==='64455'){
+    const order=(field:QuotationField)=>{
+      const role=field.hubInput??field.id;
+      const index=cleaningBrushLogisticsOrder.indexOf(role);
+      const labelIndex=cleaningBrushLogisticsOrder.indexOf(field.label);
+      return index>=0?index:labelIndex>=0?labelIndex:cleaningBrushLogisticsOrder.length;
+    };
+    return visible.sort((left,right)=>order(left)-order(right));
+  }
   if(section!=='product'&&section!=='image')return visible;
   const groups=section==='product'?['기본 정보','가격 정보','노출 속성','비노출 속성','원본 Excel 추가 항목']:['기본 이미지','라벨 이미지','상세 정보','원본 Excel 추가 항목'];
   const orderedBasics=categoryId==='103689'?yogaSockBasicOrder:basicOrder;
@@ -62,6 +72,7 @@ export function quotationSectionDisplayFields(fields:readonly QuotationField[],s
       const role=input??field.hubInput??field.id;
       const independentOsrp=field.hubWire?.path[0]==='productPage'&&field.hubWire.path[1]==='commonAttributes'&&field.hubWire.path[2]==='osrp';
       order=role==='supplyPrice'?0:role==='salePrice'?1:field.id==='barcodeMode'?2:role==='barcode'?3:independentOsrp?5:role==='msrp'?4:6;
+      if(categoryId==='64455'&&role==='msrp'&&!independentOsrp)order=1.5;
     }
     return{field,index,group:groups.includes(group)?groups.indexOf(group):groups.length,order};
   }).sort((left,right)=>left.group-right.group||left.order-right.order||left.index-right.index).map(item=>item.field);
