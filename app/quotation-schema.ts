@@ -30,6 +30,7 @@ import {validateOfficialWorkbookFields} from '@/app/official-workbook-field-desc
 import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
 import { quotationPriceInputs, quotationPriceTargets, quotationIndependentOptionalOsrp } from '@/app/quotation-price-targets';
 import { quotationSeoDocumentTitle } from '@/app/seo-title-document';
+import { isProductSizeAttribute, productSizeValue, proposeProductName, type ProductNameProposal } from '@/app/product-name-proposal';
 import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
 import { productLabelFields, validateProductLabelOverrides, validateProductLabelStructure, type ProductLabelsState, type ProductLabelFixedKey } from '@/app/product-label';
 import type { StageTwoMsrp } from '@/app/stage-two-msrp';
@@ -82,7 +83,7 @@ export function quotationGeneratedSourceWritable(source: string | undefined): bo
   return source !== undefined && ['empty', 'schema', 'couplus-default', 'generated','label-draft'].includes(source);
 }
 export type ResolvedQuotationField = { value: string; source: QuotationSource; needsReview: boolean; issues: string[]; validationIssues?: string[]; reviewMessages?: string[] };
-export type ResolvedQuotationRow = { optionId: string | null; optionLabel: string; included: boolean; fields: Record<string, ResolvedQuotationField> };
+export type ResolvedQuotationRow = { optionId: string | null; optionLabel: string; included: boolean; fields: Record<string, ResolvedQuotationField>; productNameProposal?: ProductNameProposal };
 export type ResolvedQuotation = { schema: QuotationSchema; rows: ResolvedQuotationRow[]; issues: string[]; validationIssues?: string[]; reviewMessages?: string[]; customLabels?: CustomLabel[] };
 export type QuotationFieldsView = {
   savedValidation?:import('@/app/quotation-save-validation').SavedQuotationValidation;
@@ -350,6 +351,13 @@ export function quotationValueIssues(field: QuotationField, value: string, owned
   return issues;
 }
 
+function isNamedExposedOption(field: QuotationField) {
+  const wire = field.hubWire;
+  return field.section === 'product' && field.visibility === 'exposed' && wire?.name === field.label
+    && ['productPage.commonAttributes.exposedAttributes', 'productPage.exposedAttributes'].includes(wire.path.join('.'))
+    && (wire.nameKey === 'attributeName' && wire.valueKey === 'attributeValue' || wire.nameKey === 'name' && wire.valueKey === 'value');
+}
+
 export function quotationChangeTargetLimit(schema: Pick<QuotationSchema, 'fields'>, optionIds: readonly string[]): number {
   return new Set(schema.fields.filter(field => !field.readOnly).map(field => field.id)).size * (new Set(optionIds).size + 1);
 }
@@ -367,6 +375,8 @@ export function validateQuotationChanges(input: unknown, context: { schema: Quot
     // Empty values can be saved as a draft; missing required values are surfaced
     // by the resolver instead of preventing a user from removing a wrong value.
     if (value !== null && value.trim()) {
+      if (isNamedExposedOption(field) && isProductSizeAttribute(field.label) && !productSizeValue(value))
+        throw new Error(`${field.label}: 실제 사이즈를 입력해주세요.`);
       const issues = quotationValueIssues(field, value, context.ownedImageKeys);
       if (issues.length) throw new Error(`${field.label}: ${issues.join(' ')}`);
     }
@@ -453,6 +463,10 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
   const detailAttributes=prioritizedProductAttributes(['generated','unverified'].includes(detail.provenance)?'':detail.value,
     schema.fields.filter(field=>field.section==='product'&&field.visibility!=='common').map(field=>({name:field.label,value:''})));
   const options: readonly ProductOption[] = Array.isArray(input.options) ? input.options : (input.options as ProductOptions).rows;
+  const exposedOptions = schema.fields.filter(isNamedExposedOption);
+  const exposedColor = exposedOptions.find(field => field.label === '색상');
+  const exposedSize = exposedOptions.find(field => isProductSizeAttribute(field.label));
+  const exposedQuantity = exposedOptions.find(field => field.label === '수량');
   const untouchedOptions = Array.isArray(input.options) || (input.options as ProductOptions).revision === 0;
   const includeCommonRow = options.length === 0 && untouchedOptions;
   const overrides = input.overrides ?? emptyQuotationOverrides();
@@ -861,7 +875,19 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
     }
     const imageIssues = quotationImageRoleIssues(fields.mainImage?.value ?? '', fields.detailImages?.value ?? '');
     if (imageIssues.length && fields.detailImages) { fields.detailImages.needsReview = true; fields.detailImages.issues.push(...imageIssues); }
-    return { optionId, optionLabel: option ? option.translatedName || option.originalName || option.supplierSku || option.id : '상품 공통값', included: option ? option.included : includeCommonRow, fields };
+    const proposalValue = (field: QuotationField | undefined, saved: string) => {
+      const cell = field && fields[field.id];
+      return cell && ['option', 'manual-option', 'manual-common', 'content'].includes(cell.source) ? cell.value : saved;
+    };
+    const productNameProposal = option ? proposeProductName({
+      brand: fields.brand.value,
+      productName: fields.title.source.startsWith('manual-') ? fields.title.value : savedTextOrFallback(content.seo.title, product.title),
+      color: proposalValue(exposedColor, option.color ?? ''),
+      size: proposalValue(exposedSize, option.size ?? ''),
+      count: option.unitsPerPack,
+      quantity: proposalValue(exposedQuantity, labelSource('netContents', option, undefined, false).value),
+    }) : undefined;
+    return { optionId, optionLabel: option ? option.translatedName || option.originalName || option.supplierSku || option.id : '상품 공통값', included: option ? option.included : includeCommonRow, fields, ...(productNameProposal ? { productNameProposal } : {}) };
   });
   if(input.generatedAdoption?.resultPolicy===CURRENT_QUOTATION_RESULT_POLICY&&input.hubSchema){
     const rules=currentAttributeRules(input.hubSchema,schema.fields);

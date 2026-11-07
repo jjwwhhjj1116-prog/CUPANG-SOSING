@@ -3,6 +3,7 @@ import {productReceiptCanonical,parseStoredNativeReceipt,parseStoredProductRecei
   type NativeReceiptRecord,type ProductReceiptRecord,type ProductReceiptIdentity} from '@/app/supplier-hub-product-receipt';
 import {readSingleCatalogContext,validateSingleConsentChallenge,type SingleDocumentState,type SingleDocumentAction,type SingleConfirmation,type SingleConsentChallenge} from '@/app/supplier-hub-single-client';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
+import {supplierHubProductNameIssue} from '@/app/product-name-proposal';
 import {validateUnexpectedLegalAuditReport,type UnexpectedLegalAuditReport} from '../extensions/supplier-hub/unexpected-legal-audit.mjs';
 export type {UnexpectedLegalAuditReport} from '../extensions/supplier-hub/unexpected-legal-audit.mjs';
 import {validateSavedDocumentStepValidationReport,validateSavedDocumentStepRetryRequest,type SavedDocumentStepValidationReport,type SavedDocumentStepRetryRequest} from '../extensions/supplier-hub/saved-document-step-validation.mjs';
@@ -19,6 +20,10 @@ const copy=<T,>(value:T):T=>JSON.parse(productReceiptCanonical(value)) as T;
 const digest=async(value:unknown)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(productReceiptCanonical(value)))),byte=>byte.toString(16).padStart(2,'0')).join('');
 function freeze<T>(value:T):T{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;}
 export class ProductDocumentBridgeError extends Error{constructor(message:string,public uncertain:boolean,public code='PRODUCT_DOCUMENT_BRIDGE',public draftState?:string,public approvedCreateRetry?:boolean,public closedTargetRecovery=false,public existingDocumentRepairEligible=false,public knownDocId?:string|number,public existingDocumentRepairAttempted=false,public existingDocumentRepairRetryAttempted=false,public existingDocumentRepairRetryEligible=false,public existingDocumentRepairContinuationAttempted=false,public existingDocumentRepairContinuationResumed=false,public nativeFileListObserved=false,public savedDraftTargetClosed=false){super(message);this.name='ProductDocumentBridgeError';}}
+function assertProductNameForTransmission(session:ProductDocumentSession) {
+  const issue = supplierHubProductNameIssue(session.packet.review.body.jsonDocument);
+  if (issue) throw new ProductDocumentBridgeError(issue, false, 'PRODUCT_DOCUMENT_NAME_INVALID');
+}
 const auditFailureCodes=new Set(['UNEXPECTED_LEGAL_AUDIT_UNAVAILABLE','UNEXPECTED_LEGAL_AUDIT_REPLY','UNEXPECTED_LEGAL_AUDIT_SCOPE','UNEXPECTED_LEGAL_AUDIT_SCHEMA','UNEXPECTED_LEGAL_AUDIT_READ',
   'UNEXPECTED_LEGAL_AUDIT_SCHEMA_READ','UNEXPECTED_LEGAL_AUDIT_SCHEMA_EXECUTION','UNEXPECTED_LEGAL_AUDIT_EXECUTION','UNEXPECTED_LEGAL_AUDIT_REPORT','UNEXPECTED_LEGAL_AUDIT_CANCELLED',
   'UNEXPECTED_LEGAL_AUDIT_SOURCE_CHANGED','UNEXPECTED_LEGAL_AUDIT_READ_FAILED']);
@@ -208,6 +213,7 @@ export async function runProductDocument(session:ProductDocumentSession,action:S
   // cannot be hidden by retaining an old preview token.
   try{if(session.preview.packetDigest!==expected.packetDigest||session.packetDigest!==expected.packetDigest||session.preview.requestId!==session.packet.requestId||!same(session.preview.members,session.packet.review.members))fail();await verifyIdentity(session.preview.identity,expected,session.preview.identityDigest);}catch{fail();}
   if(signal.aborted)throw new ProductDocumentBridgeError('전체 상품 견적 작업을 취소했습니다.',false);
+  if(mutating)assertProductNameForTransmission(session);
   const value=await productDocumentExchange(action,session.packet,signal,confirmation);
   return verifyProductDocumentState(value,session,expected,signal,mutating);
 }
@@ -317,6 +323,7 @@ export async function runProductDocumentDraft(session:ProductDocumentSession,act
   const fail=():never=>{throw new ProductDocumentBridgeError('새 초안 응답의 원래 회원·문서·본문 또는 제출 전 검증 기록을 확인하지 못했습니다. 같은 초안의 저장 결과를 조회해주세요.',mutating,'PRODUCT_DOCUMENT_DRAFT_REPLY_IDENTITY');};
   try{if(session.preview.packetDigest!==expected.packetDigest||session.packetDigest!==expected.packetDigest||session.preview.requestId!==session.packet.requestId||!same(session.preview.members,session.packet.review.members))fail();await verifyIdentity(session.preview.identity,expected,session.preview.identityDigest);}catch{fail();}
   if(signal.aborted)throw new ProductDocumentBridgeError('새 견적 초안 작업을 취소했습니다.',false);
+  if(mutating)assertProductNameForTransmission(session);
   const observer=action==='prepareDraft'&&late?{signal:late.signal,onDispatch:late.onDispatch,onResult:(value:unknown)=>{void verifyDraftState(value,session,expected,late.signal,action).then(result=>{if(!late.signal.aborted&&result.state==='validated'&&!result.needsRecovery&&!result.error)late.onResult(result);}).catch(()=>{});}}:undefined;
   const value=await productDocumentExchange(action,session.packet,signal,undefined,observer);
   return verifyDraftState(value,session,expected,signal,action);
@@ -376,6 +383,7 @@ async function verifyDraftState(value:unknown,session:ProductDocumentSession,exp
  * this lifecycle. The general unqualified start/resume release gate stays on. */
 export async function runPreparedProductDocument(session:ProductDocumentSession,action:PreparedDocumentAction,signal:AbortSignal,confirmation?:SingleConfirmation,late?:ProductDocumentLateReplyObserver):Promise<ProductDocumentState>{
   const expected=await preparedStateScope(session,action,signal);
+  if(action==='reviewPreparedDraft'||action==='confirmPreparedDraft')assertProductNameForTransmission(session);
   const observer=late?{signal:late.signal,onDispatch:late.onDispatch,onResult:(value:unknown)=>{const parsed=action==='reviewPreparedDraft'||action==='confirmPreparedDraft'?verifyPreparedState(value,session,expected,action,late.signal):validatePreparedProductDocumentState(value,session,action,late.signal);void parsed.then(result=>{if(!late.signal.aborted&&!result.needsRecovery&&!result.error&&result.docId!==null)late.onResult(result);}).catch(()=>{});}}:undefined;
   const value=await productDocumentExchange(action,session.packet,signal,confirmation,observer);
   return verifyPreparedState(value,session,expected,action,signal);

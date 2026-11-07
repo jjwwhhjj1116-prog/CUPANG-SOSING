@@ -9,6 +9,7 @@ import {validateSupplierHubTransmissionHistory} from '@/app/supplier-hub-transmi
 import {parseStoredProductReceipt,productReceiptCanonical,type ProductReceiptRecord} from '@/app/supplier-hub-product-receipt';
 import {supplierHubCompany} from '@/app/supplier-hub-company';
 import type {SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
+import {supplierHubProductNameIssue} from '@/app/product-name-proposal';
 
 export type TransmissionQueueTarget={id:string;title:string;expectedCategoryId?:string};
 export type TransmissionQueueCandidate={productId:string;title:string;review:SupplierHubProductDocumentReview;session:ProductDocumentSession};
@@ -76,6 +77,7 @@ export async function prepareTransmissionQueueCandidate(target:TransmissionQueue
  if(nativeHistory.length)throw Error('이미 전송 이력이 있는 상품입니다. 순차 전송에서 제외하고 원래 문서의 결과를 확인해주세요.');
  await assertNoLegacyTransmission(target.id,view.categoryContext.categoryId!,view.inputFingerprint,signal,fetcher);
  const input={productId:target.id,profileId,quotationView:view,signal,fetcher},sourcePlan=await readCurrentNativeAssetSource(input),review=await reviewCurrentNativeSupplierHubProductDocument({...input,sourcePlan});
+ const nameIssue=supplierHubProductNameIssue(review.body.jsonDocument);if(nameIssue)throw Error(nameIssue);
  const unreserved=()=>{signal.throwIfAborted();if(readProductDocumentRejections(review).length||readProductDocumentPending(review)||readNativeDraftDetailAmendmentPending(review))throw Error('이 상품에 원래 문서 요청이 있습니다. 새 전송 없이 개별 상품에서 이어서 확인해주세요.');};
  unreserved();const packet=await createProductDocumentPacket(review),session=await previewProductDocument(packet,signal);unreserved();
  const candidate={productId:target.id,title:target.title,review,session};transmissionQueueAttributes([candidate]);

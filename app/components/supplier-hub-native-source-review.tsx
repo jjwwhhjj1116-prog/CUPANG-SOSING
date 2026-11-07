@@ -8,6 +8,7 @@ import {SupplierHubProductTransport} from '@/app/components/supplier-hub-product
 import {nativeSourceIssueGroups} from '@/app/supplier-hub-native-source-issues';
 import {SupplierHubLegalReview} from '@/app/components/supplier-hub-legal-review';
 import {nativeSavedQuotationPreview} from '@/app/native-saved-quotation-preview';
+import {supplierHubDisplayedProductName,supplierHubProductNameIssue} from '@/app/product-name-proposal';
 import type {QuotationNavigationTarget} from '@/app/quotation-navigation';
 
 type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;autoRead?:boolean;onReceiptSaved?:()=>void;onSourceChanged?:(error?:string)=>void;onReviewLegal?:()=>void;onInspect?:(target:QuotationNavigationTarget)=>void;onLockChange?:(locked:boolean,closeLocked?:boolean)=>void};
@@ -69,10 +70,13 @@ function NativeSourceScope(props:Props){
   if(allowed()&&plan&&planRef.current===plan&&current.current.props.view===props.view)current.current.props.onInspect?.(target);
  }}>{label}</button>);
  const savedPreview=!disabled&&!busy&&plan?nativeSavedQuotationPreview(plan,props.view):[];
+ const nameIssue=plan?.body?supplierHubProductNameIssue(plan.body.jsonDocument):'';
+ const nameProposals=new Map(props.view.resolved.rows.map(row=>[row.optionId,row.productNameProposal]));
  return <section className="quotation-fields-notice" aria-label="상품 견적서 전송 자료" aria-busy={busy}>
   <div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||locked||legalBusy} onClick={()=>void load()}>저장한 견적 자료 다시 확인</button>
    {!review&&<button type="button" className="btn primary" disabled={disabled||busy||locked||legalBusy||(plan?!plan.metadataValid:autoRead)||errors.length>0} onClick={()=>void prepare()}>견적서·첨부 파일 확인</button>}</div>
   {busy&&<p role="status">현재 저장한 견적서와 첨부 파일을 확인하고 있습니다…</p>}{error&&<p role="alert">{error}</p>}
+  {nameIssue&&<p role="alert">{nameIssue}</p>}
   {errors.length>0&&<div role="alert"><p>전송 전 확인 필요 {errors.length}건{errorGroups.length<errors.length?` · 같은 안내 ${errorGroups.length}개로 묶음`:''}</p><ul>{errorGroups.map(issue=><li key={issue.key}><strong>{issue.context}</strong>: {issue.message}{issue.count>1?` (${issue.count}건)`:''}{issueLinks(issue)}</li>)}</ul></div>}
   {errors.some(issue=>issue.code==='NATIVE_ASSET_LEGAL_UNCONFIRMED')&&props.onSourceChanged&&<button type="button" className="btn ghost" disabled={disabled||busy||locked||legalBusy} onClick={()=>{if(!allowed())return;if(current.current.props.onReviewLegal)current.current.props.onReviewLegal();else setLegalOpen(true);}}>서류 해당 여부 확인</button>}
   {legalOpen&&<SupplierHubLegalReview productId={productId} profileId={profileId} view={props.view} disabled={disabled||busy||locked} onBusyChange={legalLock} onMutationSettled={legalSettled}/>}
@@ -105,8 +109,10 @@ function NativeSourceScope(props:Props){
   </>}
   {review&&plan&&review.identity.fingerprint===plan.sourcePlanSha256&&<section aria-label="포함 옵션 전체 견적 문서"><h4>포함 옵션 {review.members.length}개 · 견적 문서 1개</h4>
    <p>상품명·금액·첨부 파일을 확인한 뒤 등록전송을 진행하세요.</p>
-   <div className="quotation-fields-bulk-table"><table><thead><tr><th>옵션</th><th>상품명</th><th>모델명</th><th>공급가</th><th>판매가</th><th>권장소비자가</th></tr></thead><tbody>{review.members.map(member=>{
-    const document=review.body.jsonDocument[member.documentIndex],product=node(document.productPage),prices=node(product.commonAttributes);return <tr key={member.optionId}><td>{member.optionLabel}</td><td>{text(node(document.startPage).productName)}</td><td>{text(product.modelNumber)}</td><td>{text(prices.purchasePrice)}</td><td>{text(prices.coupangSalePrice)}</td><td>{text(prices.msrp)}</td></tr>;
+   <div className="quotation-fields-bulk-table"><table><thead><tr><th>옵션</th><th>제안 상품명</th><th>서플라이어허브 예상 상품명</th><th>모델명</th><th>공급가</th><th>판매가</th><th>권장소비자가</th></tr></thead><tbody>{review.members.map(member=>{
+    const document=review.body.jsonDocument[member.documentIndex],product=node(document.productPage),prices=node(product.commonAttributes);
+    const proposal=nameProposals.get(member.optionId);
+    return <tr key={member.optionId}><td>{member.optionLabel}</td><td>{proposal?.value || (proposal ? `확인 필요 · ${proposal.missing.join(', ')}` : '—')}</td><td>{supplierHubDisplayedProductName(document)||'상품명 확인 필요'}</td><td>{text(product.modelNumber)}</td><td>{text(prices.purchasePrice)}</td><td>{text(prices.coupangSalePrice)}</td><td>{text(prices.msrp)}</td></tr>;
    })}</tbody></table></div>
    <SupplierHubProductTransport key={review.reviewDigest} review={review} disabled={disabled||busy} onLockChange={transportLock} onReceiptSaved={onReceiptSaved} refresh={async signal=>{
     if(!current.current.mounted||current.current.props.disabled||reviewRef.current!==review||planRef.current!==plan)throw Error('현재 견적서 검토가 변경되었습니다.');

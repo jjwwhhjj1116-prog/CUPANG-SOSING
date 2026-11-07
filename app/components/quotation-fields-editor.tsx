@@ -908,6 +908,11 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
         const foldedWeight = quotationPackagedWeightDisplayField(schema?.fields ?? [], field.id, key => resolveQuotationEditorCell(view, changes, selectedOption, key).value) !== field.id;
         return [heading, foldedWeight ? <details key={`compat-${field.id}`} className="quotation-field-diagnostics" style={{gridColumn:'1 / -1'}}><summary>이전 포장 무게 입력 확인</summary><p>아래 원본 양식의 포장 무게와 연결된 값입니다. 기존 수정값을 개별 해제할 때 펼쳐 확인하세요.</p>{fieldCard}</details> : fieldCard];
       })}</div></fieldset>)}
+      {active === 'start' && row?.productNameProposal && <div className="quotation-fields-notice" aria-label="제안 상품명">
+        <strong>제안 상품명</strong>
+        <p>{row.productNameProposal.value || `확인 필요 · ${row.productNameProposal.missing.join(', ')}`}</p>
+        {dirty && <small>저장하면 제안 상품명이 갱신됩니다.</small>}
+      </div>}
       {row && <details className="quotation-fields-notice quotation-fields-progress" aria-label="현재 입력 확인" open={inputErrors > 0 || undefined}>
         <summary><strong>{selectedOption === null ? '상품 공통값' : '현재 옵션'} · 필수 미입력 {guidance.missing.length}개 · 입력 오류 {inputErrors}개</strong></summary>
         {(guidance.missing.length > 0 || inputErrors > 0) && <p>아래 항목을 눌러 입력란으로 이동하세요. 필수 미입력 항목은 입력 오류 수에 중복 집계하지 않으며, 작성 중 상태로 저장할 수 있습니다.</p>}

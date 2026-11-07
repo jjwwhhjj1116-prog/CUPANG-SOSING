@@ -1,6 +1,7 @@
 'use client';
 import {useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import type {SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
+import {supplierHubProductNameIssue} from '@/app/product-name-proposal';
 import {createProductDocumentPacket,PRODUCT_DOCUMENT_REQUEST_TTL} from '../../extensions/supplier-hub/product-document.mjs';
 import {sourceReadError} from '../../extensions/supplier-hub/product-document-source.mjs';
 import {previewProductDocument,auditUnexpectedLegal,validateSavedDocumentSteps,retrySavedDocumentStep,unexpectedLegalAuditReadError,runProductDocument,runProductDocumentDraft,runPreparedProductDocument,preparedReceiptObservation,readNativeReceiptHistory,saveProductReceiptObservation,configuredProductConsentConfirmation,cancelConfiguredProductConsent,PRODUCT_DOCUMENT_CONSENT_EXPIRED,
@@ -270,7 +271,11 @@ export function SupplierHubProductTransport(props:Props){
     let previewIntent:ProductDocumentPending|null=null,previewPacket:ProductDocumentSession['packet']|null=null,terminalPreviewError:unknown;
     try{await fresh(task);if(!task.active())return;const saved=readProductDocumentPending(review);
       if(saved)assertProductDocumentPending(review,saved);
-      else assertProductDocumentNotRejected(review);
+      else {
+        assertProductDocumentNotRejected(review);
+        const issue = supplierHubProductNameIssue(review.body.jsonDocument);
+        if (issue) throw Error(issue);
+      }
       if(saved&&current.current.intent&&productReceiptCanonical(saved)===productReceiptCanonical(current.current.intent))previewIntent=current.current.intent;
       // Only the TTL envelope is refreshed. The original operation UUID,
       // reviewed body and browser identity must remain exact for read recovery.

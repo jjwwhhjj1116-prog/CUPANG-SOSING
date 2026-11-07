@@ -24,6 +24,7 @@ after(()=>{assert.deepEqual(hashes(),frozen);fs.writeFileSync(new URL('../output
 async function fixture(company=SINGLE_COMPANIES[0],options={}){
   const clock={now:Date.now()},listeners=new Set(),timers=new Map(),sent=[],calls=[],modules=new Map();let sequence=0;
   const single=singlePacket(company),body=plain(single.body),second=plain(body.jsonDocument[0]);second.startPage.productName='두 번째 저장 옵션';second.productPage.modelNumber='';second.productPage.supplyPrice='';body.jsonDocument.push(second);
+  if(options.placeholderSize)second.productPage.commonAttributes={exposedAttributes:[{attributeName:'패션의류/잡화 사이즈',attributeValue:'해당사항없음'}]};
   const identity={ownerId:single.ownerId,company:plain(company),productId:single.productId,profileId:single.profileId,requestedProfileId:options.queryless?null:single.profileId,
     categoryId:single.categoryId,fingerprint:single.fingerprint,inputFingerprint:'d'.repeat(64),schemaSha256:options.schemaSha256??single.schemaSha256,source:{...single.source,profileId:single.profileId}};
   const review={format:'yoofam-supplier-hub-product-document-v1',type:'YOOFAM_PRODUCT_DOCUMENT_REVIEW',identity,members:[{optionId:'first',optionLabel:'첫 옵션',documentIndex:0},{optionId:'second',optionLabel:'둘째 옵션',documentIndex:1}],body,registered:false,remoteWrites:false,submissionReady:false};
@@ -62,6 +63,21 @@ test('configured consent cancellation preserves its original request scope and l
  const f=await fixture(),messages=[];f.window.postMessage=(message,target)=>messages.push({message:plain(message),target});
  f.client.cancelConfiguredProductConsent(f.packet.requestId);f.client.cancelConfiguredProductConsent();
  assert.deepEqual(messages,[{message:{channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',type:'cancel',requestId:f.packet.requestId},target:origin},{message:{channel:'YOOFAM_CONFIGURED_REGISTRATION_CONSENT',type:'cancel'},target:origin}]);
+});
+
+test('placeholder size blocks registration writes and preserves exact recovery reads',async()=>{
+ const f=await fixture(SINGLE_COMPANIES[0],{verified:true,placeholderSize:true}),signal=new AbortController().signal;
+ f.bridge=async ({action})=>action==='preview'?{...f.preview(),draftPreparationAvailable:true,preparedLifecycleAvailable:true}:f.observation('FINISHED');
+ const session=await f.session();
+ for(const action of [
+  ()=>f.client.runProductDocument(session,'start',signal),
+  ()=>f.client.runProductDocumentDraft(session,'prepareDraft',signal),
+  ()=>f.client.runPreparedProductDocument(session,'confirmPreparedDraft',signal),
+ ])await assert.rejects(action(),error=>error.code==='PRODUCT_DOCUMENT_NAME_INVALID'&&!error.uncertain);
+ assert.deepEqual(f.sent.map(message=>message.payload.action),['preview']);
+ const recovered=await f.client.runProductDocument(session,'recover',signal);
+ assert.equal(recovered.receipt.sourceStatus,'FINISHED');
+ assert.deepEqual(f.sent.map(message=>message.payload.action),['preview','recover']);
 });
 
 for(const boundary of ['abort','timeout'])test(`configured consent probe ${boundary} cancels only the original product request`,async()=>{
