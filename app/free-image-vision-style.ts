@@ -65,7 +65,7 @@ function fittedFont(context:PixelContext|undefined,text:string,box:Box):{fontSiz
 /** Initial styles for newly received Vision blocks only. Existing regions and
  * saved documents never enter this function. A sampled flat fill is not image
  * reconstruction; uncertain geometry/background stays available for review. */
-export function initializeVisionRegions(rawBlocks:readonly ImageTextVisionBlock[],canvas:Pick<HTMLCanvasElement,'getContext'>,width:number,height:number,options:{allowSafeOverlayOverlap?:boolean;refineFlatOverlayBounds?:boolean}={}):{regions:FreeImageRegion[];issues:VisionStyleIssue[];paintOrder?:'backgrounds-first-v1'}{
+export function initializeVisionRegions(rawBlocks:readonly ImageTextVisionBlock[],canvas:Pick<HTMLCanvasElement,'getContext'>,width:number,height:number,options:{allowSafeOverlayOverlap?:boolean;refineFlatOverlayBounds?:boolean;inpaintBackground?:boolean}={}):{regions:FreeImageRegion[];issues:VisionStyleIssue[];paintOrder?:'backgrounds-first-v1'}{
  let context:PixelContext|undefined;try{context=canvas.getContext('2d')??undefined;}catch{/* Keep all blocks available for manual correction. */}
  const boxes=options.refineFlatOverlayBounds===true?refineFlatOverlayBounds(rawBlocks,context,width,height):null;
  const blocks=boxes?rawBlocks.map((row,index)=>({...row,box:boxes[index]})):rawBlocks;
@@ -81,7 +81,8 @@ export function initializeVisionRegions(rawBlocks:readonly ImageTextVisionBlock[
   const background=backdrop(context,row.box,blocks,width,height),fit=fittedFont(context,row.translated??row.text,row.box);
   const rowIssues:VisionStyleIssue[]=[];
   if(blocks.some((other,otherIndex)=>otherIndex!==index&&overlaps(row.box,other.box)))rowIssues.push('VISION_REGION_OVERLAP');
-  if(background.issue)rowIssues.push(background.issue);if(fit.issue)rowIssues.push(fit.issue);rowIssues.forEach(issue=>issues.add(issue));
+  if(background.issue&&(background.issue!=='VISION_BACKGROUND_COMPLEX'||!options.inpaintBackground))rowIssues.push(background.issue);
+  if(fit.issue)rowIssues.push(fit.issue);rowIssues.forEach(issue=>issues.add(issue));
   return{id:row.id,text:row.text,box:{...row.box},confidence:0,selected:rowIssues.length===0,translated:row.translated??'',
    issue:[row.issue,...rowIssues.map(issue=>`${issue}: ${messages[issue]}`)].filter(Boolean).join(' ')||null,
    translationProvenance:row.translated===null?'empty':'generated',background:background.background,foreground:background.foreground,fontSize:fit.fontSize,textAlign:'center'};

@@ -49,6 +49,29 @@ test('configured workspace Vision renders validated Korean with inpainting and n
  }finally{f.api.close();}
 });
 
+test('workspace Vision previews verified Korean on a complex background without changing the saved photo', async () => {
+  const f = await fixture({ vision: true, bodyCount: 1 });
+  try {
+    const before = f.tables(), v = visionDeps(f), recognize = v.deps.recognize;
+    v.deps.recognize = async image => {
+      image.canvas.getContext('2d').getImageData = (left, top, width, height) => ({
+        data: Uint8ClampedArray.from({ length: width * height * 4 }, (_, i) =>
+          i % 4 === 3 || (left + top + Math.floor(i / 4) % width + Math.floor(i / (width * 4))) % 2 === 0 ? 255 : 0),
+      });
+      const regions = await recognize(image);
+      assert.deepEqual(plain(image.visionStyleIssues), ['VISION_BACKGROUND_COMPLEX']);
+      assert.equal(regions[0].selected, false);
+      return regions;
+    };
+    const batch = await f.batch.prepareDetailWorkspaceImageBatch({ selection: f.selection, saved: f.saved, language: 'zh' }, signal(), () => {}, v.deps);
+    assert.equal(batch.items[0].status, 'ready');
+    assert.ok(batch.items[0].rendered?.output.size);
+    assert.deepEqual(plain(batch.items[0].texts), [{ original: '中文', translated: '검토 문구' }]);
+    assert.deepEqual(v.stages, ['vision', 'render']);
+    assert.deepEqual(f.tables(), before);
+  } finally { f.api.close(); }
+});
+
 for(const recovered of [false,true])test(`${recovered?'completed-request recovery':'automatic preparation'} exposes the exact rejected BODY region while retaining all six original/Korean texts`,async()=>{
  const f=await fixture({vision:true,bodyCount:1,imageWidth:750,imageHeight:590});try{
   // Exact six overlay blocks from the 750x590 BODY result in step935-third-body-vision.json.

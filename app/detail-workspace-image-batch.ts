@@ -56,7 +56,12 @@ const unchanged=(entry:DetailWorkspaceBatchItem):DetailWorkspaceBatchItem=>({...
 async function preview(batch:DetailWorkspaceImageBatch,entry:DetailWorkspaceBatchItem,image:FreeImageLoaded,regions:FreeImageRegion[],signal:AbortSignal,deps:Dependencies):Promise<DetailWorkspaceBatchItem>{
   let prepared:FreeImageRegion[],texts:DetailWorkspaceBatchItem['texts'],message='';
   if(image.visionConfiguration!==undefined){
-    const result=visionResult(image),chosen=regions.filter(region=>region.selected),editable=result.blocks.filter(block=>block.kind===undefined||block.kind==='overlay');
+    const result=visionResult(image),editable=result.blocks.filter(block=>block.kind===undefined||block.kind==='overlay');
+    if(image.visionStyleIssues?.length===1&&image.visionStyleIssues[0]==='VISION_BACKGROUND_COMPLEX'){
+      // The workspace preview restores the background locally and is reviewed before saving.
+      regions=initializeFreeImageVisionRegions(image,result,{inpaintBackground:true}).regions;
+    }
+    const chosen=regions.filter(region=>region.selected);
     if(result.inspection?.decision==='unreadable'||!editable.length||image.visionStyleIssues?.length||chosen.length!==editable.length
       ||chosen.some(region=>region.translationProvenance!=='generated'||!region.translated.trim()||region.issue)
       ||editable.some(block=>!chosen.some(region=>region.id===block.id&&region.text===block.text&&region.translated===block.translated&&same(region.box,block.box))))return{

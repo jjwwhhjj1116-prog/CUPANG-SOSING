@@ -266,11 +266,11 @@ export function initializedVisionRegionBox(image:FreeImageLoaded,index:number):O
   throw Error('원본 Vision 영역 초기화 증명이 변경됐습니다.');
  return{...proof.boxes[index]};
 }
-export function initializeFreeImageVisionRegions(image:FreeImageLoaded,result:ImageTextVisionResult,options:{freshExecution?:boolean}={}){
+export function initializeFreeImageVisionRegions(image:FreeImageLoaded,result:ImageTextVisionResult,options:{freshExecution?:boolean;inpaintBackground?:boolean}={}){
  initializedVisionBoxes.delete(image);
  const fresh=options.freshExecution===true&&image.visionResult===result&&!image.editDocument&&image.visionExecution?.requests===1&&image.visionExecution.cached===false
   &&result.inspection?.policy===IMAGE_TEXT_PRESERVATION_POLICY;
- const styled=initializeVisionRegions(result.blocks,image.canvas,image.width,image.height,{allowSafeOverlayOverlap:result.inspection?.policy===IMAGE_TEXT_PRESERVATION_POLICY,refineFlatOverlayBounds:fresh});
+ const styled=initializeVisionRegions(result.blocks,image.canvas,image.width,image.height,{allowSafeOverlayOverlap:result.inspection?.policy===IMAGE_TEXT_PRESERVATION_POLICY,refineFlatOverlayBounds:fresh,inpaintBackground:options.inpaintBackground});
  if(fresh&&styled.regions.some((row,index)=>['x','y','width','height'].some(key=>row.box[key as keyof OcrBox]!==result.blocks[index].box[key as keyof OcrBox])))
   initializedVisionBoxes.set(image,{result,snapshot:JSON.stringify(result),source:freeImageSourceIdentity(image.source),canvas:image.canvas,width:image.width,height:image.height,boxes:styled.regions.map(row=>Object.freeze({...row.box}))});
  image.visionStyleIssues=styled.issues;image.visionPaintOrder=styled.paintOrder;return styled;
