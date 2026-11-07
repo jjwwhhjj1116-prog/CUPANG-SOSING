@@ -58,7 +58,8 @@ for(const [index,company]of companies.entries())test(`Google 429 keeps an editab
   assert.equal(f.opened[0].quotation.resolved.schema.categoryId,'69900');assert.equal(f.opened[0].quotation.categoryContext.profileId,h.context.category.id);
   assert.ok(f.opened[0].quotation.resolved.rows.filter(row=>row.included).every(row=>Number(row.fields.supplyPrice.value)>0));
   assert.ok(f.opened[0].options.rows.every(row=>row.provenance.translatedName!=='translated'));assert.equal(product(h).supplier_hub_status,'미전송');
-  assert.equal(payload(h,'product_content').assets.main.value.length,index?0:1);
+  assert.equal(payload(h,'product_content').assets.main.value.length,1);
+  assert.ok(f.calls.some(call=>call.path.endsWith('/image-draft')&&(index?call.body?.initializeIntake===true:call.body?.initializeIntake===undefined)));
   const failed=h.sqlite.prepare('SELECT * FROM translation_jobs').get();assert.equal(failed.status,'failed');assert.equal(failed.result,null);assert.match(failed.error,/HTTP 429/);
   assert.equal(f.calls.filter(call=>call.body?.action==='execute').length,1);assert.equal(f.calls.filter(call=>call.path.endsWith('/translation-apply')).length,0);
   assert.equal(f.button('시작 (').props.disabled,true,'saved source is not offered as another pending collect');

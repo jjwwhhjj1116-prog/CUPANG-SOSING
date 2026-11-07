@@ -10,11 +10,12 @@ import {renderToStaticMarkup} from 'react-dom/server';
 const native=createRequire(import.meta.url),cache=new Map();
 function load(file,overrides={}){
  if(!Object.keys(overrides).length&&cache.has(file))return cache.get(file);
- const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,structuredClone,URL,Error,require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
+ const exports={};if(!Object.keys(overrides).length)cache.set(file,exports);
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,structuredClone,URL,Error,require(name){if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
   if(name in overrides)return overrides[name];
   if(name.startsWith('@/')){const path=name.slice(2);return load(path+(fs.existsSync(new URL('../'+path+'.ts',import.meta.url))?'.ts':'.tsx'));}
   if(name.endsWith('.css'))return{};return native(name);
- }});if(!Object.keys(overrides).length)cache.set(file,exports);return exports;
+ }});return exports;
 }
 const profile={id:'saved',name:'주방 설정',categoryId:'80719',categoryPath:['주방용품','바스켓'],revision:2,template:null,mappings:[]};
 test('category ALT guidance explains the unwritten SEO fallback while retaining explicitly cleared text',()=>{
@@ -89,7 +90,7 @@ test('queue starts with add button and retains selection while filtering rows',(
  assert.equal(rows[0].features,'red');assert.equal(rows[1].features,'blue');
 });
 
-test('image-draft goal is explicit, restores as work and carries unchanged URL/category into the intake request',()=>{
+test('four explicit goals restore as saved and carry unchanged URL/category into the intake request',()=>{
  const slots=[],layouts=[];let cursor=0,goal='work';
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useLayoutEffect(fn){layouts.push(fn);},useEffect(){}};
  const {IntakeQueuePanel}=load('app/components/intake-queue-panel.tsx',{react:hooks,'@/app/components/category-picker':{CategoryPicker:()=>null},'@/app/components/intake-quotation-preview':{IntakeQuotationPreview:()=>null}});
@@ -97,11 +98,11 @@ test('image-draft goal is explicit, restores as work and carries unchanged URL/c
  const render=()=>{cursor=0;const tree=IntakeQueuePanel({rows,onRows(){},profiles:[rows[0].profile],onProfile(){},onJobs(){},onBusy(){},goal,onGoal:value=>{goal=value;}});layouts.splice(0).forEach(fn=>fn());return tree;};
  const choices=()=>nodes(render()).filter(node=>node.type==='label'&&node.props.className==='goal-card');
  const control=id=>nodes(choices().find(node=>node.key===id)).find(node=>node.type==='input');
- assert.equal(choices().length,3);assert.equal(control('work').props.checked,true);assert.equal(control('price').props.checked,false);
- assert.match(JSON.stringify(choices().find(node=>node.key==='work')),/원본을 대표·추가·상세·옵션 이미지에 배치합니다/);
- for(const selected of ['price','collect','work']){
+ assert.equal(choices().length,4);assert.equal(control('work').props.checked,true);assert.equal(control('price').props.checked,false);
+ assert.deepEqual(Array.from(choices(),node=>nodes(node).find(child=>child.type==='strong')?.props.children),['상품추가','SEO+가격','작업개시','등록전송']);
+ for(const selected of ['price','collect','work','transmit']){
   control(selected).props.onChange();assert.equal(goal,selected);
-  for(const id of ['price','collect','work'])assert.equal(control(id).props.checked,id===selected);
+  for(const id of ['price','collect','work','transmit'])assert.equal(control(id).props.checked,id===selected);
   const [request]=load('app/intake-queue.ts').intakeQueueRequests(rows,goal);
   assert.equal(request.body.goal,selected);assert.equal(request.body.profileId,rows[0].profile.id);assert.equal(request.body.expectedProfileRevision,2);
   assert.deepEqual(Array.from(request.body.urls),[rows[0].url]);assert.equal(request.body.features,'수동 특징');assert.equal(request.body.keywords,'');

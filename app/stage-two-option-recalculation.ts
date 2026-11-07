@@ -1,8 +1,40 @@
-import {pricePolicy,type PricePolicy} from '@/app/pricing';
+import {calculateSalePriceFromSupply,pricePolicy,type PricePolicy} from '@/app/pricing';
 import {calculateOptionPrices,type OptionInput} from '@/app/product-options';
 import {recalculateStageTwoRows} from '@/app/stage-two-pricing';
 import {quotationPriceTargets} from '@/app/quotation-price-targets';
-import type {QuotationChange,QuotationFieldsView} from '@/app/quotation-schema';
+import {quotationNumericValue} from '@/app/quotation-scalar-constraints';
+import type {QuotationChange,QuotationFieldsView,QuotationOverrides} from '@/app/quotation-schema';
+
+/** A margin-only control changes sale even if a saved/manual supply price or
+ * a local CNY edit already overrides the formula. Never rewrite supply or
+ * explicit MSRP/OSRP. Ordinary automatic rows remain driven by the policy. */
+export function repriceStageTwoReviewedSales(rows:readonly OptionInput[],policy:PricePolicy,view:QuotationFieldsView,
+  overrides:QuotationOverrides,edits:readonly QuotationChange[]):QuotationChange[]|null{
+  const fields=view.resolved.schema.fields,targets=quotationPriceTargets(fields);
+  const supplyField=fields.find(field=>field.id===targets.supplyPrice.primary);
+  if(!supplyField)return null;
+  const active=new Set(view.resolved.rows.filter(row=>row.optionId!==null&&row.included).map(row=>row.optionId));
+  const affected=rows.filter(row=>row.included&&active.has(row.id)).flatMap(row=>{
+    const own=Object.hasOwn(overrides.options,row.id)?overrides.options[row.id]:undefined;
+    const saved=(field:string)=>own&&Object.hasOwn(own,field)?own[field]:Object.hasOwn(overrides.common,field)?overrides.common[field]:undefined;
+    const supply=saved(targets.supplyPrice.primary),sale=saved(targets.salePrice.primary);
+    return supply===undefined&&sale===undefined?[]:[{row,supply,sale}];
+  });
+  if(!affected.length)return null;
+  const automatic=calculateOptionPrices(affected.map(item=>item.row),policy);
+  const replacements=new Map<string,string>();
+  for(const [index,{row,supply,sale}] of affected.entries()){
+    if(sale!==undefined&&!sale.trim())continue;
+    const amount=supply===undefined?automatic[index].calculation?.supplyPrice:quotationNumericValue(supplyField,supply);
+    if(amount===undefined||!Number.isSafeInteger(amount)||amount<=0)continue;
+    const value=String(calculateSalePriceFromSupply(amount,policy));
+    if(sale!==value)replacements.set(row.id,value);
+  }
+  if(!replacements.size)return null;
+  const saleFields=new Set(targets.salePrice.linked);
+  return [...edits.filter(edit=>edit.optionId===null||!replacements.has(edit.optionId)||!saleFields.has(edit.fieldKey)),
+    ...[...replacements].flatMap(([optionId,value])=>targets.salePrice.linked.map(fieldKey=>({optionId,fieldKey,value})))];
+}
 
 /** A deliberate cost change recalculates this included row only. Its exact
  * supply/sale aliases become the local draft; the product policy, unrelated

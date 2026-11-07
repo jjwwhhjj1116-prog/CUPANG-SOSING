@@ -1,6 +1,6 @@
 /** Versioned public source package. App/Cloudflare login credentials must never
  * be embedded in an npm command or copied into the terminal. */
-export const CLI_RELEASE_VERSION='0.1.4';
+export const CLI_RELEASE_VERSION='0.1.5';
 export const CLI_RELEASE_TAG=`yoofam-cli-v${CLI_RELEASE_VERSION}`;
 export const CLI_PACKAGE_URL=`https://raw.githubusercontent.com/jjwwhhjj1116-prog/CUPANG-SOSING/${CLI_RELEASE_TAG}/public/downloads/yoofam-studio-cli-${CLI_RELEASE_VERSION}.tgz`;
 export function cliInstallCommands(platform:'windows'|'mac'){

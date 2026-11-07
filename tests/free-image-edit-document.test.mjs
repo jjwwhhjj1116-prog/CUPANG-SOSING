@@ -57,6 +57,17 @@ test('backgrounds-first paint policy is explicit, canonical and preserved while 
   for(const paintOrder of ['backgrounds-first','sequential',null,true,1])rejected({paintOrder});
 });
 
+test('whole-photo adjustments are canonical and use the cropped dimensions before rotation', () => {
+  const photo = { rotation: 90, flipX: true, flipY: false, brightness: 114, contrast: 95, saturation: 140, hue: -25 };
+  const crop = { x: 5, y: 4, width: 200, height: 100, sourceWidth: 800, sourceHeight: 600 };
+  const input = document({ regions: [], crop, photo });
+  const result = validate(frozen(input), source);
+  assert.deepEqual(plain(result), input);
+  assert.deepEqual(plain(load('app/free-image-edit-document.ts').freeImageEditOutputDimensions(result)), { width: 100, height: 200 });
+  assert.notEqual(result.photo, photo);
+  for (const bad of [null, { ...photo, rotation: 45 }, { ...photo, hue: 181 }, { ...photo, saturation: 201 }, { ...photo, brightness: 1.2 }, { ...photo, flipX: 1 }, { ...photo, extra: true }]) rejected({ photo: bad });
+});
+
 test('full editable document preserves paint order, manual blanks, unselected text, whitespace and optional absence in an independent clone', () => {
   const drawing = brush(4, [{ x: 5, y: 6 }, { x: 5, y: 6 }, { x: 20, y: 15 }], 800, 600);
   drawing.brush.points.splice(1, 0, { x: 5, y: 6 });

@@ -10,7 +10,7 @@ import {reviewSourceFixture,sourceReviewModule} from './helpers/source-review-in
 // existing contract tests retain their original explicit-start defaults.
 const helperUrl=new URL('./helpers/intake-owner-scope.mjs',import.meta.url);
 let helper=fs.readFileSync(helperUrl,'utf8').replaceAll('import.meta.url',JSON.stringify(helperUrl.href));
-helper=helper.replace('sourceSeed,rowCount=1}={})','sourceSeed,rowCount=1,autoStartSource=false,readReady}={})')
+helper=helper.replace('sourceSeed,rowCount=1,','sourceSeed,rowCount=1,autoStartSource=false,readReady,')
  .replace('seed=sourceSeed;','seed=sourceSeed,sourceItemsOverride,sourceCompany=company;')
  .replace('sourceSeed:seed,onSourceConsumed','sourceSeed:seed,autoStartSource,sourceCompany,sourceItems:sourceItemsOverride??(seed?.sourceItem?[seed.sourceItem]:[]),onSourceConsumed')
  .replace('setSeed(value){seed=value;render();}','setSourceItems(value){sourceItemsOverride=value;render();},setSourceCompany(value){sourceCompany=value;render();},setJobs(value){jobs=value;render();},setSeed(value){seed=value;render();}')

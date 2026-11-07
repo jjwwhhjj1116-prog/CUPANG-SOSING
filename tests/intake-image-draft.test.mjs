@@ -51,9 +51,9 @@ for (const company of [{ companyCode: 'A01464742', companyName: '와이홉' }, {
     const h = mobileIntakeHarness(company);
     try {
       const initial = await h.load('db/intake-draft.ts').readIntakeDraft('owner');
-      assert.equal(initial.goal, 'work', 'fresh URL intake must also prepare editable image roles');
+      assert.equal(initial.goal, 'price', 'fresh URL intake starts with SEO and prices');
       h.sqlite.prepare('UPDATE collection_jobs SET goal=?').run(initial.goal);
-      await h.intake();
+      await h.intake('job',{initializeImageRoles:true});
       const source = receipt(h), keys = originals(h), saved = content(h), rows = options(h).rows;
       assert.deepEqual(source.sourceGallery, { format: '1688-public-mobile-gallery-v1', imageIndices: [...recordedGallery].map((_, index) => index) });
       assert.deepEqual(source.sourceGallery.imageIndices.map(index => source.images[index].url), [...recordedGallery]);
@@ -97,7 +97,7 @@ for (const company of [{ companyCode: 'A01464742', companyName: '와이홉' }, {
       assert.equal(product(h).image_status, '대기');
       assert.equal(product(h).supplier_hub_status, '미전송');
       const before = JSON.stringify({ product: product(h), content: saved, options: options(h) });
-      await h.intake();
+      await h.intake('job',{initializeImageRoles:true});
       assert.equal(JSON.stringify({ product: product(h), content: content(h), options: options(h) }), before);
       assert.equal(h.stats.downloads, 19);
       assert.equal(h.aiSources.length, 1);
@@ -105,7 +105,7 @@ for (const company of [{ companyCode: 'A01464742', companyName: '와이홉' }, {
   });
 }
 
-test('collect and SEO-price preserve the observed empty image stages and cannot call work-only image assignment', async () => {
+test('library intake leaves image stages empty unless initialization is explicitly requested', async () => {
   for (const goal of ['collect', 'price', 'transmit']) {
     const h = mobileIntakeHarness();
     try {
@@ -119,6 +119,33 @@ test('collect and SEO-price preserve the observed empty image stages and cannot 
       assert.equal(JSON.stringify({ product: product(h), content: content(h), options: options(h) }), before);
     } finally { h.close(); }
   }
+});
+
+test('fresh transmission guards keep an already linked product and its other-company image roles untouched', async () => {
+  const h=mobileIntakeHarness();
+  try{
+    h.sqlite.prepare("UPDATE collection_jobs SET goal='transmit'").run();
+    await h.intake();
+    const snapshot=()=>JSON.stringify({product:product(h),content:content(h),options:options(h)});
+    const before=snapshot(),calls=h.calls.length;
+    await assert.rejects(h.intake('job',{initializeImageRoles:true,onFreshProduct:()=>assert.fail('existing product is not fresh')}),/기존에 연결된 상품/u);
+    assert.equal(h.calls.length,calls,'existing linkage stops before any second request');
+    const linked=await h.load('db/collection-jobs.ts').findCollectionJob('owner','job');
+    const {product_id:linkedProductId,...beforeLink}=linked;
+    assert.equal(linkedProductId,product(h).id);
+    await assert.rejects(h.load('app/intake-collection.ts').collectIntakeProduct(beforeLink,{
+      signal:new AbortController().signal,initializeImageRoles:true,
+      fetcher:(path,init)=>h.route(path,{method:init?.method??'GET',body:init?.body}),
+      onJob(){},onProgress(){},onFreshProduct:()=>assert.fail('a concurrent link is not fresh')
+    }),/이미 연결된 상품/u);
+    assert.equal(h.calls.slice(calls).filter(path=>path.endsWith('/product')).length,1);
+    assert.ok(!h.calls.slice(calls).some(path=>path.endsWith('/image-draft')||path.endsWith('/translation-apply')));
+    h.setCompany({code:'A01526306',name:'유앤채'});
+    const refused=await h.route('/api/collection-jobs/job/image-draft',{method:'POST',body:{productId:product(h).id,initializeIntake:true}});
+    assert.equal(refused.status,409);
+    assert.equal((await refused.json()).code,'COLLECTION_COMPANY_MISMATCH');
+    assert.equal(snapshot(),before);
+  }finally{h.close();}
 });
 
 test('work image drafts preserve explicit same-empty roles, selected order, banners, cleared option images and excluded rows', async () => {

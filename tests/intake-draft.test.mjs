@@ -24,18 +24,18 @@ function fixture(){
 const profileId='00000000-0000-0000-0000-000000000001';
 const row={id:'draft-1',profileId,profileRevision:3,url:'아직 입력 중',features:'특징',keywords:'키워드'};
 
-test('fresh owner defaults to the complete editable draft without persisting or changing another owner goal',async()=>{
+test('fresh owner defaults to SEO and pricing without persisting or changing another owner goal',async()=>{
  const f=fixture();try{
   for(const owner of ['alice','bob']){
    f.state.owner=owner;
    const response=await f.api.GET();assert.equal(response.status,200);
    const body=await response.json();assert.equal(body.ownerId,owner);
-   assert.deepEqual(JSON.parse(JSON.stringify(body.draft)),{revision:0,rows:[],goal:'work',updatedAt:null});
+   assert.deepEqual(JSON.parse(JSON.stringify(body.draft)),{revision:0,rows:[],goal:'price',updatedAt:null});
   }
   assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS count FROM intake_drafts').get().count,0,'reading the new default never saves a draft');
   f.state.owner='alice';assert.equal((await f.put({expectedRevision:0,goal:'price',rows:[row]})).status,200);
   const saved=JSON.stringify(f.sqlite.prepare('SELECT * FROM intake_drafts').all());
-  f.state.owner='bob';assert.equal((await(await f.api.GET()).json()).draft.goal,'work');
+  f.state.owner='bob';assert.equal((await(await f.api.GET()).json()).draft.goal,'price');
   f.state.owner='alice';const restored=(await(await f.api.GET()).json()).draft;
   assert.equal(restored.goal,'price');assert.equal(restored.rows[0].url,row.url);
   assert.equal(JSON.stringify(f.sqlite.prepare('SELECT * FROM intake_drafts').all()),saved);

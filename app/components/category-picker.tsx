@@ -1,11 +1,11 @@
 'use client';
 import {CategoryRecommendationsPanel} from '@/app/components/category-recommendations-panel';
-import {resolveRecommendedHubCategoryChoice,type HubCategoryRecommendation,type HubCategoryRecommendations} from '@/app/supplier-hub-category-recommendations';
+import {loadSupplierHubCategorySearch,resolveCategoryPath,resolveRecommendedHubCategoryChoice,resolveSearchedHubCategoryChoice,type HubCategoryRecommendation,type HubCategoryRecommendations,type HubCategorySearch} from '@/app/supplier-hub-category-recommendations';
 import { loadCategoryProfiles, readCategoryJsonResponse } from '@/app/load-category-profiles';
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { usableCategoryCode, type CategoryProfile, type CategoryProfileInput } from '@/app/category-profiles';
-import { canConfirmCategory, categoryAdvancedSeed, categoryChoices, categoryChoicesAtPath, categoryLevel, categoryObservationScope, categoryProfileForChoice, categoryProfilesForChoice, searchCategoryChoices, type CategoryAdvancedSeed, type CategoryChoice } from '@/app/category-catalog';
+import { canConfirmCategory, categoryAdvancedSeed, categoryChoices, categoryChoicesAtPath, categoryLevel, categoryObservationScope, categoryProfileForChoice, categoryProfilesForChoice, searchCategoryChoices, searchLeafCategoryChoices, type CategoryAdvancedSeed, type CategoryChoice } from '@/app/category-catalog';
 import { getQuotationSchema } from '@/app/quotation-schema';
 import { CategoryQuotationPreview } from '@/app/components/category-quotation-preview';
 import './category-picker.css';
@@ -21,6 +21,7 @@ import { parseWorkspaceSettingsScope } from '@/app/workspace-settings-scope';
 
 const useAccountEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 type WorkbookSelection = { target: CategoryChoice; schema: HubSchemaSnapshot; scope: ReturnType<typeof parseWorkspaceSettingsScope> | undefined; selectionEpoch: number; accountEpoch: number };
+type DirectSearch = { keyword:string; result:HubCategorySearch|null; status:'loading'|'ready'|'local'; error:string };
 const selectionIdentity = (choice: CategoryChoice | undefined) => choice ? JSON.stringify([choice.key, choice.categoryId, choice.path, choice.profileId ?? null,
   choice.supplierHub ? [choice.supplierHub.ownerId, choice.supplierHub.company.code, choice.supplierHub.company.name,
     choice.supplierHub.trail.map(node => [node.categoryId, node.name, node.isLeaf])] : null]) : '';
@@ -68,6 +69,8 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
   const [path, setPath] = useState<string[]>(profiles.find(profile => profile.id === selectedId)?.categoryPath ?? []);
   const [selectedKey, setSelectedKey] = useState(selectedId);
   const [query, setQuery] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const [directName,setDirectName]=useState(''),[directSearch,setDirectSearch]=useState<DirectSearch|null>(null);
+  const searchRequest=useRef<AbortController|null>(null),latestSearch=useRef<DirectSearch|null>(null);
   const [accountEpoch,setAccountEpoch]=useState(0);
   const account=useRef({ownerId:workspaceOwnerId,epoch:0,mounted:true});
   const activeRequest = useRef<AbortController | null>(null);
@@ -80,13 +83,15 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
   const selectionInputs=useMemo(()=>JSON.stringify([sourceTitle??null,selectedId,suppliedProfiles,sourceScope??null]),[sourceTitle,selectedId,suppliedProfiles,sourceScope]);
   const previousSelectionInputs=useRef(selectionInputs);
   function clearWorkbookSelection() { workbookSelectionRef.current = null; setWorkbookSelection(null); }
+  function publishSearch(value:DirectSearch|null){latestSearch.current=value;setDirectSearch(value);}
+  function clearDirectSearch(){searchRequest.current?.abort();searchRequest.current=null;publishSearch(null);}
   useAccountEffect(()=>{
     if(previousSelectionInputs.current===selectionInputs)return;
     previousSelectionInputs.current=selectionInputs;
     // An old lookup error is not a retry for a different source/profile, even
     // when those props later return to the same values (A -> B -> A).
     selectionEpoch.current++;clearWorkbookSelection();
-    activeRequest.current?.abort();activeRequest.current=null;setBusy(false);setError('');
+    activeRequest.current?.abort();activeRequest.current=null;clearDirectSearch();setDirectName('');setBusy(false);setError('');
     modeScope.current={mode:'recommend',epoch:modeScope.current.epoch+1};setModeEpoch(modeScope.current.epoch);setCatalogMode('recommend');setDirectOpened(false);setSavedCategoriesOpen(false);
   },[selectionInputs]);
   useAccountEffect(() => {
@@ -95,16 +100,20 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
       activeRequest.current?.abort();activeRequest.current=null;completed.current=false;createRequest.current=null;definitionRefreshRequest.current=null;
       selectionEpoch.current++;clearWorkbookSelection();
       modeScope.current={mode:'recommend',epoch:modeScope.current.epoch+1};setModeEpoch(modeScope.current.epoch);
-      setRefreshedProfiles(null);setLiveChoice(null);setSelectedKey('');setPath([]);setQuery('');setCatalogMode('recommend');setDirectOpened(false);setSavedCategoriesOpen(false);setConnectionMode('single');setBusy(false);setError('');
+      setRefreshedProfiles(null);setLiveChoice(null);setSelectedKey('');setPath([]);setQuery('');clearDirectSearch();setDirectName('');setCatalogMode('recommend');setDirectOpened(false);setSavedCategoriesOpen(false);setConnectionMode('single');setBusy(false);setError('');
     }
     setAccountEpoch(account.current.epoch);
     account.current.mounted=true;
-    return()=>{account.current.mounted=false;account.current.epoch++;activeRequest.current?.abort();activeRequest.current=null;};
+    return()=>{account.current.mounted=false;account.current.epoch++;activeRequest.current?.abort();activeRequest.current=null;searchRequest.current?.abort();searchRequest.current=null;};
   },[workspaceOwnerId]);
   const current=()=>account.current.mounted&&account.current.ownerId===workspaceOwnerId&&account.current.epoch===accountEpoch;
   function changeCatalogMode(mode:'recommend'|'direct') {
     if(!current()||busy||activeRequest.current||completed.current||modeScope.current.mode===mode)return;
     modeScope.current={mode,epoch:modeScope.current.epoch+1};setModeEpoch(modeScope.current.epoch);setCatalogMode(mode);
+    if(mode==='recommend'&&searchRequest.current){
+      searchRequest.current.abort();searchRequest.current=null;
+      if(latestSearch.current)publishSearch({...latestSearch.current,status:'local'});
+    }
     if(mode==='direct')setDirectOpened(true);
   }
   function openSavedCategories() {
@@ -124,6 +133,8 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
   const schema = selected?.categoryId ? selectedDefinition?.schema ?? getQuotationSchema(selected.categoryId, selected.path) : null;
   const savedPreviewWarning = selectedProfile && !selectedDefinition ? '저장된 상세 양식의 회사·코드·전체 경로 또는 원본 연결을 확인하지 못했습니다. 카테고리·양식 설정에서 다시 확인해주세요.' : '';
   const visible = searchCategoryChoices(choices, query);
+  const directMatches=useMemo(()=>directSearch?.result?.items.map(item=>({key:item.code,path:item.path,categoryId:item.code,item}))
+    ??(directSearch?searchLeafCategoryChoices(choices,directSearch.keyword).map(choice=>({key:choice.key,path:choice.path,categoryId:choice.categoryId,item:null})):[]),[choices,directSearch]);
   const connections = categoryChoicesAtPath(choices, path).filter(choice => choice.isLeaf);
   const hasChildren = categoryLevel(choices, path, path.length).length > 0;
   const depths = Math.max(1, path.length + (hasChildren ? 1 : 0));
@@ -139,22 +150,45 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
     setLiveChoice(null);setPath(next); const leaves = categoryChoicesAtPath(choices, next).filter(choice => choice.isLeaf);
     setSelectedKey(leaves.length === 1 ? leaves[0].key : leaves.some(choice => choice.key === selectedKey) ? selectedKey : ''); setError('');
   }
-  async function chooseRecommendation(item:HubCategoryRecommendation,result:HubCategoryRecommendations,origin:'recommend'|'direct',originEpoch:number){
+  async function searchDirect(){
+    const keyword=directName.trim();
+    if(!keyword||!current()||busy||activeRequest.current||completed.current||modeScope.current.mode!=='direct'||modeScope.current.epoch!==modeEpoch)return;
+    clearDirectSearch();setError('');
+    const controller=new AbortController();searchRequest.current=controller;
+    const pending:DirectSearch={keyword,result:null,status:'loading',error:''};publishSearch(pending);
+    const live=()=>!controller.signal.aborted&&current()&&searchRequest.current===controller&&modeScope.current.mode==='direct'&&modeScope.current.epoch===modeEpoch;
+    try{
+      const result=await loadSupplierHubCategorySearch(keyword,workspaceOwnerId,controller.signal);
+      if(live())publishSearch({...pending,result,status:result?'ready':'local'});
+    }catch(cause){
+      if(live())publishSearch({...pending,status:'local',error:cause instanceof Error?cause.message:'공식 카테고리 이름을 검색하지 못했습니다.'});
+    }finally{if(searchRequest.current===controller)searchRequest.current=null;}
+  }
+  async function chooseResolved(resolve:(signal:AbortSignal)=>Promise<CategoryChoice>,origin:'recommend'|'direct',originEpoch:number){
     if(!current()||activeRequest.current||busy||completed.current||modeScope.current.mode!==origin||modeScope.current.epoch!==originEpoch)return;
     const controller=new AbortController();activeRequest.current=controller;setBusy(true);setError('');
     selectionEpoch.current++;clearWorkbookSelection();setLiveChoice(null);setSelectedKey('');
     const epoch=selectionEpoch.current;let resolved:CategoryChoice|undefined;
     const cancelled=()=>controller.signal.aborted||!current()||selectionEpoch.current!==epoch;
-    try{resolved=await resolveRecommendedHubCategoryChoice(item,result,workspaceOwnerId,controller.signal);if(cancelled())return;setLiveChoice(resolved);setPath(resolved.path);setSelectedKey(resolved.key);}
+    try{resolved=await resolve(controller.signal);if(cancelled())return;setLiveChoice(resolved);setPath(resolved.path);setSelectedKey(resolved.key);}
     catch(error){if(!cancelled()){
-      const failure=error instanceof Error?error:Error('추천 카테고리를 확인하지 못했습니다.');
+      const failure=error instanceof Error?error:Error('선택한 카테고리를 확인하지 못했습니다.');
       setError(failure.message);
       // The radio panel owns the explicit same-candidate retry. Do not turn a
       // failed lookup into a successful application acknowledgement.
-      throw failure;
+      if(origin==='recommend')throw failure;
     }}
     finally{if(activeRequest.current===controller)activeRequest.current=null;if(!cancelled())setBusy(false);}
     if(resolved&&!cancelled())await confirm(resolved);
+  }
+  function chooseRecommendation(item:HubCategoryRecommendation,result:HubCategoryRecommendations,originEpoch:number){
+    return chooseResolved(signal=>resolveRecommendedHubCategoryChoice(item,result,workspaceOwnerId,signal),'recommend',originEpoch);
+  }
+  function chooseDirectSearch(match:(typeof directMatches)[number]){
+    if(!directSearch||latestSearch.current!==directSearch||modeScope.current.mode!=='direct'||modeScope.current.epoch!==modeEpoch||activeRequest.current||completed.current)return;
+    if(searchRequest.current){searchRequest.current.abort();searchRequest.current=null;publishSearch({...directSearch,status:'local'});}
+    const {item,categoryId,path}=match,result=directSearch.result;
+    void chooseResolved(signal=>item&&result?resolveSearchedHubCategoryChoice(item,result,workspaceOwnerId,signal):resolveCategoryPath(categoryId,path,workspaceOwnerId,signal),'direct',modeEpoch);
   }
   async function confirm(target = selected, mode: 'single' | 'schema' | 'workbook' = connectionMode === 'excel' ? 'schema' : 'single', reviewedWorkbook?: WorkbookSelection) {
     if (!current()||!target || !canConfirmCategory(target) || busy || activeRequest.current || completed.current) return;
@@ -181,7 +215,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
       if (reviewedWorkbook && JSON.stringify(scope) !== JSON.stringify(reviewedWorkbook.scope)) {
         clearWorkbookSelection();throw Error('승인 회사가 변경되었습니다. 현재 회사의 카테고리를 다시 선택해주세요.');
       }
-      if(target.supplierHub&&scope&&(!scope.company||scope.company.code!==target.supplierHub.company.code||scope.company.name!==target.supplierHub.company.name))throw Error('현재 로그인 계정의 승인 회사와 선택한 Supplier Hub 회사가 다릅니다. 같은 회사의 카테고리를 다시 선택해주세요.');
+      if(target.supplierHub&&scope&&(scope.ownerId!==target.supplierHub.ownerId||!scope.company||scope.company.code!==target.supplierHub.company.code||scope.company.name!==target.supplierHub.company.name))throw Error('현재 로그인 계정의 승인 회사와 선택한 Supplier Hub 회사가 다릅니다. 같은 회사의 카테고리를 다시 선택해주세요.');
       const hubSchema=target.supplierHub?confirmLiveCategorySelectionSchema(target,await loadLiveHubCategorySchema(target,controller.signal),scope?.company):undefined;
       if(cancelled())return;
       if(mode==='single'&&hubSchema&&(hubSchema.metadata.scopeType??hubSchema.metadata.scope)!=='Retail_Categorized_Single')
@@ -316,14 +350,26 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
   return <div className="category-picker" aria-busy={busy}>
     <div className="category-mode-tabs" role="tablist" aria-label="카테고리 선택 방식">{([['recommend','추천 선택'],['direct','직접 선택']] as const).map(([mode,label])=><button key={mode} id={`${pickerId}-${mode}-tab`} data-category-mode={mode} type="button" role="tab" aria-selected={catalogMode===mode} aria-controls={`${pickerId}-${mode}-panel`} tabIndex={catalogMode===mode?0:-1} disabled={busy} onKeyDown={tabKeyboard} onClick={()=>changeCatalogMode(mode)}>{label}</button>)}</div>
     <div id={`${pickerId}-recommend-panel`} className="category-mode-panel" role="tabpanel" aria-label="추천 선택" aria-labelledby={`${pickerId}-recommend-tab`} hidden={catalogMode!=='recommend'}>
-      <CategoryRecommendationsPanel initialTitle={sourceTitle??''} workspaceOwnerId={workspaceOwnerId} sourceScope={sourceScope} selectionScope={selectionInputs} disabled={busy||catalogMode!=='recommend'} onChoose={(item,result)=>chooseRecommendation(item,result,'recommend',modeEpoch)}/>
+      <CategoryRecommendationsPanel initialTitle={sourceTitle??''} workspaceOwnerId={workspaceOwnerId} sourceScope={sourceScope} selectionScope={selectionInputs} disabled={busy||catalogMode!=='recommend'} onChoose={(item,result)=>chooseRecommendation(item,result,modeEpoch)}/>
       {profiles.length>0&&<button type="button" className="btn ghost" disabled={busy} onClick={openSavedCategories}>저장한 카테고리 선택</button>}
     </div>
     <div id={`${pickerId}-direct-panel`} className="category-mode-panel" role="tabpanel" aria-label="직접 선택" aria-labelledby={`${pickerId}-direct-tab`} hidden={catalogMode!=='direct'}>
     {directOpened&&<>
-    <CategoryRecommendationsPanel purpose="search" initialTitle="" workspaceOwnerId={workspaceOwnerId} sourceScope={sourceScope} selectionScope={selectionInputs} disabled={busy||catalogMode!=='direct'} onChoose={(item,result)=>chooseRecommendation(item,result,'direct',modeEpoch)}/>
+    <div className="category-direct-search" role="search" aria-label="카테고리 이름 검색">
+      <label htmlFor={`${pickerId}-category-name`}>카테고리 이름으로 검색</label>
+      <div className="category-direct-search-input">
+        <input id={`${pickerId}-category-name`} aria-label="카테고리 이름" inputMode="search" maxLength={120} value={directName} placeholder="카테고리 이름으로 검색 (Enter로 검색)" disabled={busy||catalogMode!=='direct'} onChange={event=>{if(!current()||activeRequest.current||modeScope.current.mode!=='direct'||modeScope.current.epoch!==modeEpoch)return;clearDirectSearch();setError('');setDirectName(event.target.value);}} onKeyDown={event=>{if(event.key==='Enter'&&!event.nativeEvent.isComposing){event.preventDefault();void searchDirect();}}}/>
+        <button type="button" className="btn primary" disabled={busy||catalogMode!=='direct'||!directName.trim()} onClick={()=>void searchDirect()}>검색</button>
+      </div>
+      {directSearch?.status==='loading'&&<p role="status">공식 카테고리를 검색하고 있습니다.</p>}
+      {directSearch?.status==='local'&&<p role="status">{directSearch.error?directSearch.error+' ':'확장 연결에서 전체 카테고리 이름 검색을 사용할 수 없습니다. '}저장·관찰 목록의 결과를 표시합니다.</p>}
+      {directSearch&&!directMatches.length&&directSearch.status!=='loading'&&<p role="status">일치하는 최종 카테고리가 없습니다. 아래 단계별 목록에서 찾아주세요.</p>}
+      {directMatches.length>0&&<div className="category-search-results" aria-label="카테고리 검색 결과">{directMatches.map(match=><button key={match.key} type="button" disabled={busy||catalogMode!=='direct'} onClick={()=>chooseDirectSearch(match)}><span><strong>{match.path.at(-1)}</strong><em>{match.path.join(' › ')}</em></span><small className="ready">최종</small></button>)}</div>}
+    </div>
+    <div hidden={directMatches.length>0}>
     <p className="category-instructions">단계별로 선택하면 하위 카테고리가 표시됩니다. 최종 카테고리의 전체 경로를 확인해주세요.</p>
     <SupplierHubCategoryBrowser disabled={busy||catalogMode!=='direct'} onUnavailable={()=>{if(current()&&modeScope.current.mode==='direct'&&modeScope.current.epoch===modeEpoch)setSavedCategoriesOpen(true);}} onNavigating={()=>{if(!current()||activeRequest.current||modeScope.current.mode!=='direct'||modeScope.current.epoch!==modeEpoch)return;selectionEpoch.current++;clearWorkbookSelection();completed.current=false;setLiveChoice(null);setSelectedKey('');setPath([]);setError('');}} onChoice={choice=>{if(!current()||activeRequest.current||completed.current||modeScope.current.mode!=='direct'||modeScope.current.epoch!==modeEpoch)return;selectionEpoch.current++;clearWorkbookSelection();setLiveChoice(choice);setPath(choice.path);setSelectedKey(choice.key);setError('');if(canConfirmCategory(choice))void confirm(choice);}}/>
+    </div>
     {path.length > 0 && <nav className="category-breadcrumb" aria-label="선택한 카테고리 경로">{path.map((name,index)=><button type="button" key={index} disabled={busy||Boolean(liveChoice)} onClick={()=>navigate(path.slice(0,index+1))}>{name}</button>)}</nav>}
     <details className="category-saved" open={savedCategoriesOpen} onToggle={event=>setSavedCategoriesOpen(event.currentTarget.open)}><summary>저장한 카테고리·관찰 목록에서 선택</summary>
     {profiles.length > 0 && <label className="field"><span>저장한 카테고리 설정</span><select value={selected?.profileId ?? ''} disabled={busy} onChange={event => { const found = choices.find(choice => choice.profileId === event.target.value); if (found) { choose(found); setQuery(''); } }}><option value="">저장한 설정 선택</option>{profiles.map(profile => { const company = savedDefinitions.get(profile.id)?.profile.hubSchema?.company; return <option key={profile.id} value={profile.id}>{profile.name} · {profile.categoryId || '코드 미입력'} · {company ? `${company.name} (${company.code})` : '회사 미확인'} · {profile.categoryPath.join(' › ')}</option>; })}</select></label>}

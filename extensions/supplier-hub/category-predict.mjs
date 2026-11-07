@@ -11,13 +11,20 @@ const validOwner=value=>typeof value==='string'&&/^\w[\w-]{0,99}$/.test(value);
 
 /** Recommendations are read-only suggestions. Selection and official schema verification remain separate. */
 export async function readAppSupplierHubCategoryRecommendations(message,sender,api=chrome){
+  return readAppSupplierHubCategoryQuery(message,sender,api,false);
+}
+export async function readAppSupplierHubCategorySearch(message,sender,api=chrome){
+  return readAppSupplierHubCategoryQuery(message,sender,api,true);
+}
+async function readAppSupplierHubCategoryQuery(message,sender,api,search){
   let appUrl;try{appUrl=new URL(sender?.url);}catch{throw Error('앱 출처를 확인하지 못했습니다.');}
   const origin=appUrl.origin,windowId=sender?.tab?.windowId,appTabId=sender?.tab?.id;
-  if(message?.type!=='YOOFAM_RECOMMEND_CATEGORIES'||sender.frameId!==0||appUrl.username||appUrl.password||!HANDOFF_ORIGINS.includes(origin)
+  const input=search?message?.keyword:message?.productName;
+  if(message?.type!==(search?'YOOFAM_SEARCH_CATEGORIES':'YOOFAM_RECOMMEND_CATEGORIES')||sender.frameId!==0||appUrl.username||appUrl.password||!HANDOFF_ORIGINS.includes(origin)
     ||!Number.isSafeInteger(windowId)||windowId<0||!Number.isSafeInteger(appTabId)||appTabId<0
-    ||typeof message.productName!=='string'||!message.productName.trim()||message.productName.trim().length>500||/[\u0000-\u001f\u007f]/.test(message.productName)
-    ||!validOwner(message.expectedOwnerId)||sender.documentId!==undefined&&!documentId(sender.documentId))throw Error('허용된 앱에서 로그인 회원과 추천할 상품명을 확인해주세요.');
-  const productName=message.productName.trim(),appDocumentId=sender.documentId;
+    ||typeof input!=='string'||!input.trim()||input.trim().length>(search?120:500)||/[\u0000-\u001f\u007f]/.test(input)
+    ||!validOwner(message.expectedOwnerId)||sender.documentId!==undefined&&!documentId(sender.documentId))throw Error(search?'허용된 앱에서 로그인 회원과 검색할 카테고리 이름을 확인해주세요.':'허용된 앱에서 로그인 회원과 추천할 상품명을 확인해주세요.');
+  const productName=input.trim(),appDocumentId=sender.documentId;
   const readContext=async()=>{
     const tab=await api.tabs.get(appTabId);
     if(tab?.id!==appTabId||tab.windowId!==windowId||tab.pendingUrl||tab.url!==sender.url)throw Error('카테고리를 추천하던 앱 탭이 변경되었습니다.');
@@ -45,15 +52,16 @@ export async function readAppSupplierHubCategoryRecommendations(message,sender,a
   };
   const before=await execute(verifySupplierHubCompany,[context.company,'catalog']);
   if(before?.code!==context.company.code)throw Error('회원 회사와 Supplier Hub 회사코드가 다릅니다.');
-  const result=await execute(getRecommendations,[productName,context.company]);
+  const result=await execute(getRecommendations,[productName,context.company,...(search?[true]:[])]);
   const after=await execute(verifySupplierHubCompany,[context.company,'catalog']);
   if(after?.code!==context.company.code)throw Error('추천 조회 중 Supplier Hub 회사코드가 변경되었습니다.');
   const latest=await readContext();
   if(latest.ownerId!==context.ownerId||latest.company.code!==context.company.code||latest.company.name!==context.company.name)throw Error('추천을 읽는 동안 앱 회원 또는 회사정보가 변경되었습니다.');
   await checkTab();
   const now=Date.now();
-  if(result?.source!=='supplier-hub-category-predict-api'||result.productName!==productName||result.company?.code!==context.company.code||result.company?.name!==context.company.name
-    ||!Number.isSafeInteger(result.observedAt)||result.observedAt>now+30000||result.observedAt<now-30000||!Array.isArray(result.items)||result.items.length>3)throw Error('선택한 회원·회사·상품명의 최신 카테고리 추천인지 확인하지 못했습니다.');
+  const source=search?'supplier-hub-category-keyword-api':'supplier-hub-category-predict-api';
+  if(result?.source!==source||result[search?'keyword':'productName']!==productName||result.company?.code!==context.company.code||result.company?.name!==context.company.name
+    ||!Number.isSafeInteger(result.observedAt)||result.observedAt>now+30000||result.observedAt<now-30000||!Array.isArray(result.items)||result.items.length>(search?1000:3))throw Error(search?'선택한 회원·회사·검색어의 최신 카테고리 결과를 확인하지 못했습니다.':'선택한 회원·회사·상품명의 최신 카테고리 추천인지 확인하지 못했습니다.');
   const ids=new Set(),codes=new Set();
   const items=result.items.map(item=>{
     if(!item||typeof item!=='object'||Array.isArray(item)||typeof item.id!=='string'||!item.id.trim()||item.id!==item.id.trim()||item.id.length>100||/[\u0000-\u001f\u007f]/.test(item.id)||ids.has(item.id)
@@ -61,5 +69,5 @@ export async function readAppSupplierHubCategoryRecommendations(message,sender,a
       ||item.path.some(name=>typeof name!=='string'||!name.trim()||name!==name.trim()||name.length>240||/[>\u0000-\u001f\u007f]/.test(name))||item.label!==item.path.join(' > '))throw Error('추천 카테고리의 코드·전체 경로를 확인하지 못했습니다.');
     ids.add(item.id);codes.add(item.code);return {id:item.id,code:item.code,path:[...item.path],label:item.label};
   });
-  return {source:'supplier-hub-category-predict-api',ownerId:context.ownerId,company:{...context.company},productName,observedAt:result.observedAt,items};
+  return {source,ownerId:context.ownerId,company:{...context.company},...(search?{keyword:productName}:{productName}),observedAt:result.observedAt,items};
 }

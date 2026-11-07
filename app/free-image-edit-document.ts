@@ -3,6 +3,7 @@ import { MAX_OCR_PIXELS, MAX_OCR_REGIONS, MAX_OCR_TEXT, type FreeImageSource } f
 import { validateFreeImageCrop, type FreeImageCrop } from '@/app/free-image-crop';
 import { validateFreeImageBrush, MAX_FREE_IMAGE_BRUSH_TOTAL_POINTS } from '@/app/free-image-brush';
 import { resolveFreeImageTextStyle } from '@/app/free-image-text-style';
+import { freeImagePhotoGeometry, validateFreeImagePhoto, type FreeImagePhoto } from '@/app/free-image-photo';
 
 export type FreeImageEditDocument = {
   format: 'free-image-edit-v1';
@@ -12,10 +13,11 @@ export type FreeImageEditDocument = {
   regions: FreeImageRegion[];
   crop?: FreeImageCrop;
   paintOrder?: 'backgrounds-first-v1';
+  photo?: FreeImagePhoto;
 };
 export const MAX_FREE_IMAGE_EDIT_BYTES = 512 * 1024;
 
-const documentKeys = ['format', 'width', 'height', 'sourceLanguage', 'regions', 'crop', 'paintOrder'];
+const documentKeys = ['format', 'width', 'height', 'sourceLanguage', 'regions', 'crop', 'paintOrder', 'photo'];
 const regionKeys = ['id', 'text', 'box', 'confidence', 'selected', 'translated', 'issue', 'translationProvenance',
   'background', 'foreground', 'fontSize', 'erase', 'brush', 'fontFamily', 'bold', 'italic', 'textAlign', 'lineHeight', 'backgroundMode', 'textFill', 'textStroke', 'textShadow', 'rotation'];
 const boxKeys = ['x', 'y', 'width', 'height'];
@@ -107,8 +109,14 @@ export function validateFreeImageEditDocument(value: unknown, source: Pick<FreeI
     result.crop = crop;
   }
   if (value.paintOrder !== undefined) result.paintOrder = 'backgrounds-first-v1';
+  if (value.photo !== undefined) result.photo = validateFreeImagePhoto(value.photo);
   if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_FREE_IMAGE_EDIT_BYTES) {
     throw Error('저장할 이미지 편집 문서는 512KB 이내로 줄여주세요.');
   }
   return result;
+}
+
+export function freeImageEditOutputDimensions(document: Pick<FreeImageEditDocument, 'width' | 'height' | 'crop' | 'photo'>) {
+  const { width, height } = freeImagePhotoGeometry(document.crop?.width ?? document.width, document.crop?.height ?? document.height, document.photo);
+  return { width, height };
 }

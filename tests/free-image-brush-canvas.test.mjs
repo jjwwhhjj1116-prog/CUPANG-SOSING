@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { createRequire } from 'node:module';
 const native = createRequire(import.meta.url);
+const photoModule = {};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image-photo.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:photoModule});
 const plain = value => JSON.parse(JSON.stringify(value));
 const nodes = value => Array.isArray(value) ? value.flatMap(nodes) : value && typeof value === 'object' ? [value, ...nodes(value.props?.children)] : [];
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value == null ? '' : String(value);
@@ -26,7 +27,7 @@ function fixture(patch = {}) {
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/free-image-brush-canvas.tsx', import.meta.url), 'utf8'),
     { fileName: 'brush.tsx', compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
-    { exports, require(name) { if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return native(name); assert.equal(name, '@/app/free-image-brush'); return { MAX_FREE_IMAGE_BRUSH_POINTS: 2048 }; } });
+    { exports, require(name) { if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return native(name); if(name==='@/app/free-image-photo')return photoModule; assert.equal(name, '@/app/free-image-brush'); return { MAX_FREE_IMAGE_BRUSH_POINTS: 2048 }; } });
   const render = () => { cursor = 0; const tree = exports.FreeImageBrushCanvas(props); effects.splice(0).forEach(fn => fn()); return tree; };
   const drawSurface = () => nodes(render()).find(node => node.type === 'svg');
   const event = (x, y, extra = {}) => ({ currentTarget: surface, clientX: x, clientY: y, pointerId: 1, button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true, nativeEvent: {}, preventDefault() {}, ...extra });

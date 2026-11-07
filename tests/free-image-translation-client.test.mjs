@@ -41,13 +41,18 @@ function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts, inpaint
         if (distance <= radius) paint(x, y, 1, 1, color);
       }
     };
-    const context = { font: '10px Arial', fillStyle: '#000000', textBaseline: 'top', textAlign: 'left',
+    let transform = [1, 0, 0, 1, 0, 0];
+    const context = { font: '10px Arial', fillStyle: '#000000', textBaseline: 'top', textAlign: 'left', filter: 'none',
+      setTransform(...matrix) { transform = matrix; operations.push(['transform', ...matrix]); },
       drawImage(image, x, y) {
         const width=image.width??image.naturalWidth,height=image.height??image.naturalHeight;
+        const [a,b,c,d,e,f]=transform;
+        if (this.filter !== 'none') operations.push(['filter', this.filter]);
         output.pixels ??= new Uint8Array(output.width*output.height*4);
         for(let row=0;row<height;row++)for(let col=0;col<width;col++){
           const offset=(row*width+col)*4,rgba=image.pixels?.slice(offset,offset+4);
-          if(rgba?.[3])paint(x+col,y+row,1,1,rgba);
+          const px=x+col+0.5,py=y+row+0.5;
+          if(rgba?.[3])paint(Math.floor(a*px+c*py+e),Math.floor(b*px+d*py+f),1,1,rgba);
         }
         operations.push(['draw', output.width, output.height]);
       },
@@ -91,6 +96,24 @@ const ocr = lines => ({ blocks: [{ paragraphs: [{ lines }] }] });
 const line = (text, confidence, bbox = { x0: 1, y0: 1, x1: 12, y1: 8 }) => ({ text, confidence, bbox });
 const quotationRequest = (input = 'detailImages') => ({ kind: 'quotation', profileId: null, optionId: 'sku-a', input, fieldKey: 'wire-' + input, slotIndex: input === 'mainImage' ? 0 : 1,
   revision: 7, inputFingerprint: 'c'.repeat(64), optionRevision: 3, value: input === 'mainImage' ? 'owner/original.png' : 'owner/other.png\nowner/original.png' });
+
+test('whole-photo preview applies shared orientation to pixels and only filters the base photo', async () => {
+  const h = fixture(), loaded = image(h), signal = new AbortController().signal;
+  const photo = { rotation: 90, flipX: true, flipY: true, brightness: 130, contrast: 90, saturation: 85, hue: -15 };
+  const erase = { ...region('erase', { x: 1, y: 0, width: 1, height: 1 }, ''), erase: true, background: '#ff0000' };
+  const result = await h.client.renderFreeImageTranslation(loaded, [erase], signal, [], undefined, 'zh', photo);
+  assert.deepEqual([result.width, result.height], [12, 20]);
+  assert.deepEqual(plain(result.editDocument.photo), photo);
+  assert.deepEqual(h.operations.filter(([kind]) => kind === 'filter'), [['filter', 'brightness(130%) contrast(90%) saturate(85%) hue-rotate(-15deg)']]);
+  assert.ok(h.operations.findIndex(([kind]) => kind === 'filter') < h.operations.findIndex(([kind]) => kind === 'fill'));
+  const pixel = (value, x, y) => Array.from(value.pixels.slice((y * value.width + x) * 4, (y * value.width + x + 1) * 4));
+  const output = h.canvases.at(-1);
+  assert.deepEqual(pixel(output, 0, 18), [255, 0, 0, 255]);
+  assert.deepEqual(pixel(output, 11, 0), pixel(loaded.canvas, 19, 11));
+  const photoOnly = await h.client.renderFreeImageTranslation(loaded, [], signal, [], undefined, 'zh', { ...photo, flipY: false });
+  assert.equal(photoOnly.editDocument.regions.length, 0);
+  assert.notEqual(await h.client.expectedFreeImageOutputKey(result), await h.client.expectedFreeImageOutputKey(photoOnly));
+});
 
 test('role-source list validates current product, role and version before exposing keys', async () => {
  const h=fixture(),body={productId:'product',productVersion:version,contentRevision:2,role:'detail',keys:['owner/original.png']},calls=[];

@@ -6,7 +6,11 @@ import type {ProductOptions} from '@/app/product-options';
 import type {SeoWorkspaceView} from '@/app/seo-workspace';
 import type {SeoWorkspaceDraft} from '@/app/seo-workspace-client';
 import {untouchedIntakeKeywords} from '@/app/translation-batch-adoption';
-import {translationAttributeIssue} from '@/app/translation-attribute-evidence';
+import {translationAttributeFactText,translationAttributeIssue,translationNumbers} from '@/app/translation-attribute-evidence';
+import {guardCurrentSeoDraft,normalizeSeoQuantityNumbers,SeoFactEmptyError} from '@/app/seo-current-policy';
+import {quotationKeywordPlan} from '@/app/quotation-keywords';
+import {unsupportedProductMaterial} from '@/app/product-material-evidence';
+import {unsupportedTranslatedProductClaim} from '@/app/product-translation-quality';
 import {seoGuidanceTitle,seoGuidanceTags,validateSeoGuidanceComposition,type SeoGuidanceComposition} from '@/app/seo-guidance-composition';
 
 type NameSource={id:string;originalName:string;supplierSku:string;translatedName:string;provenance:string;included:boolean};
@@ -28,6 +32,35 @@ export function seoRegenerationOptionBatch(options:ProductOptions,limit:number,a
  return {attributes:all.slice(0,count),remaining:Math.max(0,all.length-count)};
 }
 
+/** Recover a title reduced to its target without changing the provider result or accepted option values. */
+function sparseSeoTitle(job:TranslationJob,draft:NonNullable<TranslationJob['result']>['draft']):string|undefined{
+ const policy=job.review.seoComposition;
+ if(!policy?.memo.features.trim())return;
+ const {memo}=policy;
+ const comparable=(value:string)=>value.replace(/\s+/gu,'').toLowerCase();
+ const generic=(keywords:string,brand=memo.brand)=>seoGuidanceTitle({title:''},{...memo,brand,features:'',keywords});
+ const keywords=quotationKeywordPlan(memo.keywords);
+ if(!keywords.kept.length||keywords.omitted.some(item=>item.reason!=='중복 검색어'))return;
+ const base=comparable(draft.title);
+ if(![...keywords.kept,memo.keywords].some(keyword=>comparable(generic(keyword))===base||comparable(generic(keyword,''))===base))return;
+ const candidate=seoGuidanceTitle({title:''},memo);
+ if(!candidate||candidate.length>100)return;
+ const {source,seoCompositionContext:context}=job.review;
+ const selectedFacts=context?.selectedOptions.flatMap(option=>[option.name,option.nameTrans,option.color,option.size])??[];
+ const facts=[source.title,source.description,...source.attributes.map(translationAttributeFactText),
+  ...selectedFacts].join(' ');
+ const confirmedFacts=facts+' '+memo.features;
+ if(unsupportedProductMaterial(candidate,confirmedFacts)||unsupportedTranslatedProductClaim(candidate,confirmedFacts))return;
+ const numbers=new Set(translationNumbers(normalizeSeoQuantityNumbers(facts+' '+memo.brand)));
+ if(translationNumbers(candidate).some(number=>!numbers.has(number)))return;
+ try{
+  const checked=guardCurrentSeoDraft({title:candidate,description:'',keywords:[],attributes:[],warnings:[]},source,policy,context?{...context,bundleQuantity:null}:undefined);
+  if(checked.title===candidate)return candidate;
+ }catch(error){
+  if(!(error instanceof SeoFactEmptyError))throw error;
+ }
+}
+
 /** A completed provider job becomes editable input only. No content, option or
  * provenance is changed until the member uses the ordinary explicit SEO save. */
 export function createSeoGeneratedDraft(input:{ownerId?:string;productVersion:string;content:ProductContent;options:ProductOptions;job:TranslationJob;brand:string;memo?:Pick<SeoGuidanceComposition,'brand'|'features'|'keywords'>;replaceSaved?:boolean}):SeoGeneratedDraft{
@@ -41,6 +74,7 @@ export function createSeoGeneratedDraft(input:{ownerId?:string;productVersion:st
  const eligible=(field:'title'|'keywords'|'description')=>input.replaceSaved||content.seo[field].provenance!=='manual'||field==='keywords'&&untouchedIntakeKeywords(content,job);
  const memo=input.memo?{...input.memo,brand:input.memo.brand.split(',')[0].trim()}:null;
  const composed:Partial<Pick<typeof draft,'title'|'keywords'>>={};
+ if(eligible('title'))composed.title=sparseSeoTitle(job,draft);
  if(memo&&!job.review.seoComposition){
   let targetsValid=true;
   try{const tags=seoGuidanceTags(draft,{...memo,title:''},job.review.seoKeywordPolicy==='couplus-generated-v1');if(eligible('keywords')){composed.keywords=tags.tags;if(tags.omitted.length)warnings.push('검색태그 한도에 맞지 않는 추가 번역 태그는 넣지 않았습니다. 타겟과 원문을 확인해주세요.');}}

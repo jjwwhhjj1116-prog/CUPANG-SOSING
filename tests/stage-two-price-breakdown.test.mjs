@@ -25,6 +25,92 @@ test('an empty margin draft stays unknown instead of displaying a fabricated rat
  const h=await optionPriceTableUI(priceTableCompanies[0],{count:2,integrated:true});try{
   const before=plain(await h.rows());change(h,'공급 마진율 (%)','');await h.settle();assert.equal(h.node('가격 설정 비율').props['data-price-ratio-valid'],false);assert.deepEqual(parts(h),[]);assert.match(text(h.node('가격 설정 비율')),/마진율을 확인/);
   assert.equal(h.button('가격 설정 저장하기').props.disabled,true);assert.equal(h.writes.length,0);assert.deepEqual(plain(await h.rows()),before);
+  change(h,'공급 마진율 (%)','50');change(h,'가격 옵션 1 판매가','');change(h,'쿠팡 마진율 (%)','45');
+  assert.equal(h.node('가격 옵션 1 판매가').props.value,'');
+  assert.equal(h.node('가격 옵션 2 판매가').props.value,'8000');
+ }finally{h.close();}
+});
+
+const amounts=(h,index)=>['공급가','판매가'].map(label=>Number(h.node(`가격 옵션 ${index} ${label}`).props.value));
+async function savedPriceFixture(h,policy,costs){
+ const path='/api/products/'+h.product.id+'/stage-two-pricing',current=await(await h.request(path)).json();
+ const response=await h.request(path,{method:'POST',body:JSON.stringify({
+  expectedProductVersion:current.product.updated_at,expectedOptionRevision:current.options.options.revision,
+  expectedQuotationRevision:current.quotation.revision,expectedInputFingerprint:current.quotation.inputFingerprint,
+  policy,rows:h.load('app/product-options.ts').optionInputs(current.options.options).map((row,index)=>({...row,unitCostCny:costs[index]})),changes:[],recalculate:false
+ })});
+ assert.equal(response.status,200,await response.clone().text());
+ await h.reloadProduct();await h.settle();
+ h.button('저장 가격 다시 조회').props.onClick();await h.settle();
+ h.writes.length=0;
+ return path;
+}
+
+test('fixed sourcing Coupang rate changes sale only, including all equal-cost rows, and persists to quotation',async()=>{
+ const h=await optionPriceTableUI(priceTableCompanies[0],{count:6,integrated:true});try{
+  const policy={...h.policy,exchangeRate:310,coupangMargin:45,useIntegratedRate:true,integratedRate:290,
+   fixedSourcing:{version:1,referenceCny:4.8,salePrice:10500,supplyPrice:5775,purchaseCost:2738,sourceUnitsPerPack:1}};
+  const path=await savedPriceFixture(h,policy,[5,4.8,4.8,4.8,4.8,4.8]);
+  assert.deepEqual(amounts(h,1),[6020,10940]);
+  assert.deepEqual(amounts(h,2),[5775,10500]);
+  const guide=nodes(h.render()).find(node=>node.type==='details'&&text(node.props.children[0])==='고정 소싱가격 안내');
+  assert.ok(guide);assert.equal(guide.props.open,undefined);
+  change(h,'쿠팡 마진율 (%)','');change(h,'쿠팡 마진율 (%)','40');
+  assert.deepEqual(amounts(h,1),[6020,10030]);
+  assert.deepEqual(amounts(h,6),[5775,9630]);
+  change(h,'쿠팡 마진율 (%)','45');
+  assert.deepEqual(amounts(h,1),[6020,10940]);assert.deepEqual(amounts(h,6),[5775,10500]);
+  change(h,'쿠팡 마진율 (%)','40');change(h,'가격 옵션 1 개당 원가','5.2');
+  assert.deepEqual(amounts(h,1),[6260,10430]);assert.deepEqual(amounts(h,2),[5775,9630]);
+  change(h,'가격 옵션 1 개당 원가','5');
+  h.button('일괄 재계산').props.onClick();
+  assert.deepEqual(Array.from({length:6},(_,index)=>amounts(h,index+1)),[[6020,10030],...Array.from({length:5},()=>[5775,9630])]);
+  assert.equal(h.writes.length,0);
+  h.button('가격 설정 저장하기').props.onClick();await h.settle();
+  assert.equal(h.saved,1,text(h.render()));
+  const saved=await(await h.request(path)).json();
+  assert.equal(saved.options.pricing.policy.fixedSourcing.referenceCny,4.8);
+  assert.equal(saved.options.pricing.policy.fixedSourcing.salePrice,10500);
+  const values=saved.quotation.resolved.rows.filter(row=>row.optionId!==null).map(row=>[row.fields.supplyPrice.value,row.fields.salePrice.value]);
+  assert.deepEqual(values,[['6020','10030'],...Array.from({length:5},()=>['5775','9630'])]);
+ }finally{h.close();}
+});
+
+test('a margin-only edit preserves the ordinary price calculation basis until an independent full recalculation',async()=>{
+ const h=await optionPriceTableUI(priceTableCompanies[0],{count:2,integrated:true});try{
+  await savedPriceFixture(h,h.policy,[20,20]);
+  assert.deepEqual(amounts(h,1),[14000,23330]);
+  change(h,'쿠팡 마진율 (%)','45');
+  assert.deepEqual(amounts(h,1),[14000,25450]);assert.deepEqual(amounts(h,2),[14000,25450]);
+  h.button('일괄 재계산').props.onClick();assert.deepEqual(amounts(h,1),[14000,25450]);
+  h.button('가격 설정 저장하기').props.onClick();await h.settle();
+  assert.equal(h.saved,1,text(h.render()));assert.deepEqual(amounts(h,1),[14000,25450]);
+  h.button('일괄 재계산').props.onClick();
+  assert.deepEqual(amounts(h,1),[10000,18180]);assert.deepEqual(amounts(h,2),[10000,18180]);
+  change(h,'적용 환율 (CNY → KRW)','400');
+  assert.deepEqual(amounts(h,1),[11000,20000]);assert.deepEqual(amounts(h,2),[11000,20000]);
+ }finally{h.close();}
+});
+
+test('an edited row copies its draft CNY to selected rows only and saves the reviewed prices once',async()=>{
+ const h=await optionPriceTableUI(priceTableCompanies[0],{count:4,integrated:true});try{
+  const initial=plain(await h.rows());
+  h.node('가격 검색 결과 전체 선택').props.onChange({target:{checked:true}});
+  h.node('가격 옵션 4 선택').props.onChange({target:{checked:false}});
+  change(h,'가격 옵션 1 개당 원가','5');
+  const sourceSupply=amounts(h,1)[0];
+  change(h,'쿠팡 마진율 (%)','45');
+  assert.deepEqual(amounts(h,1),[sourceSupply,8640]);
+  change(h,'가격 옵션 검색','fixture-sku-1');
+  const copy=h.button('가격 옵션 1 원가를 선택 옵션에 동일 적용');
+  copy.props.onClick();
+  change(h,'가격 옵션 검색','');
+  assert.deepEqual(Array.from({length:4},(_,i)=>h.node(`가격 옵션 ${i+1} 개당 원가`).props.value),[5,5,5,3.99]);
+  assert.deepEqual(amounts(h,1),amounts(h,2));assert.deepEqual(amounts(h,1),amounts(h,3));
+  assert.equal(h.writes.length,0);assert.deepEqual(plain(await h.rows()),initial);
+  h.button('옵션 가격 저장하기').props.onClick();await h.settle();
+  assert.equal(h.saved,1,text(h.render()));assert.equal(h.writes.length,1);
+  assert.deepEqual(Array.from((await h.rows()).rows,row=>row.unitCostCny),[5,5,5,3.99]);
  }finally{h.close();}
 });
 

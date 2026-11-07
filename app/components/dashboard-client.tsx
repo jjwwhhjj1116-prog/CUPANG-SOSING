@@ -18,8 +18,9 @@ import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 import { ChangeEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { StudioSidebar } from '@/app/components/studio-navigation';
 import { CategoryProfileEditor } from '@/app/components/category-profile-editor';
-import { IntakeQueuePanel, type IntakeSourceSeed, type IntakeCategoryEntry } from '@/app/components/intake-queue-panel';
+import { IntakeQueuePanel, type IntakeSourceSeed, type IntakeCategoryEntry, type IntakeReviewTarget } from '@/app/components/intake-queue-panel';
 import { useIntakeDraft } from '@/app/components/use-intake-draft';
+import { newIntakeDraftGoal } from '@/app/intake-draft';
 import { ProductArchive } from '@/app/components/product-archive';
 import { ProductManagementWorkspace } from '@/app/components/product-management-workspace';
 import HistoricalAiRegistrationsPanel from '@/app/components/historical-ai-registrations-panel';
@@ -232,7 +233,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     return()=>{operation.mounted=false;operation.saving=false;operation.epoch++;};
   },[workspaceOwnerId]);
   const submissionContext=useMemo(()=>({ownerId:workspaceOwnerId}),[workspaceOwnerId]);
-  type SubmissionSession={context:typeof submissionContext;target:{product:Product;profileId?:string}|null};
+  type SubmissionSession={context:typeof submissionContext;target:{product:Product;profileId?:string}|null;products?:readonly Product[]};
   const [submissionSession,setSubmissionSession]=useState<SubmissionSession|null>(null);
   type SubmissionLock={session:SubmissionSession;source:boolean;close:boolean};
   const submissionLock=useRef<SubmissionLock|null>(null),[submissionLockState,setSubmissionLockState]=useState<SubmissionLock|null>(null);
@@ -243,11 +244,12 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   },[submissionContext]);
   const currentSubmission=submissionSession?.context===submissionContext?submissionSession:null;
   const submissionTarget=currentSubmission?.target;
-  function openSubmission(target:SubmissionSession['target']):boolean {
-    if(batchBusyRef.current||liveSubmissionContext.current!==submissionContext||target&&workspaceOwnerId&&target.product.owner_id!==workspaceOwnerId)return false;
+  function openSubmission(target:SubmissionSession['target'],intakeProducts?:readonly Product[]):boolean {
+    if(batchBusyRef.current||liveSubmissionContext.current!==submissionContext||target&&workspaceOwnerId&&target.product.owner_id!==workspaceOwnerId
+      ||intakeProducts&&(!workspaceOwnerId||!intakeProducts.length||intakeProducts.some(product=>product.owner_id!==workspaceOwnerId)))return false;
     const previous=submissionLock.current;
     if(previous&&(previous.source||previous.close)&&submissionCurrent(previous.session)){setToast('현재 문서의 전송·저장 결과를 먼저 확인해주세요.');return false;}
-    const session={context:submissionContext,target};submissionLock.current=null;setSubmissionLockState(null);liveSubmissionSession.current=session;setSubmissionSession(session);
+    const session={context:submissionContext,target,...(intakeProducts?{products:intakeProducts.map(product=>({...product}))}:{})};submissionLock.current=null;setSubmissionLockState(null);liveSubmissionSession.current=session;setSubmissionSession(session);
     return true;
   }
   function submissionCurrent(session:SubmissionSession|null) {
@@ -360,15 +362,16 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   function setSourceWork(value:SourceWorkPlan|null){sourceWorkRef.current=value;setSourceWorkState(value);}
   useEffect(()=>()=>{sourceWorkRef.current=null;},[workspaceOwnerId]);
   const batchScope=useMemo(()=>({ownerId:workspaceOwnerId}),[workspaceOwnerId]);
-  type BatchState={scope:typeof batchScope;open:boolean;busy:boolean;run:BatchRun|null};
+  type BatchState={scope:typeof batchScope;open:boolean;busy:boolean;run:BatchRun|null;intake?:{products:readonly Product[];company:string}};
   const [batchState,setBatchState]=useState<BatchState>(()=>({scope:batchScope,open:false,busy:false,run:null}));
   // Rendering a different owner hides the prior session immediately, including
   // A -> B -> A. The layout cleanup only revokes callbacks and in-flight reads.
   const currentBatch=batchState.scope===batchScope?batchState:null;
   const batchOpen=currentBatch?.open??false,batchBusy=currentBatch?.busy??false,batchRun=currentBatch?.run??null;
+  const batchIntake=currentBatch?.intake;
   const batchScopeRef=useRef<typeof batchScope|null>(batchScope),batchBusyRef=useRef(false),batchRunRef=useRef<BatchRun|null>(null);
   const updateBatch=(patch:Partial<Omit<BatchState,'scope'>>)=>{if(batchScopeRef.current===batchScope)setBatchState(current=>({...current.scope===batchScope?current:{scope:batchScope,open:false,busy:false,run:null},...patch}));};
-  const setBatchOpen=(open:boolean)=>updateBatch({open}),setBatchRun=(run:BatchRun|null)=>updateBatch({run});
+  const setBatchOpen=(open:boolean)=>updateBatch({open,...(!open?{intake:undefined}:{})}),setBatchRun=(run:BatchRun|null)=>updateBatch({run});
   const changeBatchBusy=(value:boolean)=>{if(batchScopeRef.current!==batchScope)return;batchBusyRef.current=value;updateBatch({busy:value});};
   useLayoutEffect(()=>{batchScopeRef.current=batchScope;batchRunRef.current=null;batchBusyRef.current=false;return()=>{if(batchScopeRef.current!==batchScope)return;batchScopeRef.current=null;batchRunRef.current=null;batchBusyRef.current=false;batchNavigation.current?.abort();batchNavigation.current=null;};},[batchScope]);
   const [boardSettingsEpoch,setBoardSettingsEpoch]=useState(0);
@@ -524,6 +527,24 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     if(signal.aborted||request!==productNavigation.current)return;
     if(!result.product||result.product.id!==productId)throw new Error('연결된 상품을 확인하지 못했습니다. 수집 대기열을 새로고침해주세요.');
     openProduct(result.product,initialTab);
+  }
+  async function openIntakeReview(targets:readonly IntakeReviewTarget[],goal:'work'|'transmit',signal:AbortSignal){
+    const company=sourceWorkspace.current?.company,settingsEpoch=settingsOperationRef.current.epoch;
+    const current=()=>!signal.aborted&&!!workspaceOwnerId&&!!company&&liveSubmissionContext.current===submissionContext
+      &&settingsOperationRef.current.mounted&&!settingsOperationRef.current.saving&&settingsOperationRef.current.ownerId===workspaceOwnerId&&settingsOperationRef.current.epoch===settingsEpoch
+      &&sourceWorkspace.current?.scope===sourceReviewScope&&sourceWorkspace.current.company?.code===company.code&&sourceWorkspace.current.company.name===company.name;
+    if(!current())return;
+    if(!targets.length||new Set(targets.map(target=>target.productId)).size!==targets.length)throw Error('새로 작성된 상품을 다시 확인해주세요.');
+    const prepared:Product[]=[];
+    for(const target of targets){
+      const {product}=await readJson<{product:Product}>(`/api/products/${encodeURIComponent(target.productId)}`,{cache:'no-store',signal});
+      if(!current())return;
+      if(!product||product.id!==target.productId||product.owner_id!==workspaceOwnerId||!sameSourceUrl(product.source_url,target.sourceUrl)
+        ||product.goal_stage!==goal||product.supplier_hub_status!=='미전송')throw Error('신규 초안과 원문을 확인하지 못했습니다. 작업 목록에서 해당 상품을 확인해주세요.');
+      prepared.push(product);
+    }
+    if(!current())return;
+    if(goal==='transmit'?openSubmission(null,prepared):openBatchReview({products:prepared,company:JSON.stringify(company)}))setAddOpen(false);
   }
   function closeBatch() {
     if(batchScopeRef.current!==batchScope)return;
@@ -700,7 +721,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 
   async function runAutomation() {
     const operation=settingsOperationRef.current;
-    if(batchScopeRef.current!==batchScope||busyRef.current||batchBusyRef.current||settingsBusyRef.current||operation.saving||!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
+    if(batchScopeRef.current!==batchScope||batchIntake||busyRef.current||batchBusyRef.current||settingsBusyRef.current||operation.saving||!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
     if(!workspaceOwnerId){showToast('현재 로그인 계정을 확인한 뒤 작업을 시작해주세요.');return;}
     const chosen=products.filter(item=>selected.has(item.id));
     if(!chosen.length&&!selectedSources.length){showToast('작업할 상품을 선택해주세요.');return;}
@@ -745,7 +766,11 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     return true;
   }
 
-  function openBatchReview(){const operation=settingsOperationRef.current;if(batchScopeRef.current!==batchScope||batchBusyRef.current||!operation.mounted||operation.ownerId!==workspaceOwnerId)return;batchRunRef.current=null;setBatchRun(null);setBatchOpenError('');setBatchOpen(true);}
+  function openBatchReview(intake?:BatchState['intake']){
+    const operation=settingsOperationRef.current;
+    if(batchScopeRef.current!==batchScope||batchBusyRef.current||!operation.mounted||operation.ownerId!==workspaceOwnerId)return false;
+    batchRunRef.current=null;setBatchOpenError('');updateBatch({open:true,run:null,intake});return true;
+  }
   function chooseBatchStage(id:AutomationStageId,enabled:boolean){const operation=settingsOperationRef.current;if(batchScopeRef.current!==batchScope||batchBusyRef.current||!operation.mounted||operation.ownerId!==workspaceOwnerId)return;setSelectedBatchMode('selected');setSelectedBatchStages(current=>batchStages.filter(stage=>stage.id===id?enabled:current.includes(stage.id)).map(stage=>stage.id));}
 
   async function saveWorkspaceSettings(value: Settings, scope?:WorkspaceSettingsScope) {
@@ -847,6 +872,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   function openCategoryFirstIntake(){
     const operation=settingsOperationRef.current;
     if(batchScopeRef.current!==batchScope||batchBusyRef.current||addOpen||!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
+    if(intakeDraft.ready&&!intakeRows.some(row=>row.status!=='saved')&&intakeGoal!==newIntakeDraftGoal)setIntakeGoal(newIntakeDraftGoal);
     setIntakeSourceSeed(undefined);setIntakeCategoryEntry({id:crypto.randomUUID(),ownerId:workspaceOwnerId});setView('work');setCollectionQueueOpen(true);setAddOpen(true);
   }
   const sourceArchiveRequest=useRef<AbortController|null>(null);
@@ -996,7 +1022,7 @@ useEffect(()=>{
             <details className="workspace-account-menu" data-dismissable-menu><summary className="workspace-utility utility-account" title={userName+' · 개인설정·비밀번호 변경·로그아웃'} aria-label={userName+' 계정 설정'}><UtilityIcon kind="account"/><span className="utility-label">설정</span></summary><nav className="workspace-account-dropdown" aria-label="계정 설정 메뉴"><strong>{userName}</strong><a href="/account" aria-label={userName+' 계정 관리'} onClick={guardOperationsNavigation}>계정 관리</a><a href="/account#password-change" onClick={guardOperationsNavigation}>비밀번호 변경</a><a href="/account#multi-account-settings" onClick={guardOperationsNavigation}>멀티 계정 관리</a><a href="/account#account-session" title="계정 관리에서 로그아웃" onClick={guardOperationsNavigation}>로그아웃 관리</a></nav></details>
           </nav><div className="top-actions">{view==='work'&&<><button type="button" className="btn settings" aria-expanded={settingsOpen} aria-controls="workspace-settings-panel" disabled={settingsBusy||batchBusy} onClick={()=>{if(!settingsBusyRef.current&&!batchBusyRef.current)setSettingsOpen(open=>!open);}}>⚙ 기본설정</button><button className="btn primary" disabled={batchBusy} onClick={openCategoryFirstIntake}>＋ 상품 추가</button>
           <details className="bulk-action-menu" data-dismissable-menu><summary className="btn ghost">{selectedBatchMode==='full'?'전체 작업':'부분 작업 ('+selectedBatchStages.length+')'} ▾</summary><div><fieldset disabled={batchBusy} aria-label="실행할 작업 선택"><legend>실행할 작업</legend><label><input type="checkbox" aria-label="전체 작업" checked={selectedBatchMode==='full'} onChange={event=>{if(!batchBusyRef.current){setSelectedBatchMode(event.target.checked?'full':'selected');setSelectedBatchStages(event.target.checked?batchStages.map(stage=>stage.id):[]);}}}/> 전체 작업</label>{batchStages.map(stage=><label key={stage.id} style={{display:'flex',gap:8,padding:'6px 0'}}><input type="checkbox" aria-label={stage.label+' 작업'} checked={selectedBatchStages.includes(stage.id)} onChange={event=>chooseBatchStage(stage.id,event.target.checked)}/>{stage.label}</label>)}</fieldset></div></details>
-          <details className="bulk-action-menu" data-dismissable-menu><summary className="btn ghost">상품 선택 ▾</summary><div><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current){setSelected(new Set(products.map(product=>product.id)));setSelectedSources(sourceArchiveDisabled?[]:sourceRegistrations.items.flatMap(item=>{const reference=sourceArchiveReference(item,workspaceOwnerId,querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null);return reference?[reference]:[];}).concat((sourceRegistrations.queryItems??[]).flatMap(item=>{const reference=querySourceRegistrationReference(item,workspaceOwnerId,querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null);return reference?[reference]:[];})));}}}>최근 상품 전체 선택</button><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current){setSelected(new Set());setSelectedSources([]);}}}>선택 해제</button><button type="button" disabled={batchBusy} onClick={openBatchReview}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy||batchBusy||!!sourceWork||!selectedBatchStages.length} onClick={runAutomation}>작업 개시</button><button className="btn rose" disabled={batchBusy} onClick={()=>openSubmission(null)}>등록 전송</button></>}</div></div></header>
+          <details className="bulk-action-menu" data-dismissable-menu><summary className="btn ghost">상품 선택 ▾</summary><div><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current){setSelected(new Set(products.map(product=>product.id)));setSelectedSources(sourceArchiveDisabled?[]:sourceRegistrations.items.flatMap(item=>{const reference=sourceArchiveReference(item,workspaceOwnerId,querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null);return reference?[reference]:[];}).concat((sourceRegistrations.queryItems??[]).flatMap(item=>{const reference=querySourceRegistrationReference(item,workspaceOwnerId,querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null);return reference?[reference]:[];})));}}}>최근 상품 전체 선택</button><button type="button" disabled={batchBusy} onClick={()=>{if(!batchBusyRef.current){setSelected(new Set());setSelectedSources([]);}}}>선택 해제</button><button type="button" disabled={batchBusy} onClick={()=>openBatchReview()}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy||batchBusy||!!sourceWork||!selectedBatchStages.length} onClick={runAutomation}>작업 개시</button><button className="btn rose" disabled={batchBusy} onClick={()=>openSubmission(null)}>등록 전송</button></>}</div></div></header>
 
         {cliInstallOpen&&<CliInstallDialog onClose={()=>setCliInstallOpen(false)}/>}
         {settingsOpen&&<section id="workspace-settings-panel" className="workspace-settings-panel" aria-labelledby="workspace-settings-heading"><header><h2 id="workspace-settings-heading">기본 등록 정보 설정</h2></header>{batchBusy&&<p role="status">일괄 작업 중에는 기본설정 입력과 저장을 잠시 멈춥니다. 작성한 입력은 유지됩니다.</p>}<fieldset aria-label="기본설정 편집" disabled={batchBusy} style={{border:0,padding:0,margin:0,minWidth:0}}><WorkspaceSettingsDialog workspaceOwnerId={workspaceOwnerId} onSave={saveWorkspaceSettings} onClose={()=>{if(!settingsBusyRef.current&&!batchBusyRef.current)setSettingsOpen(false);}} onBusy={changeSettingsBusy}/></fieldset></section>}
@@ -1040,8 +1066,8 @@ useEffect(()=>{
 
       {sourceReview&&sourceReview.item.ownerId===workspaceOwnerId&&<Modal wide title="수집 상품정보 확인·수정" subtitle="현재 수집한 상품만 검토합니다." onClose={()=>{closeSourceReview(sourceReview);}}><SourceInboxPanel key={sourceReview.item.id} ownerId={workspaceOwnerId} disabled={false} initialItem={sourceReview.item} onChanged={sourceRegistrations.reload} onReviewed={(saved,before)=>acceptSourceReview(sourceReview,saved,before)} onAdd={item=>{if(!closeSourceReview(sourceReview))return;if(!sourceReview.returnToIntake)prepareSource(item);}}/></Modal>}
       {addOpen&&<Modal wide title="상품 대기열" subtitle={intakeSourceSeed?'선택한 수집본 → 추천 카테고리 확인 → 상품 대기열. 시작 버튼에서 고른 작업을 진행합니다.':'카테고리 선택 → 1688 URL 입력 → 상품 대기열. 시작 버튼에서 고른 작업을 진행합니다.'} onClose={()=>{if(!busy&&!intakeDraft.loading){setSourceWork(null);setIntakeSourceSeed(undefined);setIntakeCategoryEntry(undefined);setAddOpen(false);}}}>
-        <div className="intake-draft-actions"><p role="status">{intakeDraft.message}{intakeDraft.dirty?' · 저장하지 않은 변경 있음':''}</p><button type="button" className="btn ghost" disabled={busy||intakeDraft.saving||!intakeDraft.ready} onClick={()=>void intakeDraft.save()}>{intakeDraft.autoPaused?'저장 다시 시도':intakeDraft.saving?'저장 중…':'지금 저장'}</button><button type="button" className="btn ghost" disabled={busy||intakeDraft.saving} onClick={()=>{if(!intakeDraft.dirty||window.confirm('현재 미저장 입력을 서버 초안으로 교체할까요?'))void intakeDraft.load();}}>{intakeDraft.ready?'서버 초안으로 교체':'초안 다시 불러오기'}</button></div>
-        {intakeDraft.ready&&!intakeDraft.loading&&<IntakeQueuePanel onSourceCancelled={()=>setSourceWork(null)} autoStartSource={!!sourceWork&&sourceWork.ownerId===workspaceOwnerId} workspaceOwnerId={workspaceOwnerId} sourceReviewScope={querySourceCompany.scope===sourceReviewScope?querySourceCompany:undefined} sourceCompany={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} sourceSeed={intakeSourceSeed} initialCategorySelection={intakeCategoryEntry} onInitialCategorySelectionConsumed={id=>setIntakeCategoryEntry(current=>current?.id===id&&current.ownerId===workspaceOwnerId?undefined:current)} sourceItems={sourceRegistrations.items} onReviewSource={(item,rowId)=>reviewSource(item,true,rowId)} onSourceConsumed={id=>setIntakeSourceSeed(current=>current?.id===id?undefined:current)} jobs={collectionJobs} onOpenProduct={async(id,signal)=>{if(await continueSourceWork(id,signal))return;await openCollectedProduct(id,'SEO',signal);if(!signal.aborted)setAddOpen(false);}} settings={settings} onSettingsReloadStarted={startSettingsReload} onSettingsReloaded={applyReloadedSettings} goal={intakeGoal} onGoal={setIntakeGoal} rows={intakeRows} onRows={setIntakeRows} profiles={categoryProfiles} onBusy={setBusy}
+        <details className="intake-draft-actions" open={intakeDraft.autoPaused||intakeDraft.loading?true:undefined}><summary>대기열 임시저장</summary><div><p role="status">{intakeDraft.message}{intakeDraft.dirty?' · 저장하지 않은 변경 있음':''}</p><button type="button" className="btn ghost" disabled={busy||intakeDraft.saving||!intakeDraft.ready} onClick={()=>void intakeDraft.save()}>{intakeDraft.autoPaused?'저장 다시 시도':intakeDraft.saving?'저장 중…':'지금 저장'}</button><button type="button" className="btn ghost" disabled={busy||intakeDraft.saving} onClick={()=>{if(!intakeDraft.dirty||window.confirm('현재 미저장 입력을 서버 초안으로 교체할까요?'))void intakeDraft.load();}}>{intakeDraft.ready?'서버 초안으로 교체':'초안 다시 불러오기'}</button></div></details>
+        {intakeDraft.ready&&!intakeDraft.loading&&<IntakeQueuePanel onSourceCancelled={()=>setSourceWork(null)} autoStartSource={!!sourceWork&&sourceWork.ownerId===workspaceOwnerId} workspaceOwnerId={workspaceOwnerId} sourceReviewScope={querySourceCompany.scope===sourceReviewScope?querySourceCompany:undefined} sourceCompany={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} sourceSeed={intakeSourceSeed} initialCategorySelection={intakeCategoryEntry} onInitialCategorySelectionConsumed={id=>setIntakeCategoryEntry(current=>current?.id===id&&current.ownerId===workspaceOwnerId?undefined:current)} sourceItems={sourceRegistrations.items} onReviewSource={(item,rowId)=>reviewSource(item,true,rowId)} onSourceConsumed={id=>setIntakeSourceSeed(current=>current?.id===id?undefined:current)} jobs={collectionJobs} onOpenWorkReview={(targets,signal)=>openIntakeReview(targets,'work',signal)} onOpenTransmissionReview={(targets,signal)=>openIntakeReview(targets,'transmit',signal)} onOpenProduct={async(id,signal)=>{if(await continueSourceWork(id,signal))return;await openCollectedProduct(id,'SEO',signal);if(!signal.aborted)setAddOpen(false);}} settings={settings} onSettingsReloadStarted={startSettingsReload} onSettingsReloaded={applyReloadedSettings} goal={intakeGoal} onGoal={setIntakeGoal} rows={intakeRows} onRows={setIntakeRows} profiles={categoryProfiles} onBusy={setBusy}
           onProfile={profile=>setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)])}
           onJobs={jobs=>{setCollectionJobs(current=>[...jobs,...current.filter(job=>!jobs.some(saved=>saved.id===job.id))]);if(jobs.some(job=>job.product_id))void loadWorkspace();}}
           onAdvanced={seed=>{setEditingCategory(seed?.profileId?categoryProfiles.find(profile=>profile.id===seed.profileId)??null:null);setCategorySeed(seed?{name:seed.categoryPath.at(-1)??'',categoryId:seed.categoryId,categoryPath:seed.categoryPath,template:null,mappings:[]}:undefined);setAddOpen(false);setCategoryOpen(true);}}/>}
@@ -1050,11 +1076,12 @@ useEffect(()=>{
 
       {batchOpen&&(!batchRun||batchRun.request.ownerId===workspaceOwnerId)&&<Modal wide title={batchRun?'선택 작업 진행':'선택 상품 일괄 작업'} subtitle={batchRun?'선택한 단계의 초안을 만들고 저장·검토 상태를 확인합니다.':'저장한 상품을 순서대로 처리하고 각 결과를 기록합니다.'} onClose={()=>{const operation=settingsOperationRef.current;if(operation.mounted&&operation.ownerId===workspaceOwnerId&&batchRunRef.current===batchRun)closeBatch();}}>
         {batchOpenError&&<p role="alert">{batchOpenError}</p>}
+        {batchIntake&&batchIntake.company!==boardCompanyScope&&<p role="alert">회원의 등록 회사가 변경되었습니다. 대기열에서 작업 대상을 다시 확인해주세요.</p>}
         {batchSeoNoticeRequired&&<details aria-label="SEO 실행 전 안내"><summary>SEO 실행 안내</summary>
           {batchSeoConfiguration?<BatchAiNotice configuration={batchSeoConfiguration}/>:<p role="status">{seoConfigurationError||'현재 계정·회사의 SEO 실행 안내를 확인하는 중입니다. 안내 확인 전에는 SEO 작업을 시작하지 않습니다.'}</p>}
           <button type="button" className="btn ghost" disabled={batchBusy||settingsBusy} onClick={()=>{if(batchScopeRef.current===batchScope&&!batchBusyRef.current&&!settingsBusyRef.current)setSeoConfigurationReload(value=>value+1);}}>SEO 실행 안내 다시 확인</button>
         </details>}
-        <BatchWorkPanel key={batchRun?.request.id??'review'} products={(batchRun?.products??products.filter(product=>selected.has(product.id))).map(product=>({...product,title:registrationTitle(product),boardSource:batchBoardSource(product)}))} runRequest={batchRun?.request} onActivity={event=>{if(batchRun)recordBatchBoardActivity(batchRun,event);}} onOpen={(id,step,review,reviewTarget)=>{if(batchRunRef.current===batchRun)void openBatchProduct(id,step,review,reviewTarget);}} onBusyChange={value=>{const operation=settingsOperationRef.current;if(operation.mounted&&operation.ownerId===workspaceOwnerId&&batchRunRef.current===batchRun){const finished=batchBusyRef.current&&!value;changeBatchBusy(value);if(finished&&batchRun)void loadWorkspace();}}}/>
+        {(!batchIntake||batchIntake.company===boardCompanyScope)&&<BatchWorkPanel key={batchRun?.request.id??(batchIntake?'intake':'review')} products={(batchRun?.products??batchIntake?.products??products.filter(product=>selected.has(product.id))).map(product=>({...product,title:registrationTitle(product),boardSource:batchBoardSource(product)}))} runRequest={batchRun?.request} onActivity={event=>{if(batchRun)recordBatchBoardActivity(batchRun,event);}} onOpen={(id,step,review,reviewTarget)=>{if(batchRunRef.current===batchRun)void openBatchProduct(id,step,review,reviewTarget);}} onBusyChange={value=>{const operation=settingsOperationRef.current;if(operation.mounted&&operation.ownerId===workspaceOwnerId&&batchRunRef.current===batchRun){const finished=batchBusyRef.current&&!value;changeBatchBusy(value);if(finished&&batchRun)void loadWorkspace();}}}/>}
       </Modal>}
       {historyOpen&&<Modal wide title="상품별 작업 이력" subtitle="각 상품에 저장된 단계별 산출물과 실행 이력을 확인합니다." onClose={()=>setHistoryOpen(false)}><div className="modal-form"><label>상품 선택<select aria-label="작업 이력 상품 선택" value={historyProductId} onChange={event=>setHistoryProductId(event.target.value)}>{!products.length&&<option value="">저장된 상품 없음</option>}{products.map(product=><option key={product.id} value={product.id}>{product.title}</option>)}</select></label>{products.filter(product=>product.id===historyProductId).map(product=><AutomationPanel key={product.id} productId={product.id} version={product.updated_at}/>)}</div><PreservedProductRequestInspector ownerId={workspaceOwnerId} onReceiptSaved={id=>{const product=products.find(item=>item.id===id);if(product)void refreshReceiptStatus(id,product.updated_at);}}/></Modal>}
 
@@ -1108,7 +1135,7 @@ useEffect(()=>{
       </aside></div>}
 
       {optionBoardProduct&&(!workspaceOwnerId||optionBoardProduct.owner_id===workspaceOwnerId)&&<div className="option-board-return-context" hidden={!!detail} inert={!!detail}><Modal wide title={registrationTitle(optionBoardProduct)} subtitle={`등록번호 ${registrationNumber(optionBoardProduct)} · 옵션별 상품 자료와 견적서를 확인합니다.`} onClose={closeOptionBoard}>{optionNavigationBusy&&<p role="status">선택한 상품의 최신 자료를 불러오는 중…</p>}{optionNavigationError&&<p role="alert">{optionNavigationError} 같은 작업 버튼을 눌러 다시 시도해주세요.</p>}<ProductOptionBoard active={!detail} key={optionBoardProduct.id} productId={optionBoardProduct.id} productRegistrationNumber={optionBoardProduct.registration_number} sourceUrl={optionBoardProduct.source_url} imageKeys={optionBoardProduct.image_keys} refreshToken={`${optionBoardVersion}:${optionBoardReturnRevision}`} returnFocus={detail?undefined:optionReturnFocus} onReturnFocusHandled={()=>setOptionReturnFocus(undefined)} onStage={(optionId,step)=>{if(typeof optionId==='string')void navigateOptionBoard(optionId,step);}} onManage={optionId=>{if(typeof optionId==='string')void navigateOptionBoard(optionId,'옵션',true);}} onContent={step=>void navigateOptionBoard(undefined,step)} onImage={optionId=>void navigateOptionBoard(optionId,'대표 이미지')} onEdit={optionId=>void navigateOptionBoard(optionId,'가격')} onQuotation={optionId=>void navigateOptionBoard(optionId,'견적서')}/></Modal></div>}
-      {currentSubmission&&<Modal title="Supplier Hub 등록 전송" subtitle="선택 상품의 실제 저장 자료를 검사하고 필요한 항목을 수정하세요." closeDisabled={submissionLockState?.session===currentSubmission&&submissionLockState.close} onClose={()=>closeSubmission(currentSubmission)}><SubmissionReviewPanel key={submissionTarget?`${submissionTarget.product.id}:${submissionTarget.profileId}`:"selected"} products={(submissionTarget?[submissionTarget.product]:products.filter(product=>selected.has(product.id)&&(!workspaceOwnerId||product.owner_id===workspaceOwnerId))).map(product=>({...product,title:registrationTitle(product)}))} profiles={categoryProfiles} initialProfileId={submissionTarget?.profileId} onLockChange={(source,close)=>changeSubmissionLock(currentSubmission,source,close)} onReceiptSaved={()=>{if(submissionCurrent(currentSubmission))void loadWorkspace().catch(()=>{if(submissionCurrent(currentSubmission))setToast('전송 결과는 보관됐습니다. 상품 목록을 다시 불러와주세요.');});}} onEdit={(id,preferredProfileId,target)=>{if(!submissionCurrent(currentSubmission)||submissionLock.current?.session===currentSubmission&&submissionLock.current.source)return;const product=submissionTarget?.product.id===id?submissionTarget.product:products.find(item=>item.id===id);if(product&&(!workspaceOwnerId||product.owner_id===workspaceOwnerId)&&closeSubmission(currentSubmission)){openProduct(product,'견적서',preferredProfileId,target);}}}/></Modal>}
+      {currentSubmission&&<Modal title="Supplier Hub 등록 전송" subtitle="선택 상품의 실제 저장 자료를 검사하고 필요한 항목을 수정하세요." closeDisabled={submissionLockState?.session===currentSubmission&&submissionLockState.close} onClose={()=>closeSubmission(currentSubmission)}><SubmissionReviewPanel key={submissionTarget?`${submissionTarget.product.id}:${submissionTarget.profileId}`:currentSubmission.products?'intake':'selected'} products={(submissionTarget?[submissionTarget.product]:currentSubmission.products??products.filter(product=>selected.has(product.id)&&(!workspaceOwnerId||product.owner_id===workspaceOwnerId))).map(product=>({...product,title:registrationTitle(product)}))} profiles={categoryProfiles} initialProfileId={submissionTarget?.profileId} onLockChange={(source,close)=>changeSubmissionLock(currentSubmission,source,close)} onReceiptSaved={()=>{if(submissionCurrent(currentSubmission))void loadWorkspace().catch(()=>{if(submissionCurrent(currentSubmission))setToast('전송 결과는 보관됐습니다. 상품 목록을 다시 불러와주세요.');});}} onEdit={(id,preferredProfileId,target)=>{if(!submissionCurrent(currentSubmission)||submissionLock.current?.session===currentSubmission&&submissionLock.current.source)return;const product=submissionTarget?.product.id===id?submissionTarget.product:(currentSubmission.products??products).find(item=>item.id===id);if(product&&(!workspaceOwnerId||product.owner_id===workspaceOwnerId)&&closeSubmission(currentSubmission)){openProduct(product,'견적서',preferredProfileId,target);}}}/></Modal>}
 
       {connectionsOpen&&<Modal title="연동 상태" subtitle="서버의 저장소·AI 설정 상태를 확인합니다." onClose={()=>setConnectionsOpen(false)}>
         <div className="settings-form">

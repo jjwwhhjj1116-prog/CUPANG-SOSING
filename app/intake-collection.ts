@@ -12,11 +12,12 @@ import {validateCollectionCapacity,recommendPendingCollectionImages} from '@/app
 import {fetchCollectionCapacity} from '@/app/collection-capacity-client';
 import {selectedPageReceiptMatches} from '@/app/selected-page-receipt';
 
-/** A user-initiated fetch produces an editable draft only, never a Hub submission. */
-export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void;onProductReused?:(productId:string)=>void;selectedCapture?:Readonly<SourceCaptureSelection>;captureFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture>;probeExistingFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture|null>}) {
+/** Collects an editable draft. Review callers with onFreshProduct require a new link. */
+export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void;onProductReused?:(productId:string)=>void;onFreshProduct?:(productId:string)=>void;initializeImageRoles?:boolean;selectedCapture?:Readonly<SourceCaptureSelection>;captureFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture>;probeExistingFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture|null>}) {
  if(options.signal.aborted)return;
  const fetcher=options.fetcher;
  const selectedCapture=options.selectedCapture===undefined?undefined:validateSourceCaptureSelection(options.selectedCapture,job.source_url);
+ if(options.onFreshProduct&&job.product_id)throw Error('기존에 연결된 상품은 새 작업 대상에서 제외했습니다.');
  if(selectedCapture?.format==='yoofam-saved-query-capture-v1'&&job.product_id)throw Error('기존 상품이 연결된 요청입니다. 기존 이미지와 SEO 수정값은 유지했습니다. 새 상품의 수집본을 선택해주세요.');
  // A durable server write can finish after its view closes. It remains
  // recoverable, but must not publish into a reopened or newly edited queue.
@@ -155,7 +156,8 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   seo=await prepareIntakeSeoOutcome(productId,fetcher,options.signal);
  };
  const importFetcher:typeof fetch=async(url,init)=>{
-  const selectedProductRequest=selectedCapture&&String(url)===`/api/collection-jobs/${encodeURIComponent(job.id)}/product`&&init?.method==='POST';
+  const productRequest=String(url)===`/api/collection-jobs/${encodeURIComponent(job.id)}/product`&&init?.method==='POST';
+  const selectedProductRequest=selectedCapture&&productRequest;
   if(selectedProductRequest&&!received.received_at)throw Error('선택한 수집본의 저장 시각을 확인하지 못했습니다. 기존 작업을 확인해주세요.');
   const headers=selectedProductRequest?new Headers(init?.headers):undefined;
   headers?.set('content-type','application/json');
@@ -166,17 +168,21 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
    if(!current||body.receipt?.receivedAt!==received.received_at||!selectedPageReceiptMatches(current,source??undefined,job.offer_id))
     throw Error('이미지 반영 전에 보관된 수집 원문이 변경되었습니다. 선택한 수집본을 다시 확인해주세요.');
   }
-  if(selectedCapture&&String(url)===`/api/collection-jobs/${encodeURIComponent(job.id)}/product`&&init?.method==='POST'&&response.ok){
+  if(productRequest&&response.ok&&(selectedCapture||options.onFreshProduct)){
    const body=await response.clone().json() as {productId?:unknown;reused?:unknown};
-   if(typeof body.productId!=='string'||!body.productId||typeof body.reused!=='boolean')throw Error('선택한 수집본의 상품 연결 상태를 확인하지 못했습니다. 기존 작업을 확인해주세요.');
+   if(typeof body.productId!=='string'||!body.productId||typeof body.reused!=='boolean'){
+    if(options.onFreshProduct)return Response.json({error:'새 상품 생성 결과를 확인하지 못했습니다. 대기열에서 저장된 상품을 확인해주세요.'},{status:409});
+    throw Error('선택한 수집본의 상품 연결 상태를 확인하지 못했습니다. 기존 작업을 확인해주세요.');
+   }
    if(resumeProductId&&body.productId!==resumeProductId)throw Error('이미지 재개 상품이 기존 작업과 다릅니다. 기존 수정값을 확인해주세요.');
    if(body.reused){
+    if(options.onFreshProduct)return Response.json({error:'다른 작업에서 이미 연결된 상품은 새 작업 대상에서 제외했습니다.'},{status:409});
     if(selectedCapture?.format==='yoofam-saved-query-capture-v1')throw Error('다른 요청에서 이미 상품을 저장했습니다. 기존 이미지와 SEO 수정값은 유지했습니다. 기존 작업을 확인해주세요.');
     recheckReusedImages=!resumeExistingImages;
     resumeExistingImages=true;
     resumeProductId=body.productId;
     if(!options.signal.aborted)options.onProductReused?.(body.productId);
-   }
+   }else if(!options.signal.aborted)options.onFreshProduct?.(body.productId);
   }
   return response;
  };
@@ -203,16 +209,16 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  await prepareDraft(outcome.productId);
  const draft=seo!;
  if(options.signal.aborted)return;
- if(job.goal==='work'){
+ if(job.goal==='work'||options.initializeImageRoles&&(job.goal==='price'||job.goal==='transmit')){
   reportProgress('원본 이미지로 대표·추가·상세·옵션 초안 연결 중');
-  const imageResponse=await fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/image-draft`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({productId:outcome.productId}),signal:options.signal});
+  const imageResponse=await fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/image-draft`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({productId:outcome.productId,...(job.goal==='work'?{}:{initializeIntake:true})}),signal:options.signal});
   const imageDraft=await imageResponse.json() as {productId?:string;prepared?:boolean;error?:string};
   if(options.signal.aborted)return;
   if(!imageResponse.ok||imageDraft.productId!==outcome.productId||imageDraft.prepared!==true)throw Error(imageDraft.error||'이미지 초안 연결 상태를 확인하지 못했습니다. 저장한 원본과 수정값은 유지됩니다.');
  }
  if(outcome.status!=='completed' || !draft.completed&&!draft.reviewRequired&&!draft.manualReady)throw Error([outcome.status!=='completed'?(outcome.error||'이미지 반영을 완료하지 못했습니다. 원문은 보존됩니다.'):'',draft.message,...(outcome.warnings??[])].filter(Boolean).join(' '));
  // Manual readiness is acknowledged only after source/options/image import and
- // (for work) role assignment succeed. It never marks translation completed.
+ // requested role assignment succeed. It never marks translation completed.
  if(draft.manualReady)return [draft.message,supplementNotice,...(outcome.warnings??[])].filter(Boolean).join(' ');
  return ['상품 초안 저장됨 · 옵션·이미지·견적서를 확인하고 수정해주세요.',draft.message,supplementNotice,...(outcome.warnings??[])].filter(Boolean).join(' ');
 }

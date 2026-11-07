@@ -109,6 +109,22 @@ export function searchCategoryChoices(choices: CategoryChoice[], query: string) 
   const terms = query.trim().toLocaleLowerCase('ko-KR').split(/\s+/).filter(Boolean);
   return choices.filter(choice => { const text = `${choice.path.join(' ')} ${choice.categoryId} ${choice.profileName ?? ''}`.toLocaleLowerCase('ko-KR'); return terms.every(term => text.includes(term)); });
 }
+/** Search leaf names only. Duplicate saved forms belong to the same leaf. */
+export function searchLeafCategoryChoices(choices: readonly CategoryChoice[], query: string): CategoryChoice[] {
+  const key=(value:string)=>value.normalize('NFC').toLocaleLowerCase('ko-KR').replace(/\s+/gu,'');
+  const term=key(query);if(!term)return [];
+  const matches=new Map<string,Map<string,CategoryChoice>>();
+  for(const choice of choices){
+    if(!choice.isLeaf||!key(choice.path.at(-1)??'').includes(term))continue;
+    const identity=pathKey(choice.path);
+    let leaves=matches.get(identity);
+    if(!leaves){leaves=new Map();matches.set(identity,leaves);}
+    if(choice.categoryId)leaves.delete('');
+    if(!leaves.has(choice.categoryId)&&(choice.categoryId||!leaves.size))leaves.set(choice.categoryId,choice);
+  }
+  const rank=(choice:CategoryChoice)=>{const name=key(choice.path.at(-1)??'');return name===term?0:name.startsWith(term)?1:2;};
+  return [...matches.values()].flatMap(leaves=>[...leaves.values()]).sort((left,right)=>rank(left)-rank(right)||left.path.join(' › ').localeCompare(right.path.join(' › '),'ko-KR'));
+}
 export function categoryAdvancedSeed(choice: CategoryChoice | undefined, path: readonly string[] = []): CategoryAdvancedSeed {
   return { categoryPath: [...(choice?.path ?? path)], categoryId: choice?.categoryId ?? '', ...(choice?.profileId ? { profileId: choice.profileId } : {}) };
 }

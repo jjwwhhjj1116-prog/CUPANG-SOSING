@@ -11,6 +11,7 @@ const cropCanvas=h=>nodes(h.render()).find(node=>node.type==='FreeImageCropCanva
 const download=h=>h.field('편집 결과 PNG 다운로드');
 const clickDownload=node=>{const event={prevented:false,preventDefault(){this.prevented=true;}};node.props.onClick(event);return event;};
 const native=createRequire(import.meta.url);
+const photoModule={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image-photo.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:photoModule});
 async function prepare(h){await h.settle();if(!h.field('이미지 잘라내기'))await h.click('원본 불러오기 · 수동 편집');await h.change('이미지 잘라내기','',true);}
 async function crop(h,rect={x:2,y:1,width:15,height:10}){for(const[field,value]of Object.entries(rect))await h.change('잘라내기 '+field,String(value));}
 test('an uncertain generic document save checks the same outcome read-only before permitting an explicit retry',async()=>{
@@ -30,7 +31,7 @@ function pointerFixture(){
  let props={sourceUrl:'blob:synthetic-source',width:200,height:100,scopeKey:'source-a',enabled:true,disabled:false,crop:null,onBegin(){const id='drag-'+ ++serial;starts.push(id);return id;},onComplete(id,value){completed.push({id,value});},onCancel(id){canceled.push(id);}};
  const effect=(queue,fn,deps)=>{const id=cursor++,old=slots[id];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i]))){const next={deps};slots[id]=next;queue.push(()=>{old?.cleanup?.();next.cleanup=fn();});}};
  const hooks={useState(initial){const id=cursor++;if(!(id in slots))slots[id]=typeof initial==='function'?initial():initial;return[slots[id],value=>{if(closed){late++;return;}slots[id]=typeof value==='function'?value(slots[id]):value;}];},useRef(initial){const id=cursor++;return slots[id]??(slots[id]={current:initial});},useEffect:(fn,deps)=>effect(effects,fn,deps),useLayoutEffect:(fn,deps)=>effect(layouts,fn,deps)};
- const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/free-image-crop-canvas.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,require(name){if(name==='react')return hooks;if(name==='react/jsx-runtime')return native(name);throw Error(name);}});
+ const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/free-image-crop-canvas.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,require(name){if(name==='react')return hooks;if(name==='react/jsx-runtime')return native(name);if(name==='@/app/free-image-photo')return photoModule;throw Error(name);}});
  const render=()=>{cursor=0;const tree=exports.FreeImageCropCanvas(props);layouts.splice(0).forEach(fn=>fn());effects.splice(0).forEach(fn=>fn());return tree;};
  const svg=()=>nodes(render()).find(node=>node.type==='svg'),event=(x=20,y=30,patch={})=>({currentTarget:surface,clientX:x,clientY:y,pointerId:1,button:0,buttons:1,pointerType:'mouse',isPrimary:true,preventDefault(){},...patch});
  const settle=async()=>{for(let i=0;i<4;i++){render();await new Promise(resolve=>setImmediate(resolve));}};render();
@@ -46,6 +47,36 @@ test('crop-only editing keeps the original source and enables only a reviewed lo
   assert.equal(preview.image.source.width,20);assert.equal(preview.image.source.height,12);const link=download(h);assert.ok(link);assert.equal(clickDownload(link).prevented,false);assert.ok(link.props.download.endsWith('.png'));assert.match(link.props.href,/^blob:/);
   assert.deepEqual(plain(h.calls.map(call=>call.action)),['source','preview']);assert.equal(h.saved,0);
   const url=h.urls.find(item=>item.url===link.props.href);assert.ok(url);assert.equal(url.blob.type,'image/png');
+ }finally{h.close();}
+});
+
+test('photo controls share the undo stack and invalidate a stale PNG and save action',async()=>{
+ const h=fixture();
+ try {
+  await h.click('원본 불러오기 · 수동 편집');
+  await h.click('오른쪽 90°');
+  await h.click('좌우 반전');
+  await h.change('밝기','125');
+  await h.change('대비','88');
+  await h.change('채도','110');
+  await h.change('색조','-12');
+  assert.equal(h.render().props['data-workspace-dirty'],'true');
+  await h.click('번역 이미지 미리보기');
+  const first=h.calls.at(-1), link=download(h), save=h.button('검토한 번역 이미지 적용');
+  assert.deepEqual(plain(first.photo),{rotation:90,flipX:true,flipY:false,brightness:125,contrast:88,saturation:110,hue:-12});
+  assert.ok(link.props.download.endsWith('12x20.png'));
+  await h.click('되돌리기');
+  assert.equal(h.field('색조').props.value,0);
+  save.props.onClick();
+  assert.equal(clickDownload(link).prevented,true);
+  assert.equal(h.saved,0);
+  await h.click('다시 실행');
+  assert.equal(h.field('색조').props.value,-12);
+  await h.click('사진 보정 초기화');
+  assert.equal(h.field('밝기').props.value,100);
+  assert.equal(h.render().props['data-workspace-dirty'],undefined);
+  await h.click('되돌리기');
+  assert.equal(h.field('밝기').props.value,125);
  }finally{h.close();}
 });
 

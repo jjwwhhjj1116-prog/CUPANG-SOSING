@@ -39,12 +39,12 @@ test('a retained toolbar cannot write after a stage/source ABA or unmount',async
  finally{ /* already closed */ }
 });
 
-test('raw BODY preparation seals the exact seed and forwards requested source language once',async()=>{
+test('raw BODY Chinese translation seals the exact seed and forwards Chinese once',async()=>{
  const f=await fixture(),h=panel(f),events=[];let toolbar;h.set({primaryDetailTools:true,onImageBatchToolbarActionsChange:next=>{toolbar=next;}});
  try{
-  await h.idle();assert.ok(toolbar,'raw BODY action is published for the new seed');assert.equal(toolbar.disabled,false);toolbar.prepare('en');await h.idle();
+  await h.idle();assert.ok(toolbar,'raw BODY action is published for the new seed');assert.equal(toolbar.disabled,false);toolbar.prepare('zh');await h.idle();
   assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);const child=nodes(h.render()).find(node=>node.type?.name==='DetailWorkspaceImageBatchPanel');assert.ok(child);
-  child.props.onToolbarActionsChange({prepare:language=>events.push(language),disabled:false});await h.idle();assert.deepEqual(events,['en']);assert.equal(h.adopted.length,0);
+  child.props.onToolbarActionsChange({prepare:language=>events.push(language),disabled:false});await h.idle();assert.deepEqual(events,['zh']);assert.equal(h.adopted.length,0);
   assert.deepEqual(child.props.saved.workspace.document.photos.map(photo=>photo.role),['top','body','body','bottom']);
  }finally{h.close();}
 });

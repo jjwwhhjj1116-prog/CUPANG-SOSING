@@ -53,6 +53,28 @@ test('crop recipe keeps original coordinates and can reopen a cropped output wit
   } finally { f.close(); }
 });
 
+test('cropped and rotated photo attaches only its selected quotation slot and reopens with all adjustments', async () => {
+  const f = await freeImageEditFixture(schemaCompanies[0]);
+  try {
+    const source = (await json(await f.source())).source, before = await f.read(), snapshot = f.snapshot();
+    const document = { ...f.doc(), regions: [], crop: { x: 1, y: 1, width: 2, height: 1, sourceWidth: 3, sourceHeight: 2 },
+      photo: { rotation: 90, flipX: true, flipY: false, brightness: 118, contrast: 95, saturation: 112, hue: -9 } };
+    const png = await sharp({ create: { width: 1, height: 2, channels: 4, background: '#ffffff' } }).png().toBuffer();
+    assert.equal((await f.applyEdit(source, document)).status, 400);
+    assert.equal(f.snapshot(), snapshot);
+    const saved = await json(await f.applyEdit(source, document, png)), opened = await json(await f.reopen(saved.key)), after = await f.read();
+    assert.deepEqual(opened.editDocument, document);
+    assert.equal(opened.source.sourceKey, source.sourceKey);
+    const field = source.quotationTarget.fieldKey;
+    const edited = after.resolved.rows.find(row => row.optionId === f.selected).fields[field].value.split('\n');
+    const previous = before.resolved.rows.find(row => row.optionId === f.selected).fields[field].value.split('\n');
+    assert.deepEqual(edited, previous.map((key, index) => index === source.quotationTarget.slotIndex ? saved.key : key));
+    assert.deepEqual(plain(after.resolved.rows.filter(row => row.optionId !== f.selected)), plain(before.resolved.rows.filter(row => row.optionId !== f.selected)));
+    assert.equal((await json(await f.recoverEdit(source, document, png))).applied, true);
+    assert.equal(f.product().supplier_hub_status, '미전송');
+  } finally { f.close(); }
+});
+
 test('wrong option/slot, stale anchor and imported family context do not expose an editable document or write anything', async () => {
   const f = await freeImageEditFixture(schemaCompanies[0]);
   try {

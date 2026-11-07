@@ -18,9 +18,20 @@ function page({company=companies[0],path='/dashboard/KR',rows=[sample(1),sample(
       if(!Object.hasOwn(result,'url'))Object.defineProperty(result,'url',{value:url});
       after?.({location,document,calls});return result;
     }};
-  return {location,document,calls,timers,run:(productName='남성 모자')=>vm.runInNewContext(`(${getRecommendations.toString()})(productName,company)`,{...context,productName})};
+  return {location,document,calls,timers,run:(productName='남성 모자',search=false)=>vm.runInNewContext(`(${getRecommendations.toString()})(productName,company,search)`,{...context,productName,search})};
 }
 
+test('direct category name GET retains every verified leaf with its own complete path, independent of prediction',async()=>{
+  const h=page({rows:[{...sample(1),leafCategory:false},...[2,3,4,5].map(number=>({...sample(number),leafCategory:true}))]});
+  const result=plain(await h.run('양말 & 실내',true));
+  assert.equal(h.calls[0].url,origin+'/sr/category/api/find-by-keyword?keyword='+encodeURIComponent('양말 & 실내'));
+  assert.equal(h.calls[0].method,'GET');assert.equal(h.calls.length,1);
+  assert.equal(result.source,'supplier-hub-category-keyword-api');assert.equal(result.keyword,'양말 & 실내');
+  assert.deepEqual(result.items.map(item=>item.code),['10002','10003','10004','10005']);
+  assert.ok(result.items.every(item=>item.path.length===3&&item.label===item.path.join(' > ')));
+  assert.doesNotMatch(JSON.stringify(result),/privateAccount/);
+  await assert.rejects(page({rows:[{...sample(1),leafCategory:true,fullPathName:''}]}).run('양말',true));
+});
 for(const company of companies)test(`official recommendation GET keeps the first three exact display codes and full paths (${company.code})`,async()=>{
   const h=page({company}),result=plain(await h.run('남성 모자 & 겨울/방한'));
   assert.equal(result.source,'supplier-hub-category-predict-api');assert.deepEqual(result.company,company);

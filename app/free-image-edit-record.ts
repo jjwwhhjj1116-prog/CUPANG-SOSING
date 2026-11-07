@@ -1,4 +1,4 @@
-import { validateFreeImageEditDocument, MAX_FREE_IMAGE_EDIT_BYTES, type FreeImageEditDocument } from '@/app/free-image-edit-document';
+import { freeImageEditOutputDimensions, validateFreeImageEditDocument, MAX_FREE_IMAGE_EDIT_BYTES, type FreeImageEditDocument } from '@/app/free-image-edit-document';
 import { freeImageApplyIdentity, freeImageRoleEditApplyIdentity, freeImageSourceIdentity, validateFreeImageSource, validateFreeImageOptionIds, type FreeImageSource } from '@/app/free-image-translation';
 import { isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
 import { readBoundedStream } from '@/app/request-body';
@@ -34,8 +34,9 @@ export async function prepareFreeImageEditRecord(sourceValue: FreeImageSource, d
   result: FreeImageEditRecord['result']) {
   const source = validateFreeImageSource(JSON.parse(freeImageSourceIdentity(sourceValue))), document = validateFreeImageEditDocument(documentValue, source),
     owner = source.sourceKey.split('/')[0];
+  const expectedSize = freeImageEditOutputDimensions(document);
   if (!source.quotationTarget && !source.workspaceTarget || !isOwnedImageKey(owner, source.sourceKey) || !hash(result.sha256) || !Number.isSafeInteger(result.bytes) || result.bytes < 1 || result.bytes > MAX_IMAGE_BYTES
-    || result.width !== (document.crop?.width ?? document.width) || result.height !== (document.crop?.height ?? document.height)
+    || result.width !== expectedSize.width || result.height !== expectedSize.height
     || new TextEncoder().encode(JSON.stringify(source)).length > 32768) throw invalid();
   const expected = await freeImageEditOutputKey(source, document, result.sha256);
   if (result.key !== expected.key || !isOwnedImageKey(owner, result.key)) throw invalid();
@@ -49,8 +50,9 @@ export async function prepareFreeImageRoleEditRecord(sourceValue: FreeImageSourc
   const source = validateFreeImageSource(JSON.parse(freeImageSourceIdentity(sourceValue))), document = validateFreeImageEditDocument(documentValue, source),
     selected = validateFreeImageOptionIds(source, [...optionImageIds]), owner = source.sourceKey.split('/')[0];
   const edited = document.regions.filter(region => region.selected);
+  const expectedSize = freeImageEditOutputDimensions(document);
   const identifier = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_-]{1,100}$/u.test(value);
-  if (!document.crop && !edited.length || edited.some(region => region.erase !== true && !region.translated.trim())
+  if (!document.crop && !edited.length && !document.photo || edited.some(region => region.erase !== true && !region.translated.trim())
     || !exact(context, ['source', 'profileId', 'categoryId', 'categoryPath']) || !['profile', 'collection'].includes(context.source)
     || context.profileId !== null && !identifier(context.profileId) || context.source === 'profile' && context.profileId === null || !identifier(context.categoryId)
     || !Array.isArray(context.categoryPath) || context.categoryPath.length < 1 || context.categoryPath.length > 40
@@ -58,7 +60,7 @@ export async function prepareFreeImageRoleEditRecord(sourceValue: FreeImageSourc
     || !exact(company, ['code', 'name']) || JSON.stringify(supplierHubCompany(company.code, company.name)) !== JSON.stringify(company)
     || !isOwnedImageKey(owner, source.sourceKey) || source.editorSource && !isOwnedImageKey(owner, source.editorSource.resultKey)
     || !hash(result.sha256) || !Number.isSafeInteger(result.bytes) || result.bytes < 1 || result.bytes > MAX_IMAGE_BYTES
-    || result.width !== (document.crop?.width ?? document.width) || result.height !== (document.crop?.height ?? document.height)
+    || result.width !== expectedSize.width || result.height !== expectedSize.height
     || new TextEncoder().encode(JSON.stringify(source)).length > 32768) throw invalid();
   const documentSha256 = await freeImageEditDigest(freeImageEditDocumentBytes(document)),
     fingerprint = await freeImageEditDigest(new TextEncoder().encode(freeImageRoleEditApplyIdentity(source, selected, document.crop, documentSha256)));

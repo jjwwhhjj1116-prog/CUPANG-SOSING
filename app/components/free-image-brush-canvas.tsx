@@ -1,11 +1,14 @@
 'use client';
 /* eslint-disable @next/next/no-img-element */
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import { MAX_FREE_IMAGE_BRUSH_POINTS, type FreeImageBrush, type FreeImageBrushPoint } from '@/app/free-image-brush';
+import { freeImagePhotoFilter, freeImagePhotoSourcePoint, type FreeImagePhoto } from '@/app/free-image-photo';
 
 export type FreeImageBrushStroke = { id: string; background: string; brush: FreeImageBrush };
 type Props = {
   displayScale?: number;
+  photo?: FreeImagePhoto;
+  children?: ReactNode;
   sourceUrl: string; width: number; height: number; scopeKey: string;
   enabled: boolean; disabled: boolean; size: number; color: string; maxPoints: number;
   strokes: readonly FreeImageBrushStroke[];
@@ -18,6 +21,7 @@ type Gesture = {
   id: string; pointerId: number; generation: number; scopeKey: string; sourceUrl: string;
   width: number; height: number; size: number; color: string; maxPoints: number;
   surface: SVGSVGElement; rect: Rect; points: FreeImageBrushPoint[];
+  photo?: FreeImagePhoto;
   onComplete: Props['onComplete']; onCancel: Props['onCancel'];
 };
 type Draft = { size: number; color: string; points: FreeImageBrushPoint[] };
@@ -26,10 +30,10 @@ const rectOf = (surface: SVGSVGElement): Rect => {
   const rect = surface.getBoundingClientRect();
   return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
 };
-function pointAt(clientX: number, clientY: number, rect: Rect, width: number, height: number) {
+function pointAt(clientX: number, clientY: number, rect: Rect, width: number, height: number, photo?: FreeImagePhoto) {
   if (![clientX, clientY, rect.left, rect.top, rect.width, rect.height].every(Number.isFinite) || rect.width <= 0 || rect.height <= 0) return null;
-  return { x: Math.max(0, Math.min(width - 1, Math.round((clientX - rect.left) * width / rect.width))),
-    y: Math.max(0, Math.min(height - 1, Math.round((clientY - rect.top) * height / rect.height))) };
+  const { x, y } = freeImagePhotoSourcePoint((clientX - rect.left) / rect.width, (clientY - rect.top) / rect.height, width, height, photo);
+  return { x: Math.max(0, Math.min(width - 1, Math.round(x))), y: Math.max(0, Math.min(height - 1, Math.round(y))) };
 }
 function sameRect(left: Rect, right: Rect) { return Object.keys(left).every(key => left[key as keyof Rect] === right[key as keyof Rect]); }
 function strokeShape(id: string, brush: FreeImageBrush, color: string) {
@@ -81,7 +85,7 @@ export function FreeImageBrushCanvas(props: Props) {
     return gesture;
   }
   function appendPoint(gesture: Gesture, clientX: number, clientY: number) {
-    const point = pointAt(clientX, clientY, gesture.rect, gesture.width, gesture.height);
+    const point = pointAt(clientX, clientY, gesture.rect, gesture.width, gesture.height, gesture.photo);
     if (!point) { cancelGesture(); return false; }
     const last = gesture.points.at(-1);
     if (last?.x === point.x && last.y === point.y) return true;
@@ -95,13 +99,13 @@ export function FreeImageBrushCanvas(props: Props) {
       || !Number.isSafeInteger(current.width) || !Number.isSafeInteger(current.height) || current.width < 1 || current.height < 1
       || !Number.isSafeInteger(current.size) || current.size < 1 || current.size > 200 || !/^#[a-f0-9]{6}$/iu.test(current.color)
       || !Number.isSafeInteger(current.maxPoints) || current.maxPoints < 1) return;
-    const rect = rectOf(event.currentTarget), point = pointAt(event.clientX, event.clientY, rect, current.width, current.height); if (!point) return;
+    const rect = rectOf(event.currentTarget), point = pointAt(event.clientX, event.clientY, rect, current.width, current.height, current.photo); if (!point) return;
     try { event.currentTarget.setPointerCapture(event.pointerId); } catch { return; }
     const id = current.onBegin();
     if (!id) { try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* No gesture was accepted. */ } return; }
     gestureRef.current = { id, pointerId: event.pointerId, generation, scopeKey: current.scopeKey, sourceUrl: current.sourceUrl,
       width: current.width, height: current.height, size: current.size, color: current.color, maxPoints: Math.min(MAX_FREE_IMAGE_BRUSH_POINTS, current.maxPoints),
-      rect, surface: event.currentTarget, points: [point], onComplete: current.onComplete, onCancel: current.onCancel };
+      rect, surface: event.currentTarget, points: [point], photo: current.photo, onComplete: current.onComplete, onCancel: current.onCancel };
     event.preventDefault(); setNotice(''); setDraft({ size: current.size, color: current.color, points: [{ ...point }] });
   }
   function pointerMove(event: PointerEvent<SVGSVGElement>) {
@@ -119,11 +123,12 @@ export function FreeImageBrushCanvas(props: Props) {
   }
   function pointerCanceled(event: PointerEvent<SVGSVGElement>) { if (currentGesture(event)) cancelGesture(); }
   return <><div style={{ position: 'relative', width: props.displayScale === undefined ? '100%' : props.width * props.displayScale, maxWidth: props.displayScale === undefined ? Math.min(props.width, 420 * props.width / props.height) : undefined, flexShrink: 0, aspectRatio: `${props.width}/${props.height}`, overflow: 'hidden' }}>
-    <img src={props.sourceUrl} alt="문구 번역 원본" width={props.width} height={props.height} style={{ display: 'block', width: '100%', height: '100%' }} />
+    <img src={props.sourceUrl} alt="문구 번역 원본" width={props.width} height={props.height} style={{ display: 'block', width: '100%', height: '100%', filter: props.photo ? freeImagePhotoFilter(props.photo) : undefined }} />
     <svg role="img" aria-label="브러시 편집 원본" data-testid="free-image-brush-surface" viewBox={`0 0 ${props.width} ${props.height}`} preserveAspectRatio="none"
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: props.enabled && !props.disabled ? 'none' : 'auto', cursor: props.enabled && !props.disabled ? 'crosshair' : 'default' }}
       onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerCanceled} onLostPointerCapture={pointerCanceled}>
       <rect x={0} y={0} width={props.width} height={props.height} fill="transparent" pointerEvents="all" />
+      {props.children}
       {props.strokes.map(stroke => strokeShape(stroke.id, stroke.brush, stroke.background))}
       {draft && strokeShape('pending-brush', { size: draft.size, points: draft.points }, draft.color)}
     </svg>

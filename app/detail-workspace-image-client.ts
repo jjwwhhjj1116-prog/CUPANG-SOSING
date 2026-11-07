@@ -1,7 +1,7 @@
 import { validateFreeImageSource, validateImageTextRegions, type FreeImageSource, type FreeImageWorkspaceTarget, type ImageTextRegion } from '@/app/free-image-translation';
 import { expectedFreeImageOutputKey, FreeImageApplyError, readFreeImageSourcePixels, readFreeImageTranslationReply, sameFreeImageSource,
   type FreeImageLoaded, type FreeImageRendered } from '@/app/free-image-translation-client';
-import { validateFreeImageEditDocument } from '@/app/free-image-edit-document';
+import { freeImageEditOutputDimensions, validateFreeImageEditDocument } from '@/app/free-image-edit-document';
 import { validateDetailWorkspaceReply, type DetailWorkspaceSelection } from '@/app/detail-workspace-client';
 import { detailWorkspaceExpectedView, detailWorkspaceRequestId, generateDetailWorkspaceHtml, type DetailWorkspaceView } from '@/app/detail-workspace';
 import { isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
@@ -59,7 +59,8 @@ async function rendered(image: FreeImageRendered, value: DetailWorkspaceEditorCo
   if (!sourceMatches(source, value, photo.key) || !isOwnedImageKey(owner, source.sourceKey) || !image.editDocument || image.optionImageIds?.length
     || image.output.type !== 'image/png' || !image.output.size || image.output.size > MAX_IMAGE_BYTES) return invalid();
   const document = validateFreeImageEditDocument(image.editDocument, source), editDocumentSha256 = await labelUploadDigest(new TextEncoder().encode(JSON.stringify(document)));
-  if (!same(document.crop, image.crop) || image.width !== (document.crop?.width ?? document.width) || image.height !== (document.crop?.height ?? document.height)) return invalid();
+  const expected = freeImageEditOutputDimensions(document);
+  if (!same(document.crop, image.crop) || image.width !== expected.width || image.height !== expected.height) return invalid();
   const key = await expectedFreeImageOutputKey(image), sha256 = await labelUploadDigest(new Uint8Array(await image.output.arrayBuffer()));
   return { saved, record, photo, document, editDocumentSha256, key, sha256 };
 }

@@ -39,6 +39,22 @@ test('replacement edits the current pixels while retaining a different immutable
   } finally { f.api.close(); }
 });
 
+test('photo-only rotation is saved and reopened in the selected detail workspace without changing the quote', async () => {
+  const f = await workspaceImageEditFixture(companies[0]);
+  try {
+    const source = (await json(await f.openImage())).source, before = await json(await f.read());
+    const document = { format: 'free-image-edit-v1', width: source.width, height: source.height, sourceLanguage: 'zh', regions: [],
+      photo: { rotation: 270, flipX: false, flipY: true, brightness: 108, contrast: 93, saturation: 95, hue: 17 } };
+    const png = await f.png('#abcdef', source.height, source.width);
+    const saved = await json(await f.applyImage(source, document, png)), reopened = await json(await f.openImage());
+    assert.equal(saved.workspace.document.photos[1].key, saved.key);
+    assert.deepEqual(saved.view, before.view);
+    assert.deepEqual(reopened.editDocument, document);
+    assert.equal(reopened.source.sourceKey, source.sourceKey);
+    assert.equal((await json(await f.recoverImage(source, document, png))).applied, true);
+  } finally { f.api.close(); }
+});
+
 test('crop preserves full base dimensions and text/brush document while the result has exactly cropped PNG dimensions', async () => {
   const f = await workspaceImageEditFixture(companies[0]);
   try {

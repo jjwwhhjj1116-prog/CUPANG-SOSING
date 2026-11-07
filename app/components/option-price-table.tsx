@@ -28,6 +28,7 @@ type Props = { rows: readonly OptionInput[]; calculations: readonly OptionCalcul
   showSummary?:boolean;
   imageKeys?:readonly string[];sourceImageKeys?:Readonly<Record<string,string>>;
   layout?:'standard'|'registration';
+  costCopySource?:string|null;onCopyCost?:(id:string)=>void;
   onChange: <K extends OptionField>(id: string, key: K, value: OptionInput[K]) => void };
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
 const rowWon = (value: number) => `${value.toLocaleString('ko-KR')}원`;
@@ -68,7 +69,7 @@ export function OptionPriceSummary({rows,calculations,priceController}:{rows:rea
 }
 
 /** Presentation state never replaces the editor's complete option draft. */
-export function OptionPriceTable({ rows, calculations, selected, focusedOptionId, optionRegistrationNumbers, onSelect, onChange,exchangeRate,priceController,priceBlocked=false,showSummary=true,layout='standard' }: Props) {
+export function OptionPriceTable({ rows, calculations, selected, focusedOptionId, optionRegistrationNumbers, onSelect, onChange,costCopySource,onCopyCost,exchangeRate,priceController,priceBlocked=false,showSummary=true,layout='standard' }: Props) {
   const [query, setQuery] = useState(''), [pageSize, setPageSize] = useState(defaultPageSize);
   const [page, setPage] = useState(() => Math.max(0, Math.floor(rows.findIndex(row => row.id === focusedOptionId) / defaultPageSize)));
   const [visibleColumns, setVisibleColumns] = useState<ColumnId[]>(() => columns.map(column => column.id));
@@ -179,11 +180,15 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
         const validTotal = totalCny !== null && Number.isFinite(totalCny) && totalCny > 0;
         const generalKrw = validTotal && typeof exchangeRate === 'number' && Number.isFinite(exchangeRate) && exchangeRate > 0
           ? totalCny * exchangeRate : null;
+        const canCopy=onCopyCost&&costCopySource===row.id&&selected.has(row.id)&&validTotal
+          && rows.some(target=>target.id!==row.id&&selected.has(target.id)&&target.unitCostCny!==row.unitCostCny);
         const field=<input aria-label={`가격 옵션 ${index + 1} 개당 원가`} type="number" min="0" step="any" disabled={priceBlocked} value={row.unitCostCny === null || !Number.isFinite(row.unitCostCny) ? '' : row.unitCostCny} onChange={event => onChange(row.id, 'unitCostCny', event.target.value === '' ? null : event.target.valueAsNumber)} />;
         return <>
           {layout==='registration'?<div className="option-price-money-input"><span aria-hidden="true">¥</span>{field}</div>:field}
           {generalKrw !== null && Number.isFinite(generalKrw) && generalKrw > 0 && <small className="option-price-source-cost" aria-label={`가격 옵션 ${index + 1} 일반 환율 환산 원가`} title="개당 위안 원가 × 현재 구성 수량 × 일반 적용환율. 통합통관 매입가는 별도로 계산합니다.">{generalKrw.toLocaleString('ko-KR')}원{layout==='registration'?'':' · 일반 환율 환산'}</small>}
           {validTotal && row.unitsPerPack > 1 && <small className="option-price-source-cost" aria-label={`가격 옵션 ${index + 1} 구성 합계 위안 원가`}>(¥{totalCny.toLocaleString('ko-KR')} · {row.unitsPerPack.toLocaleString('ko-KR')}개 합계)</small>}
+          {canCopy&&<button type="button" className="option-price-copy-cost" aria-label={`가격 옵션 ${index+1} 원가를 선택 옵션에 동일 적용`}
+            disabled={priceBlocked||!priceController?.fresh||priceController.busy||priceController.uncertain} onClick={()=>onCopyCost(row.id)}>선택 옵션에 동일 적용</button>}
         </>;
       }
       default:

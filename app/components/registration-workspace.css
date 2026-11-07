@@ -14,7 +14,7 @@
 .registration-workspace .registration-navigation>span{font-size:14px;color:#676e8a;min-width:40px}
 .registration-workspace .registration-steps{padding-bottom:12px;border-bottom:1px solid #eceef2}
 .registration-workspace .registration-steps button{gap:5px;line-height:29px}
-.registration-workspace .registration-steps button span{width:20px;height:20px;font-size:12px;font-weight:400}
+.registration-workspace .registration-steps button span{width:20px;height:20px;font-size:12px;line-height:1;font-weight:400}
 .registration-workspace .registration-steps button strong{font-size:13.6px;font-weight:400;line-height:29px}
 .registration-workspace .detail-body{scrollbar-gutter:stable;overscroll-behavior:contain}
 .registration-workspace .detail-body[data-registration-stage="대표 이미지"]{display:flex;flex-direction:column;gap:16px;padding:12px 20px 20px}

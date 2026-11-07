@@ -35,16 +35,25 @@ export function validateSeoGuidanceComposition(raw: unknown): SeoGuidanceComposi
 }
 
 export function seoGuidanceTitle(draft: Pick<TranslationDraft,'title'>, memo: Pick<SeoGuidanceComposition,'brand'|'features'|'keywords'>): string {
-  const features = memo.features.trim();
+  const featureInput = memo.features.trim().replace(/[^\S\r\n]+/gu, ' ');
   // A long specification/prompt is not a product name. The owner chooses a
   // short phrasing while the original translation remains available separately.
-  if (features.length > 100 || /[\r\n]/u.test(features)) return '';
-  const title=draft.title.trim(),brand=memo.brand.trim();
-  const existingBrand=!!brand&&(title===brand||title.startsWith(brand+' '));
-  const base=existingBrand?title.slice(brand.length).trimStart():title;
-  let result = [brand,features&&!base.includes(features)&&features,base].filter(Boolean).join(' ');
-  for (const target of quotationKeywordPlan(memo.keywords).kept) if (!result.includes(target)) result += (result ? ' ' : '') + target;
-  return result;
+  if (featureInput.length > 100 || /[\r\n]/u.test(featureInput)) return '';
+  const brand=memo.brand.split(',')[0].trim();
+  const withoutBrand=(value:string)=>{
+    while(brand&&(value===brand||value.startsWith(brand+' ')))value=value.slice(brand.length).trimStart();
+    return value;
+  };
+  const features=withoutBrand(featureInput),title=draft.title.trim().replace(/\s+/gu,' ');
+  const key=(value:string)=>value.replace(/\s/gu,'').toLowerCase();
+  const targets=quotationKeywordPlan(memo.keywords).kept;
+  const attachedTarget=brand&&targets.find(target=>key(title)===key(brand+target));
+  const base=attachedTarget||withoutBrand(title);
+  const contains=(text:string,part:string)=>key(text).includes(key(part));
+  let product=base&&contains(base,features)?base:features;
+  if(base&&!contains(product,base))product=[product,base].filter(Boolean).join(' ');
+  for(const target of targets)if(!contains(product,target))product=[product,target].filter(Boolean).join(' ');
+  return [brand,product].filter(Boolean).join(' ');
 }
 export function seoGuidanceTags(draft: Pick<TranslationDraft,'keywords'>, input: SeoGuidanceComposition, generatedCandidates=false) {
   const tags = targetKeywords(input.keywords), omitted: string[] = [];

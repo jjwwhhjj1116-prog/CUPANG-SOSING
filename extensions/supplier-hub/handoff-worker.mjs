@@ -1,6 +1,6 @@
 import {dispatchSeoKeywords,cancelSeoKeywords} from './seo-keywords.mjs';
 import './sales-worker.mjs';
-import {readAppSupplierHubCategoryRecommendations} from './category-predict.mjs';
+import {readAppSupplierHubCategoryRecommendations,readAppSupplierHubCategorySearch} from './category-predict.mjs';
 import {dispatchSupplierHubValidation} from './validation-dispatch.mjs';
 import {observeSupplierHubResult} from './observe.mjs';
 import {validateHandoff,pendingPackage,resultKey,transferRecord} from './handoff-store.mjs';
@@ -25,7 +25,7 @@ import {readProductSourceSession} from './product-source-session.mjs';
 import {inspectPreservedProductDocument} from './preserved-product-checkpoint.mjs';
 import {dispatchHistoricalProductReceipt} from './preserved-product-receipt-runtime.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
-  if(message?.type==='YOOFAM_SEO_KEYWORD_CAPABILITY'){respond({ok:true,capability:'couplus-consumer-keywords-v1'});return;}
+  if(message?.type==='YOOFAM_SEO_KEYWORD_CAPABILITY'){respond({ok:true,capability:'couplus-consumer-keywords-v1',categoryKeywordSearch:true});return;}
   if(message?.type==='YOOFAM_SEO_KEYWORDS_CANCEL'){try{respond(cancelSeoKeywords(message,sender));}catch{respond({ok:false});}return;}
   if(message?.type==='YOOFAM_SEO_KEYWORDS'){dispatchSeoKeywords(message,sender).then(respond,()=>respond({ok:false,error:'연관어를 확인하지 못해 기존 선호로 계속합니다.'}));return true;}
   if(message?.type==='YOOFAM_PRODUCT_DOCUMENT_DETAIL_AMENDMENT_REQUEST'){
@@ -63,6 +63,9 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   }
   if(message?.type==='YOOFAM_RECOMMEND_CATEGORIES'){
     readAppSupplierHubCategoryRecommendations(message,sender).then(recommendations=>respond({ok:true,recommendations}),error=>respond({ok:false,error:error.message}));return true;
+  }
+  if(message?.type==='YOOFAM_SEARCH_CATEGORIES'){
+    readAppSupplierHubCategorySearch(message,sender).then(search=>respond({ok:true,search}),error=>respond({ok:false,error:error.message}));return true;
   }
   if(['YOOFAM_SAVE_PAGE_SOURCE','YOOFAM_FLUSH_PAGE_SOURCES'].includes(message?.type)){
     const run=message.type==='YOOFAM_SAVE_PAGE_SOURCE'?savePageSource:flushPageSources;

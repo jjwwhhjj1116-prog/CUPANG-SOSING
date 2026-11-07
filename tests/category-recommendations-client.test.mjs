@@ -35,14 +35,15 @@ function loader(overrides={},globals={}){
  return load;
 }
 
-function clientFixture({recommendation=envelope(),capability=true,translation,translateStatus=200,branches=[],onExchange,onFetch}={}){
+function clientFixture({recommendation=envelope(),search,capability=true,searchCapability=true,translation,translateStatus=200,branches=[],onExchange,onFetch}={}){
  const calls=[],requests=[];let branchIndex=0;
  const load=loader({'@/app/supplier-hub-handoff':{exchange:async(type,payload,signal)=>{
   calls.push({type,payload:clone(payload),signal});
   await onExchange?.(type,payload,signal);
   signal.throwIfAborted();
-  if(type==='PING')return {categoryRecommendations:capability,categoryCatalog:true};
+  if(type==='PING')return {categoryRecommendations:capability,categoryCatalog:true,categoryKeywordSearch:searchCapability};
   if(type==='RECOMMEND_CATEGORIES')return {recommendations:clone(recommendation)};
+  if(type==='SEARCH_CATEGORIES')return {search:clone(search)};
   if(type==='CATEGORIES'){
    const children=branches[branchIndex++];
    assert.ok(children,'Unexpected catalogue traversal');
@@ -63,6 +64,33 @@ const branches=()=>[
  [{categoryId:'200',name:'남성패션',isLeaf:false},{categoryId:'201',name:'여성패션',isLeaf:false}],
  [{categoryId:'900',name:'귀달이 모자',isLeaf:true},{categoryId:'901',name:'야구 모자',isLeaf:true}],
 ];
+
+test('explicit name search never translates or predicts and applies only the exact current catalogue leaf',async()=>{
+ const {items,observedAt}=envelope(),keyword='귀달이 모자',signal=new AbortController().signal;
+ const search={source:'supplier-hub-category-keyword-api',keyword,ownerId:owner,company,items,observedAt};
+ const h=clientFixture({search,branches:branches()});
+ const result=await h.exports.loadSupplierHubCategorySearch(' '+keyword+' ',owner,signal);
+ assert.deepEqual(h.calls.map(call=>call.type),['PING','SEARCH_CATEGORIES']);
+ assert.deepEqual(h.calls[1].payload,{keyword,expectedOwnerId:owner});
+ assert.equal(h.requests.length,0);
+ await assert.rejects(h.exports.resolveSearchedHubCategoryChoice({...items[0],code:'901'},result,owner,signal),/현재 검색 목록/);
+ assert.equal(h.calls.length,2);
+ const choice=await h.exports.resolveSearchedHubCategoryChoice(result.items[0],result,owner,signal);
+ assert.equal(choice.categoryId,'900');assert.deepEqual(clone(choice.path),items[0].path);assert.deepEqual(clone(choice.supplierHub.company),company);
+ assert.equal(h.calls.filter(call=>call.type==='CATEGORIES').length,3);
+});
+
+test('name search rejects stale or wrong account results and signals capability fallback without a prediction',async()=>{
+ const {items,observedAt}=envelope(),keyword='귀달이 모자',signal=new AbortController().signal;
+ const search={source:'supplier-hub-category-keyword-api',keyword,ownerId:owner,company,items,observedAt};
+ for(const patch of [{ownerId:'other'},{observedAt:Date.now()-300001},{keyword:'다른 검색어'}]){
+  const h=clientFixture({search:{...search,...patch}});
+  await assert.rejects(h.exports.loadSupplierHubCategorySearch(keyword,owner,signal),/검색 결과/);
+ }
+ const old=clientFixture({searchCapability:false});
+ assert.equal(await old.exports.loadSupplierHubCategorySearch(keyword,owner,signal),null);
+ assert.deepEqual(old.calls.map(call=>call.type),['PING']);
+});
 
 test('Korean title goes directly to the official recommendation capability and preserves source input',async()=>{
  const h=clientFixture(),source={title:'  방한 귀달이 모자  ',untouched:{price:5.3}},before=clone(source);

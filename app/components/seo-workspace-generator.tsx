@@ -293,7 +293,7 @@ function SeoWorkspaceGeneratorContent({ uiReads,onBeginSourceWrite,productId, wo
     finally{if(request.current===controller){request.current=null;if(mounted.current)setBusy(false);}}
   }
   const google=basis?.configuration.model==='google-translate-gtx';
-  const titleExample=[memo.brand||basis?.registrationBrand||brand||'YOOFAM',memo.features||'인조가죽',memo.keywords||'크로스백'].join(' ');
+  const titleExample=seoGuidanceTitle({title:''},memo);
   const currentJob=job?.productVersion===version&&job.productId===productId;
   const failedQwenRetry=hasRequest&&closed&&currentJob&&job.status==='failed'&&job.review?.model===WORKERS_QWEN_MODEL
     &&!Object.hasOwn(job.review,'workersRecovery')&&basis?.configuration.model===WORKERS_QWEN_MODEL;
@@ -341,7 +341,7 @@ function SeoWorkspaceGeneratorContent({ uiReads,onBeginSourceWrite,productId, wo
         <label>상품 특징<input aria-label="SEO 상품 특징" value={memo.features} maxLength={2000} disabled={busy||hasRequest||generationBusy||generationPending} placeholder="상품 특징을 입력하세요 (예: 인조가죽 등)" onChange={event=>edit('features',event.target.value)} onBlur={event=>blur('features',event.target.value,renderGuidanceSession)}/><small>상품명에 포함될 주요 특징을 입력하세요</small></label>
         <label>타겟 키워드<input aria-label="SEO 타겟 키워드" aria-required="true" value={memo.keywords} maxLength={2000} disabled={busy||hasRequest||generationBusy||generationPending} placeholder="핵심 타겟 키워드를 입력하세요 (예: 크로스백 등)" onChange={event=>edit('keywords',event.target.value)} onBlur={event=>blur('keywords',event.target.value,renderGuidanceSession)}/><small>이 키워드를 중심으로 SEO 최적화가 진행됩니다</small></label>
       </div>
-      <div className="seo-title-example"><p><strong>생성될 상품명 예시:</strong></p><p>{titleExample}</p></div>
+      <div className="seo-title-example"><p><strong>생성될 상품명 예시:</strong></p><p>{titleExample||'상품 특징과 타겟 키워드를 입력해주세요.'}</p></div>
       {!onDraft&&!google&&basis?.configuration.configured&&<details className="seo-generation-provider" aria-label="SEO 번역 모델·사용료"><summary>번역 모델·사용료</summary><small>{basis.configuration.model?.startsWith('@cf/')?'Cloudflare Workers AI':'설정된 AI 서비스'} · {basis.configuration.model} · 최대 출력 {basis.configuration.maxOutputTokens}토큰 · 사용량에 따라 비용이 발생할 수 있습니다.</small></details>}
       {!onDraft&&!google&&basis?.configuration.configured&&<label className="seo-ai-consent"><input type="checkbox" checked={confirmAi} disabled={busy} onChange={event=>{if(mounted.current&&current.current.version===version&&current.current.active&&!request.current)setConfirmAi(event.target.checked);}}/> AI 초안 생성 요청 1회를 실행합니다. 서비스 사용량에 따라 비용이 발생할 수 있습니다.</label>}
       {!!basis?.remainingOptions&&<small>이번 요청 한도를 넘는 옵션 번역 항목 {basis.remainingOptions}개는 원문에 유지됩니다. 추가 번역은 아래 생성 이력에서 이어갈 수 있습니다.</small>}

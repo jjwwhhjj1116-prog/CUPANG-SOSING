@@ -8,6 +8,9 @@ import {reviewFixture} from './helpers/selected-image-review.mjs';
 
 const native = createRequire(import.meta.url), version = '2026-10-06T00:00:00.000Z';
 const plain = value => JSON.parse(JSON.stringify(value));
+const photoModule = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image-photo.ts', import.meta.url),'utf8'),
+  {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:photoModule});
 const nodes = value => Array.isArray(value) ? value.flatMap(nodes) : value && typeof value === 'object' ? [value, ...nodes(value.props?.children)] : [];
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value == null ? '' : String(value);
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -78,12 +81,13 @@ function fixture(initialProps = {}, clientOverrides = {}) {
     async recognizeLocalFreeImage(image, language, signal, progress) { calls.push({ action: 'local-ocr', image, language, signal }); progress('브라우저 인식 중'); return ocrIntercept ? ocrIntercept(image, signal) : [region('r1'), region('r2')]; },
     async translateFreeImageRegions(source, language, rows, signal) { calls.push({ action: 'translate', source, language, rows, signal });
       return translateIntercept ? translateIntercept(source, rows, signal) : { source, regions: rows.map(row => ({ id: row.id, original: row.text, translated: '한국어 ' + row.id, issue: null })), requests: 1, stoppedHttpStatus: null, warnings: [] }; },
-    async renderFreeImageTranslation(image, rows, signal, optionImageIds = [], crop, sourceLanguage) {
+    async renderFreeImageTranslation(image, rows, signal, optionImageIds = [], crop, sourceLanguage, photo) {
       const selection = Array.from(optionImageIds).sort(); if(crop!==undefined)cropModule.validateFreeImageCropRect(crop,image.width,image.height);
-      calls.push({ action: 'preview', image, rows, signal, optionImageIds: selection, ...(crop!==undefined?{crop}:{}), ...(sourceLanguage ? { sourceLanguage } : {}) });
+      calls.push({ action: 'preview', image, rows, signal, optionImageIds: selection, ...(crop!==undefined?{crop}:{}), ...(sourceLanguage ? { sourceLanguage } : {}), ...(photo ? { photo } : {}) });
       if (selection.some(id => image.source.role !== 'main' || !image.source.optionImages?.optionIds.includes(id)) || new Set(selection).size !== selection.length
         || image.source.optionImages?.commonAssigned === false && !selection.length) throw Error('이 원본을 대표 이미지로 사용하는 옵션만 선택해주세요.');
-      return renderIntercept ? renderIntercept(image, rows, signal, selection, crop, sourceLanguage) : { source: image.source, output: new Blob(['rendered PNG'], { type: 'image/png' }), width: crop?.width??20, height: crop?.height??12,
+      const { width, height } = photoModule.freeImagePhotoGeometry(crop?.width??20, crop?.height??12, photo);
+      return renderIntercept ? renderIntercept(image, rows, signal, selection, crop, sourceLanguage, photo) : { source: image.source, output: new Blob(['rendered PNG'], { type: 'image/png' }), width, height,
         ...(crop!==undefined?{crop:{...crop,sourceWidth:image.width,sourceHeight:image.height}}:{}), ...(selection.length ? { optionImageIds: [...selection] } : {}) }; },
     async applyFreeImageTranslation(image, signal) { calls.push({ action: 'apply', image, signal });
       return applyIntercept ? applyIntercept(image, signal) : { source: image.source, key: 'owner/generated.png', applied: true, productVersion: '2026-10-06T00:00:01Z', contentRevision: 3 }; },
@@ -115,6 +119,7 @@ function fixture(initialProps = {}, clientOverrides = {}) {
       if (name === '@/app/free-image-brush') return brushModule;
       if (name === '@/app/components/free-image-brush-canvas') return { FreeImageBrushCanvas: 'FreeImageBrushCanvas' };
       if (name === '@/app/free-image-crop') return cropModule;
+      if (name === '@/app/free-image-photo') return photoModule;
       if (name === '@/app/components/free-image-crop-canvas') return { FreeImageCropCanvas: 'FreeImageCropCanvas' };
       if (name === '@/app/detail-workspace-image-client') return workspaceClient;
       if (name === '@/app/free-image-editor-target') return {
@@ -127,7 +132,7 @@ function fixture(initialProps = {}, clientOverrides = {}) {
     } });
   const render = () => { cursor = 0; const outer = exports.default(props), tree = outer.type(outer.props); effects.splice(0).forEach(fn => fn()); return tree; };
   const settle = async () => { for (let index = 0; index < 6; index++) { render(); await new Promise(resolve => setImmediate(resolve)); } };
-  const button = label => nodes(render()).find(node => node.type === 'button' && text(node) === label);
+  const button = label => nodes(render()).find(node => node.type === 'button' && (text(node) === label || node.props['aria-label'] === label));
   const field = label => nodes(render()).find(node => node.props['aria-label'] === label);
   const brush = () => nodes(render()).find(node => node.type === 'FreeImageBrushCanvas');
   render(); render();
@@ -1303,6 +1308,7 @@ test('cancel and discard create no brush history, and same-source OCR replacemen
     await translated(h); const before = await snapshotRegions(h);
     await h.change('색상 브러시 모드', '', true); const first = h.brush().props, id = first.onBegin(); await h.settle();
     first.onCancel(id); await h.settle(); assert.deepEqual(await snapshotRegions(h), before); assert.equal(h.busy.at(-1), false);
+    await h.click('편집 화면');
     const second = h.brush().props, discarded = second.onBegin(); await h.settle(); await h.click('이미지 번역 편집 초안 지우기');
     second.onComplete(discarded, [{ x: 5, y: 5 }]); second.onCancel(discarded); await h.settle();
     assert.equal(h.brush(), undefined); assert.equal(h.field('문구 1 원문'), undefined);
@@ -1354,10 +1360,10 @@ test('a reviewed brush PNG retains exact quotation and option proof through lost
   const h = fixture(); try {
     const { quotationTarget } = finalImageSelection(h, 'additionalImages'); await translated(h); await h.change('문구 2 한국어', '');
     await h.change('색상 브러시 모드', '', true); const canvas = h.brush().props, id = canvas.onBegin();
-    canvas.onComplete(id, [{ x: 4, y: 5 }]); await h.settle(); await h.click('번역 이미지 미리보기');
+    canvas.onComplete(id, [{ x: 4, y: 5 }]); await h.settle(); const begin = h.brush().props.onBegin; await h.click('번역 이미지 미리보기');
     const preview = h.calls.filter(call => call.action === 'preview').at(-1); assert.ok(preview.rows.at(-1).brush);
     assert.deepEqual(plain(preview.image.source.quotationTarget), { ...quotationTarget, bindingSha256: 'b'.repeat(64) }); assert.deepEqual(preview.optionImageIds, []);
-    const begin = h.brush().props.onBegin; h.setApply(async () => { throw new ApplyError('ACK 유실', true); }); await h.click('검토한 번역 이미지 적용');
+    h.setApply(async () => { throw new ApplyError('ACK 유실', true); }); await h.click('검토한 번역 이미지 적용');
     assert.equal(begin(), null); assert.equal(h.field('색상 브러시 모드').props.disabled, true);
     const first = h.calls.filter(call => call.action === 'apply')[0].image;
     h.setRecover(async image => ({ source: image.source, applied: false })); await h.click('같은 결과의 저장 상태 다시 확인');

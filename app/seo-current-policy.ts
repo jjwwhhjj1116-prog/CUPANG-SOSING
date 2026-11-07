@@ -76,7 +76,8 @@ export function guardCurrentSeoDraft(draft:TranslationDraft,source:TranslationSo
  let title=chinese(draft.title),keywords=draft.keywords.map(chinese).filter(Boolean);
  // Selected specifications, then partial-option brackets.
  const beforeSpecs=title;
- for(const unit of rules.n){const pattern=new RegExp(rules.a+rules.s+'\\s*'+unit.re,'gi'),allowed=[...new Set([...optionFacts.matchAll(pattern)].map(match=>match[1].replace(/\s/gu,'')))];if(!allowed.length)continue;title=title.replace(pattern,(whole,value:string)=>{const numbers=value.split(/\s*(?:-|~|–|\/)\s*/u);if(numbers.every(number=>allowed.includes(number))&&(!options.length||allowed.length<=1||numbers.length>1))return whole;warning('spec',[whole]);return ' ';});}
+ const specKey=(value:string)=>value.replace(/\s/gu,'').replace(/[x×*]/giu,'x');
+ for(const unit of rules.n){const pattern=new RegExp(rules.a+rules.s+'\\s*'+unit.re,'gi'),allowed=[...new Set([...optionFacts.matchAll(pattern)].map(match=>specKey(match[1])))];if(!allowed.length)continue;title=title.replace(pattern,(whole,value:string)=>{const numbers=value.split(/\s*(?:-|~|–|\/)\s*/u);if(numbers.every(number=>allowed.includes(specKey(number)))&&(!options.length||allowed.length<=1||numbers.length>1))return whole;warning('spec',[whole]);return ' ';});}
  if(!tidy(title))title=beforeSpecs;
  const optionMatches=(value:string,term:string)=>/^[A-Za-z0-9]+$/u.test(term)?new RegExp('(?<![A-Za-z0-9])'+escape(term)+'(?![A-Za-z0-9])','i').test(value):value.includes(term);
  if(options.length>=2)title=title.replace(/\([^)]*\)|\[[^\]]*\]|【[^】]*】/gu,whole=>{const terms=whole.slice(1,-1).split(/[/,·|]/u).map(value=>value.trim()).filter(Boolean),covered=options.filter(option=>terms.some(term=>optionMatches(option.value,term)));if(covered.length&&covered.length<options.length&&terms.every(term=>options.some(option=>optionMatches(option.value,term)))){warning('partialOptions',[whole]);return ' ';}return whole;});

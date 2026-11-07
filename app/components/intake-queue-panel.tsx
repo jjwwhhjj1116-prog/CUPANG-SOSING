@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CategoryPicker } from '@/app/components/category-picker';
 import { intakeProductId, intakeRow, intakeRowsForCollection, submitIntakeQueue, visibleIntakeRows, intakeSourceReviewInputKey, type IntakeRow } from '@/app/intake-queue';
 import { collectionBlock, parseCollectionRequest, type CollectionJob } from '@/app/sourcing';
+import {supplierHubExtensionDownload,supplierHubExtensionVersion} from '@/app/supplier-hub-extension-download';
 import { savedRegistrationSettings, type WorkspaceSettings } from '@/app/workspace-settings';
 import { parseWorkspaceSettingsScope, type WorkspaceSettingsScope } from '@/app/workspace-settings-scope';
 import type { CategoryProfile } from '@/app/category-profiles';
@@ -31,14 +32,17 @@ export type IntakeSourceSeed={id:string;sourceUrl:string;title?:string;sourceCap
 export type IntakeCategoryEntry=Readonly<{id:string;ownerId:string|undefined}>;
 const freshCaptureFork=(row:IntakeRow)=>Boolean(row.forkJobId&&row.sourceCapture);
 const freshCaptureMessage='선택한 새 수집본을 별도 상품으로 작성합니다. 기존 작업 상품은 유지됩니다. 새 초안을 확인해주세요.';
-type IntakeCategorySelection={target:string;ownerId:string|undefined;epoch:number;completed:boolean;seed?:IntakeSourceSeed};
-export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, workspaceOwnerId, onSettingsReloadStarted, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed,onSourceCancelled,initialCategorySelection,onInitialCategorySelectionConsumed,sourceReviewScope,sourceCompany,sourceItems=[],onReviewSource,autoStartSource=false }: {
+type IntakeCategorySelection={target:string;ownerId:string|undefined;epoch:number;completed:boolean;seed?:IntakeSourceSeed;entry?:true};
+export type IntakeReviewTarget={productId:string;sourceUrl:string;profileId:string};
+export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, workspaceOwnerId, onSettingsReloadStarted, onSettingsReloaded, jobs = [], onOpenProduct,onOpenWorkReview,onOpenTransmissionReview,sourceSeed,onSourceConsumed,onSourceCancelled,initialCategorySelection,onInitialCategorySelectionConsumed,sourceReviewScope,sourceCompany,sourceItems=[],onReviewSource,autoStartSource=false }: {
   sourceReviewScope?:object;sourceCompany?:{code:string;name:string}|null;
   autoStartSource?:boolean;
   sourceItems?:import('@/app/source-inbox').SourceInboxItem[];onReviewSource?:(item:import('@/app/source-inbox').SourceInboxItem,rowId:string)=>void;
   sourceSeed?:IntakeSourceSeed;onSourceConsumed?:(id:string)=>void;onSourceCancelled?:()=>void;
   initialCategorySelection?:IntakeCategoryEntry;onInitialCategorySelectionConsumed?:(id:string)=>void;
   jobs?:CollectionJob[]; onOpenProduct?:(id:string,signal:AbortSignal)=>Promise<void>;
+  onOpenWorkReview?:(targets:readonly IntakeReviewTarget[],signal:AbortSignal)=>Promise<void>;
+  onOpenTransmissionReview?:(targets:readonly IntakeReviewTarget[],signal:AbortSignal)=>Promise<void>;
   workspaceOwnerId?:string; onSettingsReloadStarted?:()=>number;
   settings:WorkspaceSettings; onSettingsReloaded:(settings:WorkspaceSettings,scope?:WorkspaceSettingsScope,epoch?:number)=>void;
   rows: IntakeRow[]; onRows: (update: (rows: IntakeRow[]) => IntakeRow[]) => void;
@@ -49,7 +53,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   const categoryEpoch=useRef(0),categoryMounted=useRef(true),categoryOwner=useRef(workspaceOwnerId),categorySource=useRef(sourceSeed);
   const categoryEntry=useRef(initialCategorySelection);
   const [categorySelection,setCategorySelection]=useState<IntakeCategorySelection|null>(()=>sourceSeed?{target:sourceSeed.targetRowId??'new',ownerId:workspaceOwnerId,epoch:0,completed:false,seed:sourceSeed}
-    :initialCategorySelection?.ownerId===workspaceOwnerId&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(initialCategorySelection?.id??'')?{target:'new',ownerId:workspaceOwnerId,epoch:0,completed:false}:null);
+    :initialCategorySelection?.ownerId===workspaceOwnerId&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(initialCategorySelection?.id??'')?{target:'new',ownerId:workspaceOwnerId,epoch:0,completed:false,entry:true}:null);
   const categorySelectionRef=useRef(categorySelection),categoryTarget=categorySelection?.target??null;
   const pendingSeed=useRef(sourceSeed?.id??null);
   const seenSourceSeeds=useRef(new Set(sourceSeed?[sourceSeed.id]:[]));
@@ -144,7 +148,8 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if (!controller.signal.aborted) setBusy(false);
   }
   const visible = visibleIntakeRows(rows, query);
-  const pendingRows = intakeRowsForCollection(rows).filter(row=>!freshCaptureFork(row)),pendingRowIds=new Set(pendingRows.map(row=>row.id));
+  const openFreshReview=goal==='transmit'?onOpenTransmissionReview:goal==='work'&&sourceCompany&&workspaceOwnerId?onOpenWorkReview:undefined;
+  const pendingRows = intakeRowsForCollection(rows).filter(row=>!freshCaptureFork(row)&&(!openFreshReview||!intakeProductId(row,jobs))),pendingRowIds=new Set(pendingRows.map(row=>row.id));
   const selected = pendingRows.filter(row => !excluded.includes(row.id));
   const pending = selected.length;
   const visiblePending = intakeRowsForCollection(visible).filter(row=>!freshCaptureFork(row)),unfilledRows=rows.filter(row=>row.status!=='saved'&&!freshCaptureFork(row)&&!pendingRowIds.has(row.id));
@@ -250,10 +255,22 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if(target&&(!target.sourceCapture&&!target.sourceReviewContinuation||current.rows.find(row=>row.id===target.id)!==target||!pendingRowIds.has(target.id)||intakeProductId(target,current.jobs)||target.forkJobId||target.pendingJobId))return;
     const processing=(target?[target]:selected).filter(row=>!freshCaptureFork(row));
     if(!processing.length)return;
+    const transmit=goal==='transmit';
+    if(transmit&&(!onOpenTransmissionReview||!workspaceOwnerId||!sourceCompany)){
+      setError('승인된 현재 회원과 회사를 확인한 뒤 등록전송 검토를 시작해주세요.');return;
+    }
+    if(transmit&&processing.some(row=>{
+      const schema=row.profile.hubSchema;
+      return (schema?.metadata.scopeType??schema?.metadata.scope)!=='Retail_Categorized_Single'
+        ||schema?.company.code!==sourceCompany?.code||schema?.company.name!==sourceCompany?.name;
+    })){
+      setError('선택한 행의 현재 회사 공식 개별 견적 양식을 확인한 뒤 등록전송 검토를 시작해주세요.');return;
+    }
     const controller = new AbortController(); running.current = controller; setBusy(true); onBusy(true); setError('');
     const productIds = new Map<string,string>();
     const completed = new Set<string>();
     const reusedProductIds = new Set<string>();
+    const freshTargets = new Map<string,IntakeReviewTarget>();
     const active=()=>ownerCurrent()&&running.current===controller&&!controller.signal.aborted;
     const publishJobs=(values:CollectionJob[])=>{if(active())onJobs(values);};
     try {
@@ -292,7 +309,15 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
           (latest.archivedAt!==null||latest.ownerId!==workspaceOwnerId||latest.fingerprint!==capture.fingerprint||latest.snapshot.sourceUrl!==capture.sourceUrl||latest.issues.length>0);
       }))throw Error(unavailableCapture);
       await submitIntakeQueue(rows, goal, { signal: controller.signal, fetcher: fetch, expectedSettings:settings, onSettingsChanged:()=>{if(active()){setSettingsChanged(true);setSettingsMessage('');}}, selectedIds: new Set(processing.map(row => row.id)),
-        collect: (job,onProgress,onProduct,selectedCapture) => {if(job.product_id)reusedProductIds.add(job.product_id);return collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,...(selectedCapture?{selectedCapture}:{}),captureFromBrowser:capture1688FromChrome,probeExistingFromBrowser:probe1688FromChrome,onProductReused:id=>{if(active())reusedProductIds.add(id);},onJob:updated=>{if(!active())return;publishJobs([updated]);if(updated.product_id)onProduct(updated.product_id);},onProgress});},
+        collect: (job,onProgress,onProduct,selectedCapture) => {
+          if(job.product_id)reusedProductIds.add(job.product_id);
+          if(openFreshReview&&(job.product_id||job.goal!==goal||job.context?.company?.code!==sourceCompany?.code||job.context?.company?.name!==sourceCompany?.name))
+            throw Error('기존 상품 또는 현재 회사의 신규 요청으로 확인되지 않은 상품은 작업 대상에서 제외했습니다.');
+          return collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,...(selectedCapture?{selectedCapture}:{}),captureFromBrowser:capture1688FromChrome,probeExistingFromBrowser:probe1688FromChrome,
+            ...(goal==='price'||transmit?{initializeImageRoles:true}:{}),
+            ...(openFreshReview&&job.context?{onFreshProduct:(id:string)=>{if(active())freshTargets.set(id,{productId:id,sourceUrl:job.source_url,profileId:job.context!.category.id});}}:{}),
+            onProductReused:id=>{if(active())reusedProductIds.add(id);},onJob:updated=>{if(!active())return;publishJobs([updated]);if(updated.product_id)onProduct(updated.product_id);},onProgress});
+        },
         onRow: (id, patch) => {if(!active())return;if(patch.productId)productIds.set(id,patch.productId);if(patch.status==='saved')completed.add(id);onRows(previous => sameOwner()?previous.map(row => {
           if(row.id!==id)return row;
           const continuation=patch.sourceReviewContinuation,started=processing.find(value=>value.id===id);
@@ -301,6 +326,16 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
           const item=continuation.reference.item,verified=!!workspaceOwnerId&&!!sourceCompany&&item?.ownerId===workspaceOwnerId&&item.company.code===sourceCompany.code&&item.company.name===sourceCompany.name;
           return {...row,...patch,sourceReviewContinuation:{...continuation,ownerId:workspaceOwnerId,company:sourceCompany,scope:sourceReviewScope,...(!verified?{state:'uncertain' as const,reference:{...continuation.reference,item:undefined}}:{})}};
         }):previous);}, onJobs:publishJobs });
+      if(openFreshReview){
+        const targets=processing.flatMap(row=>{
+          const id=productIds.get(row.id),prepared=id&&completed.has(row.id)&&!reusedProductIds.has(id)?freshTargets.get(id):undefined;
+          return prepared&&prepared.profileId===row.profile.id&&sameSourceUrl(prepared.sourceUrl,row.url)?[prepared]:[];
+        });
+        if(active()&&targets.length&&new Set(targets.map(row=>row.productId)).size===targets.length
+          &&navigation.current.sourceCompany?.code===sourceCompany?.code&&navigation.current.sourceCompany?.name===sourceCompany?.name)
+          await openFreshReview(targets,controller.signal);
+        return;
+      }
       // Open a confirmed single source draft after import and draft processing.
       // A saved Google failure may require manual translation; failed imports
       // and uncertain saves remain in the editable queue.
@@ -468,6 +503,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if(pendingPreviewRef.current?.rowId===target)setPendingPreview(null);
     if(sourceUrlsCandidateRef.current?.rowId===target)setSourceUrlsCandidate(null);
     navigation.current.rows=update(currentRows);focusRow.current=id;onRows(update);
+    if(selection.entry&&target==='new')setExcluded(currentRows.map(row=>row.id));
     if(autoStartSource&&selection.seed&&sourceCapture)autoStartRow.current={id,capture:sourceCapture,ownerId:workspaceOwnerId};
     if(!categoryCurrent(selection,true))return;
     const seedId=selection.seed?.id;if(seedId){pendingSeed.current=null;onSourceConsumed?.(seedId);}
@@ -489,11 +525,11 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   }}/><button type="button" className="btn ghost" onClick={()=>setImageRecovery(null)}>닫기 · 상품 대기열로 돌아가기</button></section>;
   return <div className="modal-form intake-queue">
     <div className="intake-queue-tools"><label>검색<input type="search" aria-label="상품 대기열 검색" placeholder="카테고리 · 1688 URL · 특징 · 키워드" value={query} disabled={busy} onChange={event => setQuery(event.target.value)}/></label><label className="intake-pin-control"><select aria-label="상품 대기열 고정할 열 선택" value={pinnedColumn} onChange={event => setPinnedColumn(event.target.value)}><option value="none">고정할 열 선택</option><option value="category">카테고리</option><option value="url">1688 링크</option><option value="features">특징</option><option value="keywords">키워드</option><option value="status">상태</option></select></label><span>전체 {rows.length}건 · 선택 {pending}건</span>{query && <button type="button" className="btn ghost" disabled={busy} onClick={() => setQuery('')}>검색 해제</button>}</div>
-    <div className="intake-queue-table" data-pinned={pinnedColumn} role="region" aria-label="상품 대기열 표" tabIndex={0}><table><thead><tr><th><input type="checkbox" aria-label="검색 결과 전체 선택" disabled={busy || !visiblePending.length} checked={visiblePending.length > 0 && visiblePending.every(row => !excluded.includes(row.id))} onChange={event => toggle(visiblePending.map(row => row.id), event.target.checked)}/></th><th>카테고리</th><th>1688 링크</th><th>특징</th><th>키워드</th><th>상태</th><th>관리</th></tr></thead><tbody>
+    <div className="intake-queue-table" data-pinned={pinnedColumn} role="region" aria-label="상품 대기열 표" tabIndex={0}><table><thead><tr><th><input type="checkbox" aria-label="검색 결과 전체 선택" disabled={busy || !visiblePending.length} checked={visiblePending.length > 0 && visiblePending.every(row => !excluded.includes(row.id))} onChange={event => toggle(visiblePending.map(row => row.id), event.target.checked)}/></th><th>카테고리</th><th>1688 URL</th><th>상품 특징</th><th>타겟 키워드</th><th>상태</th><th>관리</th></tr></thead><tbody>
       {visible.map(row => { const index = rows.findIndex(item => item.id === row.id); const productId=intakeProductId(row,jobs);const captured=reviewItemForRow(row); return <tr key={row.id}>
         <td><input type="checkbox" aria-label={`${index + 1}번째 상품 선택`} disabled={busy || !pendingRowIds.has(row.id)} checked={pendingRowIds.has(row.id) && !excluded.includes(row.id)} onChange={event => toggle([row.id], event.target.checked)}/></td>
         <td><button type="button" className="intake-category-button" disabled={busy || row.status === 'saved'} onClick={() => openCategory(row.id)}>{row.profile.categoryPath.join(' > ')}</button><small className="intake-profile-summary">코드 {row.profile.categoryId || '미입력'} · v{row.profile.revision}<br/>{row.profile.template ? `양식: ${row.profile.template.name}` : (row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single' ? '개별 견적 양식 연결' : 'Excel 양식 미연결'}</small><button type="button" className="btn ghost" aria-expanded={previewId === row.id} onClick={() => setPreviewId(previewId === row.id ? null : row.id)}>견적 항목·양식 확인</button></td>
-        <td><input ref={element => { if (element) urlInputs.current.set(row.id, element); else urlInputs.current.delete(row.id); }} aria-label={`${index + 1}번째 1688 링크`} value={row.url} maxLength={2048} disabled={busy || row.status === 'saved'} placeholder="https://detail.1688.com/offer/…" onChange={event => edit(row.id, { url: event.target.value })} />{row.url.trim() && <small className="intake-source-url">{row.url.trim()}</small>}{captured&&onReviewSource&&<><button type="button" className="btn ghost" disabled={busy||row.status==='saved'||!!row.productId||!!row.forkJobId||!!row.pendingJobId} onClick={()=>reviewSource(row,captured)}>수집정보 확인·수정</button><small>{captured.issues.length?`확인 필요: ${captured.issues.join(' · ')}`:'수집정보 준비됨'}</small>{row.sourceCapture&&captured.revision!==row.sourceCapture.revision&&<small>검토 버전이 변경되었습니다. 수집정보 확인·수정에서 저장한 뒤 시작하세요.</small>}</>}</td>
+        <td><input ref={element => { if (element) urlInputs.current.set(row.id, element); else urlInputs.current.delete(row.id); }} aria-label={`${index + 1}번째 1688 링크`} value={row.url} maxLength={2048} disabled={busy || row.status === 'saved'} placeholder="https://detail.1688.com/offer/…" onChange={event => edit(row.id, { url: event.target.value })} />{captured&&onReviewSource&&<><button type="button" className="btn ghost" disabled={busy||row.status==='saved'||!!row.productId||!!row.forkJobId||!!row.pendingJobId} onClick={()=>reviewSource(row,captured)}>수집정보 확인·수정</button><small>{captured.issues.length?`확인 필요: ${captured.issues.join(' · ')}`:'수집정보 준비됨'}</small>{row.sourceCapture&&captured.revision!==row.sourceCapture.revision&&<small>검토 버전이 변경되었습니다. 수집정보 확인·수정에서 저장한 뒤 시작하세요.</small>}</>}</td>
         <td><textarea aria-label={`${index + 1}번째 특징`} value={row.features} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="상품 특징" onChange={event => edit(row.id, { features: event.target.value })} /></td>
         <td><textarea aria-label={`${index + 1}번째 키워드`} value={row.keywords} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="타겟 키워드" onChange={event => edit(row.id, { keywords: event.target.value })} /></td>
         <td role="status" className={row.status === 'error' ? 'collection-error' : ''}>{row.message || '입력 대기'}{row.sourceCapture&&pendingRowIds.has(row.id)&&!productId&&!row.forkJobId&&!row.pendingJobId&&<button type="button" className="btn primary" disabled={busy||settingsChanged} onClick={()=>void submit(row)}>이 상품 초안 작성</button>}{productId && onOpenProduct && <button type="button" className="btn ghost" disabled={busy} onClick={()=>void openSavedProduct(row.id,productId)}>초안 확인·수정</button>}{intakeQueryImageRecoveryJob(row,jobs)&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>openImageRecovery(row)}>누락 원본 이미지 이어받기</button>}{row.status==='error'&&row.pendingJobId&&(row.profile.template||(row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single')&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectPendingSource(row.id)}>기존 대기 요청 확인</button>}{row.status==='error'&&row.forkJobId&&(row.profile.template||(row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single')&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectNewDraft(row.id)}>{row.sourceCapture?'새 수집본으로 별도 초안 작성':'저장 원문으로 새 초안'}</button>}</td>
@@ -516,12 +552,13 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void makeNewDraft()}>{forkPreview.created?'새 초안 작성 이어가기':forkPreview.pending?'새 초안 저장 결과 확인':'새 초안 생성'}</button>
       <button type="button" className="btn ghost" disabled={busy} onClick={()=>setForkPreview(null)}>닫기</button>
     </section>}
-    <fieldset className="goal-list" disabled={busy}><legend>상품 초안 작성</legend>{[
-      ['price', 'SEO·가격 초안 작성', '상품정보를 가져와 초안을 작성합니다. 저장 후 각 단계에서 확인·수정하세요.'],
-      ['work', 'SEO·가격 + 이미지 초안', '원본을 대표·추가·상세·옵션 이미지에 배치합니다. 번역·편집 후 확인하세요.'],
-      ['collect', '상품정보만 가져오기', '원문·옵션·가격을 가져오고 SEO 작성은 나중에 진행합니다.'],
-    ].map(([id, title, description]) => <label className="goal-card" key={id}><input type="radio" name="queue-goal" checked={(goal==='collect'?'collect':goal==='work'?'work':'price') === id} onChange={() => {if(!ownerCurrent()||running.current)return;onRows(previous=>previous.map(row=>row.sourceReviewContinuation?{...row,sourceReviewContinuation:undefined}:row));onGoal(id);}} /><span><strong>{title}</strong><small>{description}</small></span></label>)}</fieldset>
-    <p className="collection-notice">{collectionBlock} <a href="/downloads/yoofam-plus-supplier-hub-extension-2.1.96.zip" download>상품 수집·전송 확장 2.1.96 다운로드</a></p><small>복제는 카테고리·특징·키워드를 복사하며 새 URL을 입력해야 합니다. 행 삭제는 이 입력 목록만 지우며 서버에 저장한 요청을 취소하지 않습니다.</small>
+    <fieldset className="goal-list" disabled={busy}><legend>작업 목표</legend>{[
+      ['collect', '상품추가', '원문과 옵션 가져오기'],
+      ['price', 'SEO+가격', 'SEO·가격·견적 초안 준비'],
+      ['work', '작업개시', '새 초안 준비 후 일괄 작업 검토'],
+      ['transmit', '등록전송', '신규 상품 준비 후 전송 검토'],
+    ].map(([id,title,description])=><label className="goal-card" key={id} title={description}><input type="radio" name="queue-goal" checked={goal===id} onChange={()=>{if(!ownerCurrent()||running.current)return;onGoal(id);}}/><span><strong>{title}</strong></span></label>)}</fieldset>
+    <details className="intake-queue-help"><summary>수집·전송 안내</summary><p>{collectionBlock}</p><p>등록전송은 새로 준비한 상품의 검토 화면을 엽니다. 전송 전 견적 내용과 필수 동의를 확인하세요.</p><p>복제한 행에는 새 URL을 입력하세요. 행 삭제는 대기열에서만 적용됩니다.</p><a href={supplierHubExtensionDownload} download>상품 수집·전송 확장 {supplierHubExtensionVersion} 다운로드</a></details>
     {selected.some(row => !visible.some(item => item.id === row.id)) && <p className="collection-notice">검색으로 숨겨진 선택 상품도 함께 처리합니다. 선택 {pending}건 중 숨겨진 상품 {selected.filter(row => !visible.some(item => item.id === row.id)).length}건</p>}
     {!!unfilledRows.length&&<p className="collection-notice">URL을 입력하지 않은 {unfilledRows.length}개 행은 시작 대상에서 제외됩니다.</p>}
     {settingsChanged&&<div className="panel-note"><p>기본설정이 변경돼 남은 상품 처리를 멈췄습니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>void reloadSettings()}>최신 기본설정 불러오기</button></div>}

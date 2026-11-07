@@ -52,7 +52,7 @@ function panel(f){
 }
 
 for(const company of companies){
- for(const [action,language,opposite]of [['영어→한국어 번역','en','zh'],['모든 이미지 AI 처리','zh','en']])test(`detail ${action} translates only body slots and retains skipped banners without writes (${company.code})`,async()=>{
+ for(const [action,language,opposite]of [['영어→한국어 번역','en','zh'],['중국어→한국어 번역','zh','en']])test(`detail ${action} translates only body slots and retains skipped banners without writes (${company.code})`,async()=>{
   const f=await fixture(company),h=panel(f);try{
    await h.idle();const frozen=f.stable();assert.match(text(h.render()),/본문 이미지 2장/);assert.match(text(h.render()),/설정 배너 2장/);assert.equal(h.button('모든 상세 이미지 번역 준비'),undefined);
    h.control('일괄 상세 이미지 원문 언어').props.onChange({target:{value:opposite}});h.button(action).props.onClick();await h.idle();assert.deepEqual(f.preparations,[language],'explicit button overrides a pending dropdown update');
@@ -64,26 +64,26 @@ for(const company of companies){
  });
  test(`banner-only and unproved-role detail selections cannot start provider work (${company.code})`,async()=>{
   for(const options of [{onlyBanners:true},{metadata:'missing'},{metadata:'foreign'}]){
-   const f=await fixture(company,options),h=panel(f);try{await h.idle();const frozen=f.stable();assert.equal(h.button('영어→한국어 번역').props.disabled,true);assert.equal(h.button('모든 이미지 AI 처리').props.disabled,true);assert.equal(f.operations.length,0);if(options.metadata)assert.ok(nodes(h.render()).some(node=>node.props?.role==='alert'&&/상단|하단|조회/.test(text(node))));else assert.match(text(h.render()),/본문 이미지 0장.*설정 배너 2장/);assert.equal(f.stable(),frozen);}finally{h.close();f.close();}
+   const f=await fixture(company,options),h=panel(f);try{await h.idle();const frozen=f.stable();assert.equal(h.button('영어→한국어 번역').props.disabled,true);assert.equal(h.button('중국어→한국어 번역').props.disabled,true);assert.equal(f.operations.length,0);if(options.metadata)assert.ok(nodes(h.render()).some(node=>node.props?.role==='alert'&&/상단|하단|조회/.test(text(node))));else assert.match(text(h.render()),/본문 이미지 0장.*설정 배너 2장/);assert.equal(f.stable(),frozen);}finally{h.close();f.close();}
   }
  });
  test(`additional batch retains its original action and includes every selected slot even when banner metadata is absent (${company.code})`,async()=>{
-  const f=await fixture(company,{stage:'additional',metadata:'missing'}),h=panel(f);try{await h.idle();const frozen=f.stable();assert.equal(h.button('영어→한국어 번역'),undefined);assert.equal(h.button('모든 이미지 AI 처리'),undefined);await h.click('모든 이미지 일괄 처리');assert.deepEqual(f.preparations,['zh']);assert.deepEqual(f.operations.filter(row=>row[0]==='source').map(row=>row[1]),f.keys);assert.equal(f.apiCalls.some(call=>call.method!=='GET'),false);assert.equal(f.stable(),frozen);}finally{h.close();f.close();}
+  const f=await fixture(company,{stage:'additional',metadata:'missing'}),h=panel(f);try{await h.idle();const frozen=f.stable();assert.equal(h.button('영어→한국어 번역'),undefined);assert.equal(h.button('중국어→한국어 번역'),undefined);await h.click('모든 이미지 일괄 처리');assert.deepEqual(f.preparations,['zh']);assert.deepEqual(f.operations.filter(row=>row[0]==='source').map(row=>row[1]),f.keys);assert.equal(f.apiCalls.some(call=>call.method!=='GET'),false);assert.equal(f.stable(),frozen);}finally{h.close();f.close();}
  });
  test(`permission, hidden-stage ABA and stale prepare callbacks cannot initiate detail provider work (${company.code})`,async()=>{
-  const f=await fixture(company),h=panel(f);try{await h.idle();const frozen=f.stable();h.permission(false);await h.click('모든 이미지 AI 처리');assert.equal(f.preparations.length,0);h.permission(true);
+  const f=await fixture(company),h=panel(f);try{await h.idle();const frozen=f.stable();h.permission(false);await h.click('중국어→한국어 번역');assert.equal(f.preparations.length,0);h.permission(true);
    for(const [field,value]of [['active',false],['disabled',true],['version',new Date(Date.parse(f.props.version)+1).toISOString()],['refreshToken','new-clock'],['optionId','foreign-option']]){const old=h.button('영어→한국어 번역').props.onClick,previous=h.props[field];h.props[field]=value;h.render();old();h.props[field]=previous;h.render();await h.idle();old();await h.idle();assert.equal(f.preparations.length,0,field+' captured callback is obsolete');}
    assert.equal(f.operations.length,0);assert.equal(f.apiCalls.some(call=>call.method!=='GET'),false);assert.equal(f.stable(),frozen);
   }finally{h.close();f.close();}
  });
  test(`a retained English review checkbox cannot approve or unapprove a newly prepared Chinese result (${company.code})`,async()=>{
-  const f=await fixture(company),h=panel(f);try{await h.idle();const frozen=f.stable();await h.click('영어→한국어 번역');const oldReview=h.control('상세 이미지 2 번역 결과 검토 완료').props.onChange;await h.click('모든 이미지 AI 처리');oldReview({target:{checked:true}});await h.idle();assert.equal(h.control('상세 이미지 2 번역 결과 검토 완료').props.checked,false);assert.equal(h.button('검토한 상세 이미지 0개 적용').props.disabled,true);
+  const f=await fixture(company),h=panel(f);try{await h.idle();const frozen=f.stable();await h.click('영어→한국어 번역');const oldReview=h.control('상세 이미지 2 번역 결과 검토 완료').props.onChange;await h.click('중국어→한국어 번역');oldReview({target:{checked:true}});await h.idle();assert.equal(h.control('상세 이미지 2 번역 결과 검토 완료').props.checked,false);assert.equal(h.button('검토한 상세 이미지 0개 적용').props.disabled,true);
    h.control('상세 이미지 2 번역 결과 검토 완료').props.onChange({target:{checked:true}});await h.idle();assert.equal(h.control('상세 이미지 2 번역 결과 검토 완료').props.checked,true);oldReview({target:{checked:false}});await h.idle();assert.equal(h.control('상세 이미지 2 번역 결과 검토 완료').props.checked,true);assert.deepEqual(f.preparations,['en','zh']);assert.equal(f.apiCalls.some(call=>call.method!=='GET'),false);assert.equal(h.saved.length,0);assert.equal(f.stable(),frozen);
   }finally{h.close();f.close();}
  });
  test(`held body OCR aborts on hidden, disabled or source changes without further provider work after return (${company.code})`,async()=>{
   for(const [field,value]of [['active',false],['disabled',true],['version','2027-01-01T00:00:00.000Z'],['refreshToken','new-source-clock']]){
-   const gate=deferred(),f=await fixture(company,{recognitionGate:gate}),h=panel(f);try{await h.idle();const frozen=f.stable();h.button('모든 이미지 AI 처리').props.onClick();for(let index=0;index<50&&!f.operations.some(row=>row[0]==='ocr');index++){h.render();await new Promise(resolve=>setImmediate(resolve));}assert.equal(f.operations.filter(row=>row[0]==='ocr').length,1);const previous=h.props[field];h.props[field]=value;h.render();h.props[field]=previous;h.render();gate.resolve();await h.idle();assert.equal(f.operations.filter(row=>row[0]==='source').length,1,field+' prevents the next image read');assert.equal(f.operations.some(row=>row[0]==='translate'||row[0]==='render'),false,field+' abort reaches pending OCR');assert.equal(h.busy.at(-1),false);assert.equal(f.apiCalls.some(call=>call.method!=='GET'),false);assert.equal(f.stable(),frozen);}finally{gate.resolve();h.close();f.close();}
+   const gate=deferred(),f=await fixture(company,{recognitionGate:gate}),h=panel(f);try{await h.idle();const frozen=f.stable();h.button('중국어→한국어 번역').props.onClick();for(let index=0;index<50&&!f.operations.some(row=>row[0]==='ocr');index++){h.render();await new Promise(resolve=>setImmediate(resolve));}assert.equal(f.operations.filter(row=>row[0]==='ocr').length,1);const previous=h.props[field];h.props[field]=value;h.render();h.props[field]=previous;h.render();gate.resolve();await h.idle();assert.equal(f.operations.filter(row=>row[0]==='source').length,1,field+' prevents the next image read');assert.equal(f.operations.some(row=>row[0]==='translate'||row[0]==='render'),false,field+' abort reaches pending OCR');assert.equal(h.busy.at(-1),false);assert.equal(f.apiCalls.some(call=>call.method!=='GET'),false);assert.equal(f.stable(),frozen);}finally{gate.resolve();h.close();f.close();}
   }
  });
 }

@@ -2,6 +2,7 @@ import * as pageSourcePriceBasis from '../extensions/supplier-hub/page-source-pr
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {createRequire} from 'node:module';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
@@ -12,7 +13,7 @@ const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof va
 const version='2026-10-10T00:00:00.000Z';
 const compositionModules=new Map();
 function compositionModule(file){if(compositionModules.has(file))return compositionModules.get(file);const exports={};compositionModules.set(file,exports);
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,structuredClone,TextEncoder,crypto:globalThis.crypto,require:name=>name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:(compositionModule(name.slice(2)+'.ts'))});return exports;}
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,structuredClone,TextEncoder,crypto:globalThis.crypto,require:name=>name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:name.startsWith('@/')?compositionModule(name.slice(2)+'.ts'):createRequire(import.meta.url)(name)});return exports;}
 function ui({allowed=true,storageValue=null,pending=null,registrationError=false,preparedAi=false,productId='p',productVersion=version,fetcher=null,draftHelper=null,sourceHelpers=null,savedSeo=null,workspaceOwnerId,brand='와이홉',onApplied,onDraft,registrationBrand=brand,workersRecovery,failedJob,recoveryResponder}={}){
  const slots=[],effects=[],layouts=[],calls=[],runs=[],creates=[],storage=new Map(storageValue?[[`yoofam-seo-workspace:${productId}`,storageValue]]:[]);let cursor=0,closed=false,lateWrites=0,lastKey,active=true;
  const schedule=(queue,fn,deps)=>{const i=cursor++;if(!slots[i]||!deps||!slots[i].deps||slots[i].deps.length!==deps.length||!deps.every((value,index)=>Object.is(value,slots[i].deps[index]))){const before=slots[i];slots[i]={deps,cleanup:before?.cleanup};queue.push(()=>{before?.cleanup?.();slots[i].cleanup=fn();});}};
@@ -39,8 +40,17 @@ const workersRecoverySettings={configured:true,provider:'workers-ai',destination
 
 test('fresh category leaf supplies an editable missing target while an explicitly finalized blank stays blank',async()=>{
  sessionCache.setSeoGuidanceSessionOwner(undefined);const options={workspaceOwnerId:'fresh-category-owner',productId:'fresh-category-product'};let h=ui(options);try{
-  h.setSource({requestContext:{categoryId:'69286',categoryPath:['패션잡화','여성크로스백'],features:'',keywords:''}});await h.idle();assert.equal(h.input('SEO 타겟 키워드').props.value,'여성크로스백');assert.equal(h.button('한국어 초안 자동 작성').props.disabled,false);assert.match(text(nodes(h.render()).find(node=>node.props?.className==='seo-title-example')),/와이홉 인조가죽 여성크로스백/);assert.equal(h.input('SEO 상품 특징').props.value,'');assert.equal(h.runs.length,0);assert.ok(h.calls.every(call=>!call.init?.method));
+  h.setSource({requestContext:{categoryId:'69286',categoryPath:['패션잡화','여성크로스백'],features:'',keywords:''}});await h.idle();assert.equal(h.input('SEO 타겟 키워드').props.value,'여성크로스백');assert.equal(h.button('한국어 초안 자동 작성').props.disabled,false);assert.match(text(nodes(h.render()).find(node=>node.props?.className==='seo-title-example')),/와이홉 여성크로스백/);assert.equal(h.input('SEO 상품 특징').props.value,'');assert.equal(h.runs.length,0);assert.ok(h.calls.every(call=>!call.init?.method));
   h.input('SEO 타겟 키워드').props.onChange({target:{value:''}});h.render();h.input('SEO 타겟 키워드').props.onBlur({target:{value:''}});h.close();h=ui(options);h.setSource({requestContext:{categoryId:'69286',categoryPath:['패션잡화','여성크로스백'],features:'',keywords:''}});await h.idle();assert.equal(h.input('SEO 타겟 키워드').props.value,'');assert.equal(h.button('한국어 초안 자동 작성').props.disabled,true);assert.equal(h.runs.length,0);
+ }finally{h.close();}
+});
+
+test('the example uses the current brand and factual feature with a repeated target only once',async()=>{
+ const h=ui({brand:'유앤채'});try{
+  h.setSource({requestContext:{categoryId:'78255',categoryPath:['실커튼'],features:'100x200cm 반짝이 스트링 장식 실커튼',keywords:'실커튼'}});await h.idle();
+  const example=nodes(h.render()).find(node=>node.props?.className==='seo-title-example');
+  assert.equal(text(example.props.children[1]),'유앤채 100x200cm 반짝이 스트링 장식 실커튼');
+  assert.equal(h.runs.length,0);assert.ok(h.calls.every(call=>!call.init?.method));
  }finally{h.close();}
 });
 

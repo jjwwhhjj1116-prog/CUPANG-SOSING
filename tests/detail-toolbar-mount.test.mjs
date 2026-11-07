@@ -34,10 +34,10 @@ test('detail translation toolbar routes to stored raw BODY actions, keeps langua
  const f=fixture(),h=imageUI((url,init)=>f.reply(url,init),{stage:'detail'}),events=[];
  try{await h.idle();const workspace=nodes(h.render()).find(node=>node.type?.name==='DetailWorkspacePanel');assert.equal(typeof workspace.props.onImageBatchToolbarActionsChange,'function');
   const first={prepare:language=>events.push(language),disabled:false};workspace.props.onImageBatchToolbarActionsChange(first);h.render();
-  await h.click('상세 본문 영어를 한국어로 번역');await h.click('상세 본문 모든 이미지 AI 처리');assert.deepEqual(events,['en','zh']);
-  const stale=h.button('상세 본문 모든 이미지 AI 처리').props.onClick,second={prepare:language=>events.push('next:'+language),disabled:false};
+  await h.click('상세 본문 영어를 한국어로 번역');await h.click('상세 본문 중국어를 한국어로 번역');assert.deepEqual(events,['en','zh']);
+  const stale=h.button('상세 본문 중국어를 한국어로 번역').props.onClick,second={prepare:language=>events.push('next:'+language),disabled:false};
   workspace.props.onImageBatchToolbarActionsChange(second);workspace.props.onImageBatchToolbarActionsChange(null,first);h.render();stale();assert.deepEqual(events,['en','zh']);
-  await h.click('상세 본문 모든 이미지 AI 처리');assert.equal(events.at(-1),'next:zh');h.active(false);assert.equal(h.button('상세 본문 모든 이미지 AI 처리').props.disabled,true);
+  await h.click('상세 본문 중국어를 한국어로 번역');assert.equal(events.at(-1),'next:zh');h.active(false);assert.equal(h.button('상세 본문 중국어를 한국어로 번역').props.disabled,true);
   assert.equal(h.calls.some(call=>call.init?.method==='PUT'),false);
  }finally{h.close();}
 });

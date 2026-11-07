@@ -1,13 +1,13 @@
 {
   "format": "yoofam-cli-distribution-v1",
   "name": "@yoofam/studio-cli",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "node": ">=22.13.0",
   "files": [
     {
       "name": "README.md",
       "bytes": 11029,
-      "sha256": "a1619a2d941fb2bb47dabe378c77ba6c03bc2decb9979e5d2939b11d0577fd9e",
+      "sha256": "6471a90fef7361d190980d69c5eef61e02ef172576ff923f711e812a5018a988",
       "mode": "0644"
     },
     {
@@ -18,14 +18,14 @@
     },
     {
       "name": "detail-worker.mjs",
-      "bytes": 6565,
-      "sha256": "ccbbb21359d91389d5aa81c577a10f0d3ee03e900ac66639ded9a596104c278f",
+      "bytes": 10225,
+      "sha256": "7aacaaa244921e2d381b73d19eba9280296dfd46e2712832b6274408fe012657",
       "mode": "0644"
     },
     {
       "name": "package.json",
       "bytes": 361,
-      "sha256": "a79424ae726b6eecc3f64eae75878307bdf804ccd3cdd0dc54b26e2ba300ef0d",
+      "sha256": "302d839f3be9751505d7475cf94ea3e27663b87d9d9ab228950d20cc1a26d2bb",
       "mode": "0644"
     },
     {
@@ -42,14 +42,14 @@
     }
   ],
   "zip": {
-    "name": "yoofam-studio-cli-0.1.4.zip",
-    "bytes": 61002,
-    "sha256": "4b0fc3cb5321a0df62ebbb5e9a3c48c535837846f836c59d2661348f0b96d7a0"
+    "name": "yoofam-studio-cli-0.1.5.zip",
+    "bytes": 64662,
+    "sha256": "df4e87756fb433842b3a2c8ef4f14af59e85f619ef2bdd796803059f9858e349"
   },
   "tgz": {
-    "name": "yoofam-studio-cli-0.1.4.tgz",
-    "bytes": 19653,
-    "sha256": "8a3ecf985000959b4f08653775a933e39d79828fa6049c3b1e8d9730acaacc26",
-    "integrity": "sha512-vv2OI0lCx8hxnKol5zBfcPUyB2bT12bSIHHE5SxLmdM8ZaEtxEAgWd8aUkNNaD2m9t/0+FLkwMfrJU9oldy6HQ=="
+    "name": "yoofam-studio-cli-0.1.5.tgz",
+    "bytes": 20656,
+    "sha256": "0412a7eaf1aad13c2699bb5f0a515afee05af8f0b9c4e5633560d1ae7ff6f32c",
+    "integrity": "sha512-LgIiwD3t8hnhxTCHShvF+yf3ZJNw9iBsPczDgISkmXGgJr6i/NWaQRAUHjTSkl80Fq5N2hM/1aUfWCb1sfBhrg=="
   }
 }

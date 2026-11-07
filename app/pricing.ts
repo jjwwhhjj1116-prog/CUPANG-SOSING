@@ -1,6 +1,6 @@
 /** Reference CNY belongs to the original selection, never a single export row. */
 export type SourcingMarginGate = { mode: 'rate' | 'amount' | 'both' | 'either'; minRate?: number | null; minAmount?: number | null; source?: 'default' | 'customer' };
-export type FixedSourcingBasis = { version: 1; referenceCny: number; salePrice: number; supplyPrice?: number; purchaseCost?: number; sourceUnitsPerPack?: number; marginGate?: SourcingMarginGate | null };
+export type FixedSourcingBasis = { version: 1; referenceCny: number; salePrice: number; supplyPrice?: number; purchaseCost?: number; sourceUnitsPerPack?: number; supplyAnchorMargin?: number; marginGate?: SourcingMarginGate | null };
 export type PricePolicy = { fixedSourcing?: FixedSourcingBasis; exchangeRate: number; supplyMargin: number; coupangMargin: number; minimumMargin: number; msrpMultiple: number; roundingUnit: number; roundingMode?: 'up' | 'nearest'; arithmeticMode?: 'couplus-number-v1'; useIntegratedRate?: boolean; integratedRate?: number | null; recalculationMode?: 'couplus-stage-two-v1'; recalculationMinimumEnabled?: boolean;
   bundleEnabled?: boolean; bundleCriterion?: 'supplyMargin' | 'coupangMargin'; bundleMinimumSupplyMargin?: number; bundleMinimumCoupangMargin?: number };
 export function pricePolicy(input: unknown): PricePolicy {
@@ -14,9 +14,10 @@ export function pricePolicy(input: unknown): PricePolicy {
     const fixed = record.fixedSourcing;
     if (!fixed || typeof fixed !== 'object' || Array.isArray(fixed)) throw new Error('고정 소싱가격 기준을 확인해주세요.');
     const basis = fixed as Record<string, unknown>;
-    if (Object.keys(basis).some(key => !['version', 'referenceCny', 'salePrice', 'supplyPrice', 'purchaseCost', 'sourceUnitsPerPack', 'marginGate'].includes(key))
+    if (Object.keys(basis).some(key => !['version', 'referenceCny', 'salePrice', 'supplyPrice', 'purchaseCost', 'sourceUnitsPerPack', 'supplyAnchorMargin', 'marginGate'].includes(key))
       || basis.version !== 1 || typeof basis.referenceCny !== 'number' || !Number.isFinite(basis.referenceCny) || basis.referenceCny <= 0
       || !Number.isSafeInteger(basis.salePrice) || (basis.salePrice as number) <= 0
+      || Object.hasOwn(basis, 'supplyAnchorMargin') && !validMargin(basis.supplyAnchorMargin)
       || ['supplyPrice', 'purchaseCost', 'sourceUnitsPerPack'].some(key => Object.hasOwn(basis, key) && (!Number.isSafeInteger(basis[key]) || (basis[key] as number) <= 0)))
       throw new Error('고정 소싱가격의 기준 CNY·양수 원화 금액·구성 수량을 확인해주세요.');
     fixedSourcing = { ...p.fixedSourcing!, ...(basis.marginGate == null ? {} : { marginGate: sourcingMarginGate(basis.marginGate) }) };
@@ -52,6 +53,18 @@ export function pricePolicy(input: unknown): PricePolicy {
       bundleMinimumSupplyMargin: record.bundleMinimumSupplyMargin, bundleMinimumCoupangMargin: record.bundleMinimumCoupangMargin } : {}),
     ...(typeof record.recalculationMinimumEnabled === 'boolean' ? { recalculationMinimumEnabled: record.recalculationMinimumEnabled } : {}) } as PricePolicy;
 }
+function validMargin(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value < 100;
+}
+/** Remember the rate that established the fixed sourcing supply amounts when
+ * the user edits the selling margin. Historical fixed-price policies have no
+ * anchor and keep their recorded sale-led calculation. */
+export function changeCoupangMargin(policy: PricePolicy, coupangMargin: number): PricePolicy {
+  const basis = policy.fixedSourcing;
+  if (!basis || basis.supplyAnchorMargin !== undefined || !validMargin(policy.coupangMargin) || coupangMargin === policy.coupangMargin)
+    return { ...policy, coupangMargin };
+  return { ...policy, coupangMargin, fixedSourcing: { ...basis, supplyAnchorMargin: policy.coupangMargin } };
+}
 /** Couplus stage-two pricingInfo keeps the switch separate from its amount,
  * including enabled zero. A missing marker retains the older saved policy. */
 export function priceMinimumMarginEnabled(policy: Pick<PricePolicy, 'minimumMargin' | 'recalculationMinimumEnabled'>): boolean {
@@ -65,6 +78,20 @@ export function calculateStageTwoMsrp(salePrice: number, input: PricePolicy): nu
   if (!Number.isSafeInteger(salePrice) || salePrice <= 0) throw Error('판매가는 양수 정수 원 단위로 입력해주세요.');
   if (usesCouplusNumbers(policy)) return roundNumberCurrency(salePrice * policy.msrpMultiple, policy.roundingUnit);
   return Number(roundCurrency(multiply(decimal(salePrice), decimal(policy.msrpMultiple)), policy.roundingUnit, 'nearest'));
+}
+/** Use the same rounding and margin path for a reviewed supply price as for an automatic one. */
+export function calculateSalePriceFromSupply(supplyPrice: number, input: PricePolicy): number {
+  if (!Number.isSafeInteger(supplyPrice) || supplyPrice <= 0) throw Error('공급가는 양수 정수 원 단위로 입력해주세요.');
+  return saleFromSupply(supplyPrice, pricePolicy(input));
+}
+function saleFromSupply(supplyPrice: number, policy: PricePolicy): number {
+  if (policy.fixedSourcing || usesCouplusNumbers(policy))
+    return roundNumberCurrency(supplyPrice / (1 - policy.coupangMargin / 100), policy.roundingUnit);
+  return Number(decimalSaleFromSupply(BigInt(supplyPrice), policy));
+}
+function decimalSaleFromSupply(supplyPrice: bigint, policy: PricePolicy): bigint {
+  const hundred = decimal(100);
+  return roundCurrency(divide(multiply(rational(supplyPrice), hundred), subtract(hundred, decimal(policy.coupangMargin))), policy.roundingUnit, policy.roundingMode);
 }
 /** The live owner root gate is authoritative; saved product gates are snapshots only. */
 export function effectivePricePolicy(input: unknown, settings: unknown): PricePolicy {
@@ -112,7 +139,7 @@ export function calculatePrice(sourcePriceCny: number, input: PricePolicy, units
     ? minimumTarget : compare(supplyTarget, minimumTarget) >= 0 ? supplyTarget : minimumTarget;
   const supply = roundCurrency(target, p.roundingUnit, p.roundingMode);
   if (supply === BigInt(0)) throw new Error('반올림한 공급가가 0원입니다. 가격 처리 단위를 줄이거나 최소 공급 마진을 설정해주세요.');
-  const sale = roundCurrency(divide(multiply(rational(supply), hundred), subtract(hundred, decimal(p.coupangMargin))), p.roundingUnit, p.roundingMode);
+  const sale = decimalSaleFromSupply(supply, p);
   const market = roundCurrency(multiply(rational(sale), decimal(p.msrpMultiple)), p.roundingUnit, p.roundingMode);
   const margin = subtract(rational(supply), cost);
   return { costKrw: toNumber(cost), supplyPrice: Number(supply), salePrice: Number(sale), msrp: Number(market),
@@ -139,9 +166,12 @@ function calculateFixedSourcingPrice(cny: number, policy: PricePolicy, units: nu
   const selectedCost = basis.purchaseCost === undefined ? undefined : units === (basis.sourceUnitsPerPack ?? 1)
     ? basis.purchaseCost : roundNumberCurrency(basis.purchaseCost / (basis.sourceUnitsPerPack ?? 1) * units, 1);
   const costKrw = selectedCost === undefined ? purchaseCost(cny) : selectedCost + (uplift ? purchaseCost(cny) - purchaseCost(basis.referenceCny) : 0);
-  const salePrice = uplift ? Math.ceil(basis.salePrice * cny / basis.referenceCny / policy.roundingUnit) * policy.roundingUnit : basis.salePrice;
+  const baseSale = uplift ? Math.ceil(basis.salePrice * cny / basis.referenceCny / policy.roundingUnit) * policy.roundingUnit : basis.salePrice;
+  const supplyMargin = basis.supplyAnchorMargin ?? policy.coupangMargin;
   const supplyPrice = !uplift && basis.supplyPrice !== undefined ? basis.supplyPrice
-    : roundNumberCurrency(salePrice * (1 - policy.coupangMargin / 100), policy.roundingUnit);
+    : roundNumberCurrency(baseSale * (1 - supplyMargin / 100), policy.roundingUnit);
+  const salePrice = basis.supplyAnchorMargin !== undefined && policy.coupangMargin !== basis.supplyAnchorMargin
+    ? saleFromSupply(supplyPrice, policy) : baseSale;
   const msrp = roundNumberCurrency(salePrice * policy.msrpMultiple, policy.roundingUnit);
   if (![costKrw, salePrice, supplyPrice, msrp].every(value => Number.isFinite(value) && value > 0 && value <= Number.MAX_SAFE_INTEGER))
     throw new Error('계산 가능한 가격 범위를 초과했습니다.');
@@ -189,7 +219,7 @@ function calculateCouplusNumberPrice(sourcePriceCny: number, policy: PricePolicy
     }
   }
   if (supplyPrice === 0) throw new Error('반올림한 공급가가 0원입니다. 가격 처리 단위를 줄이거나 최소 공급 마진을 설정해주세요.');
-  const salePrice = roundNumberCurrency(supplyPrice / (1 - policy.coupangMargin / 100), policy.roundingUnit);
+  const salePrice = saleFromSupply(supplyPrice, policy);
   const msrp = roundNumberCurrency(salePrice * policy.msrpMultiple, policy.roundingUnit);
   const marginKrw = supplyPrice - costKrw;
   return { costKrw, supplyPrice, salePrice, msrp, marginKrw, actualMargin: marginKrw / supplyPrice * 100 };

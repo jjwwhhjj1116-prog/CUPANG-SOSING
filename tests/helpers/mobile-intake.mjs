@@ -94,6 +94,6 @@ export function mobileIntakeHarness({companyCode='A01464742',companyName='와이
   return load(file)[method](new Request('https://app.test'+path,{method,headers:{'content-type':'application/json'},...(body!==undefined?{body:typeof body==='string'?body:JSON.stringify(body)}:{})}),{params:Promise.resolve(params)});
  };
  let latest;
- const intake=async(id='job')=>load('app/intake-collection.ts').collectIntakeProduct(await load('db/collection-jobs.ts').findCollectionJob('owner',id),{signal:new AbortController().signal,fetcher:(path,init)=>route(path,{method:init?.method??'GET',body:init?.body}),onJob:job=>{latest=job;},onProgress:()=>{}});
+ const intake=async(id='job',options={})=>load('app/intake-collection.ts').collectIntakeProduct(await load('db/collection-jobs.ts').findCollectionJob('owner',id),{signal:new AbortController().signal,fetcher:(path,init)=>route(path,{method:init?.method??'GET',body:init?.body}),onJob:job=>{latest=job;},onProgress:()=>{},...options});
  return {sqlite,db,objects,calls,network,aiSources,bindings,stats,settings,context,sourceUrl,load,route,intake,auth:deps['@/app/chatgpt-auth'],setCompany(value){companyCode=value.code;companyName=value.name;},setMembershipStatus(value){membershipStatus=value;},get latest(){return latest;},close(){sqlite.close();}};
 }

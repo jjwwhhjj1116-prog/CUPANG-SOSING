@@ -187,7 +187,7 @@ export function DetailImageBatchPanel(props: Props) {
     {compactToolbar&&stage==='detail'&&<h3 className="detail-stage-title">상세 페이지 이미지</h3>}
     {compactToolbar?<details className="detail-batch-guidance"><summary>번역 설정·안내</summary>{guidance}</details>:guidance}
     {stage === 'detail' ? <div className="quote-actions detail-batch-start-controls"><button type="button" className="btn ghost" disabled={locked || uncertain || !count || !capacity} onClick={() => void prepare('en')}>영어→한국어 번역</button>
-      <button type="button" className="btn blue" disabled={locked || uncertain || !count || !capacity} onClick={() => void prepare('zh')}>모든 이미지 AI 처리</button></div>
+      <button type="button" className="btn blue" disabled={locked || uncertain || !count || !capacity} onClick={() => void prepare('zh')}>중국어→한국어 번역</button></div>
       : <button type="button" className="btn blue" disabled={locked || uncertain || !count || !capacity} onClick={() => void prepare()}>{batch ? `현재 ${stage === 'main' ? '대표' : '추가'} 목록으로 번역 다시 준비` : '모든 이미지 일괄 처리'}</button>}
     {compactToolbar&&saved&&!eligibilityError&&<small className="detail-batch-count">{stage==='detail'?`본문 ${count}장 · 설정 배너 ${protectedCount}장 유지`:`추가 이미지 ${count}장`}</small>}
     {busy && <button type="button" className="btn ghost" onClick={() => { const controller = operation.current; controller?.abort(); if (controller) finish(controller); setMessage('작업을 중단했습니다. 준비한 결과와 확인된 저장 결과는 보존했습니다.'); }}>일괄 이미지 작업 중단</button>}

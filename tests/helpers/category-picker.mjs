@@ -8,7 +8,7 @@ const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 
 /** Actual picker, observed catalog and paginated reader. No real browser or Hub is used. */
-export function categoryPickerUI(request,{catalog,profiles=[],selectedId='',workspaceOwnerId,connectExcel=false,sourceTitle,recommendationResolver}={}){
+export function categoryPickerUI(request,{catalog,profiles=[],selectedId='',workspaceOwnerId,connectExcel=false,sourceTitle,recommendationResolver,searchLoader,searchResolver,pathResolver}={}){
  const slots=[],modules=new Map(),selected=[],calls=[],effects=[];let cursor=0,changed=true,props={profiles,selectedId,workspaceOwnerId,sourceTitle};
  const fetcher=async(path,init)=>{calls.push({path,method:init?.method??'GET'});return request(path,init);};
  const hooks={useMemo:fn=>fn(),useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return [slots[index],value=>{const next=typeof value==='function'?value(slots[index]):value;if(!Object.is(next,slots[index])){slots[index]=next;changed=true;}}];},
@@ -21,7 +21,12 @@ export function categoryPickerUI(request,{catalog,profiles=[],selectedId='',work
    {exports,Error,crypto,AbortController,TextEncoder,TextDecoder,structuredClone,fetch:fetcher,require(name){
     if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs'||name==='../extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
     if(name==='@/app/components/category-recommendations-panel')return{CategoryRecommendationsPanel:function CategoryRecommendationsPanel(){return null;}};
-    if(name==='@/app/supplier-hub-category-recommendations')return{resolveRecommendedHubCategoryChoice:recommendationResolver??(()=>{throw Error('No fixture recommendation chosen');})};
+    if(name==='@/app/supplier-hub-category-recommendations')return{
+     resolveRecommendedHubCategoryChoice:recommendationResolver??(()=>{throw Error('No fixture recommendation chosen');}),
+     loadSupplierHubCategorySearch:searchLoader??(async()=>null),
+     resolveSearchedHubCategoryChoice:searchResolver??(()=>{throw Error('No fixture search result chosen');}),
+     resolveCategoryPath:pathResolver??(()=>{throw Error('No fixture fallback result chosen');})
+    };
     if(name==='react')return hooks;if(name.endsWith('.css'))return {};
     if(name==='@/app/supplier-hub-catalog'&&catalog)return catalog;
     if(name.startsWith('../docs/')&&name.endsWith('.json'))return JSON.parse(fs.readFileSync(new URL('../../docs/'+name.slice(8),import.meta.url),'utf8'));

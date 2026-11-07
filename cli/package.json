@@ -1,6 +1,6 @@
 {
   "name": "@yoofam/studio-cli",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "YOOFAM Studio local connection and requested Codex image edits",
   "type": "module",
   "engines": { "node": ">=22.13.0" },

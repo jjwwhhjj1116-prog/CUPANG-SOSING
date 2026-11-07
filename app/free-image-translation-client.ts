@@ -7,7 +7,8 @@ import { isOwnedImageKey, MAX_IMAGE_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/ap
 import { resolveFreeImageTextStyle, ensureFreeImageTextFont, wrappedLines, type FreeImageTextStyle } from '@/app/free-image-text-style';
 import { validateFreeImageBrush, MAX_FREE_IMAGE_BRUSH_TOTAL_POINTS, type FreeImageBrush } from '@/app/free-image-brush';
 import { validateFreeImageCropRect, validateFreeImageCrop, type FreeImageCropRect, type FreeImageCrop } from '@/app/free-image-crop';
-import { validateFreeImageEditDocument, type FreeImageEditDocument } from '@/app/free-image-edit-document';
+import { freeImageEditOutputDimensions, validateFreeImageEditDocument, type FreeImageEditDocument } from '@/app/free-image-edit-document';
+import { freeImagePhotoFilter, freeImagePhotoGeometry, hasFreeImagePhotoEdits, validateFreeImagePhoto, type FreeImagePhoto } from '@/app/free-image-photo';
 import type { Worker, WorkerOptions, LoggerMessage } from 'tesseract.js';
 import {IMAGE_TEXT_VISION_MODEL,IMAGE_TEXT_VISION_NOTICE,IMAGE_TEXT_PRESERVATION_POLICY,parseImageTextVisionConfiguration,parseImageTextVisionResult,type ImageTextVisionConfiguration,type ImageTextVisionResult} from '@/app/image-text-vision';
 import {initializeVisionRegions,isOnlyVisionStyleIssue,type VisionStyleIssue} from '@/app/free-image-vision-style';
@@ -401,17 +402,20 @@ export async function translateFreeImageRegions(source: FreeImageSource, sourceL
 
 /** Paint selected rectangles/brush paths. Only explicitly versioned restoration
  * regions run local inpainting; absent mode retains legacy flat-fill semantics. */
-export async function renderFreeImageTranslation(image: FreeImageLoaded, regions: readonly FreeImageRegion[], signal: AbortSignal, optionImageIds: readonly string[] = [], cropRect?: FreeImageCropRect, sourceLanguage: 'zh' | 'en' = 'zh'): Promise<FreeImageRendered> {
+export async function renderFreeImageTranslation(image: FreeImageLoaded, regions: readonly FreeImageRegion[], signal: AbortSignal, optionImageIds: readonly string[] = [], cropRect?: FreeImageCropRect, sourceLanguage: 'zh' | 'en' = 'zh', photoDraft?: FreeImagePhoto): Promise<FreeImageRendered> {
   dimensions(image.width, image.height); signal.throwIfAborted();
   const paintOrder=image.editDocument?.paintOrder??image.visionPaintOrder;
   if(paintOrder!==undefined&&paintOrder!=='backgrounds-first-v1'||image.visionPaintOrder!==undefined&&image.visionPaintOrder!=='backgrounds-first-v1')throw Error('이미지 배경·글자 처리 순서 정책을 확인해주세요.');
   const crop = cropRect === undefined ? undefined : validateFreeImageCrop({ ...validateFreeImageCropRect(cropRect, image.width, image.height), sourceWidth: image.width, sourceHeight: image.height }, image.source);
+  const checkedPhoto = photoDraft === undefined ? undefined : validateFreeImagePhoto(photoDraft);
+  const photo = checkedPhoto && hasFreeImagePhotoEdits(checkedPhoto) ? checkedPhoto : undefined;
   const selectedOptions = validateFreeImageOptionIds(image.source, [...optionImageIds]);
   const editDocument = image.source.quotationTarget || image.source.workspaceTarget || ['main', 'additional', 'detail'].includes(image.source.role) ? validateFreeImageEditDocument({ format: 'free-image-edit-v1', width: image.width, height: image.height,
-    sourceLanguage, regions: [...regions], ...(crop ? { crop } : {}),...(paintOrder?{paintOrder}:{}) }, image.source) : undefined;
+    sourceLanguage, regions: [...regions], ...(crop ? { crop } : {}),...(paintOrder?{paintOrder}:{}), ...(photo ? { photo } : {}) }, image.source) : undefined;
+  if (photo && !editDocument) throw Error('대표·추가·상세 이미지에서 사진 보정을 적용해주세요.');
   if (image.source.optionImages?.commonAssigned === false && !selectedOptions.length) throw Error('이 개별 사진을 반영할 옵션을 한 개 이상 선택해주세요. 공통 대표 이미지는 변경하지 않습니다.');
   const chosen = regions.filter(row => row.selected).map(row => ({ ...row, box: { ...row.box } }));
-  if (!chosen.length && !crop || chosen.length > MAX_OCR_REGIONS) throw Error('이미지에 적용할 문구 영역을 선택해주세요.');
+  if (!chosen.length && !crop && !photo || chosen.length > MAX_OCR_REGIONS) throw Error('이미지에 적용할 문구 영역을 선택해주세요.');
   const textRegions = chosen.filter(region => region.erase !== true);
   if (textRegions.length) validateImageTextRegions(textRegions.map(region => ({ id: region.id, text: region.translated })));
   const ids = new Set<string>(), styles = new Map<string, ReturnType<typeof resolveFreeImageTextStyle>>(), brushes = new Map<string, ReturnType<typeof validateFreeImageBrush>>();
@@ -495,7 +499,14 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
   let output:ReturnType<typeof canvas>;
   let restoration:ReturnType<typeof createFreeImageInpaintSession>|undefined;
   try {
-  output=canvas(image.width,image.height);output.context.drawImage(image.canvas,0,0);
+  output=canvas(image.width,image.height);
+  const filter = photo && freeImagePhotoFilter(photo);
+  if (filter && filter !== 'none') {
+    if (typeof output.context.filter !== 'string') throw Error('이 브라우저는 이미지 색 보정을 지원하지 않습니다.');
+    output.context.filter = filter;
+  }
+  output.context.drawImage(image.canvas,0,0);
+  if (filter && filter !== 'none') output.context.filter = 'none';
   restoration=restoredRegions.length?createFreeImageInpaintSession(signal):undefined;
   // Adjacent text must be masked in one pass so its old strokes cannot become another region's background.
   for(const group of restoredGroups){
@@ -551,6 +562,13 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
     final = canvas(crop.width, crop.height);
     final.context.drawImage(output.canvas, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
   }
+  if (photo && (photo.rotation || photo.flipX || photo.flipY)) {
+    const geometry = freeImagePhotoGeometry(final.canvas.width, final.canvas.height, photo);
+    const rotated = canvas(geometry.width, geometry.height);
+    rotated.context.setTransform(...geometry.matrix);
+    rotated.context.drawImage(final.canvas, 0, 0);
+    final = rotated;
+  }
   const blob = await abortable(new Promise<Blob>((resolve, reject) => final.canvas.toBlob(value => value ? resolve(value) : reject(Error('번역 이미지 미리보기를 만들지 못했습니다.')), 'image/png')), signal);
   signal.throwIfAborted();
   if (!blob.size || blob.size > MAX_IMAGE_BYTES) throw Error('번역 이미지가 10MB를 초과합니다. 원본 크기를 줄여주세요.');
@@ -574,14 +592,17 @@ function renderedEditDocument(image: FreeImageRendered) {
   if (!image.source.quotationTarget && !image.source.workspaceTarget && !['main', 'additional', 'detail'].includes(image.source.role)
     || (image.source.quotationTarget || image.source.workspaceTarget) && image.optionImageIds?.length) throw new FreeImageApplyError('편집 내용의 저장 대상을 확인해주세요.', false);
   const document = validateFreeImageEditDocument(image.editDocument, image.source);
+  const expected = freeImageEditOutputDimensions(document);
   if (!sameCrop(document.crop, renderedCrop(image), image.source)
-    || image.width !== (document.crop?.width ?? document.width) || image.height !== (document.crop?.height ?? document.height)) throw new FreeImageApplyError('편집 내용과 PNG 미리보기의 크기가 다릅니다.', false);
+    || image.width !== expected.width || image.height !== expected.height) throw new FreeImageApplyError('편집 내용과 PNG 미리보기의 크기가 다릅니다.', false);
   return document;
 }
 function renderedCrop(image: FreeImageRendered) {
   if (image.crop === undefined) return undefined;
   const crop = validateFreeImageCrop(image.crop, image.source);
-  if (image.width !== crop.width || image.height !== crop.height) throw new FreeImageApplyError('잘라낸 PNG 미리보기의 크기와 선택 영역이 다릅니다.', false);
+  const photo = image.editDocument?.photo === undefined ? undefined : validateFreeImagePhoto(image.editDocument.photo);
+  const expected = freeImagePhotoGeometry(crop.width, crop.height, photo);
+  if (image.width !== expected.width || image.height !== expected.height) throw new FreeImageApplyError('잘라낸 PNG 미리보기의 크기와 선택 영역이 다릅니다.', false);
   return crop;
 }
 function sameCrop(actual: unknown, expected: FreeImageCrop | undefined, source: FreeImageSource) {

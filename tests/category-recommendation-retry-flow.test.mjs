@@ -30,16 +30,16 @@ function coupled(company, options) {
 }
 
 test('switching actual picker tabs retains edited recommendation and explicit-search names without a hidden search call',async()=>{
- const f=coupled(schemaCompanies[0]);let search;
+ const f=coupled(schemaCompanies[0]);
  const tab=label=>{nodes(f.parent.picker.render()).find(node=>node.props?.role==='tab'&&node.props.children===label).props.onClick();f.sync();};
- const searchProps=()=>nodes(f.parent.picker.render()).find(node=>node.type?.name==='CategoryRecommendationsPanel'&&node.props.purpose==='search').props;
+ const search=()=>nodes(f.parent.picker.render()).find(node=>node.props?.['aria-label']==='카테고리 이름').props;
  try{
   f.child.type('직접 다듬은 추천 상품명');tab('직접 선택');assert.equal(f.child.input().props.value,'직접 다듬은 추천 상품명');assert.equal(f.child.input().props.disabled,true);
-  search=fixture();search.set(searchProps());search.type('직접 입력한 분류 검색어');await search.advance(2000);assert.equal(search.requests.length,0);
-  tab('추천 선택');search.set(searchProps());assert.equal(f.child.input().props.value,'직접 다듬은 추천 상품명');assert.equal(search.input().props.value,'직접 입력한 분류 검색어');assert.equal(search.input().props.disabled,true);
-  tab('직접 선택');search.set(searchProps());await search.advance(2000);assert.equal(search.input().props.value,'직접 입력한 분류 검색어');assert.equal(search.requests.length,0);
+  search().onChange({target:{value:'직접 입력한 분류 검색어'}});await turn();assert.equal(f.parent.searches.length,0);
+  tab('추천 선택');assert.equal(f.child.input().props.value,'직접 다듬은 추천 상품명');assert.equal(search().value,'직접 입력한 분류 검색어');assert.equal(search().disabled,true);
+  tab('직접 선택');await turn();assert.equal(search().value,'직접 입력한 분류 검색어');assert.equal(f.parent.searches.length,0);
   assert.equal(f.parent.resolutions.length,0);assert.equal(f.parent.profileCount(),0);
- }finally{search?.close();f.close();}
+ }finally{f.close();}
 });
 
 for (const company of schemaCompanies) test(`${company.code}: real parent lookup failure offers exact candidate retry without predicting again or changing existing work`, async () => {

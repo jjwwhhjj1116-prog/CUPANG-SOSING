@@ -1,14 +1,15 @@
 import type { FreeImageCropRect } from '@/app/free-image-crop';
 import type { FreeImageRegion } from '@/app/free-image-translation-client';
+import type { FreeImagePhoto } from '@/app/free-image-photo';
 
 export const FREE_IMAGE_EDIT_HISTORY_LIMIT = 20;
-type FreeImageEditState = { regions: readonly FreeImageRegion[]; crop: FreeImageCropRect | null };
+type FreeImageEditState = { regions: readonly FreeImageRegion[]; crop: FreeImageCropRect | null; photo?: FreeImagePhoto | null };
 export type FreeImageEditHistory = {
   past: readonly FreeImageEditState[];
   future: readonly FreeImageEditState[];
   group: string | null;
 };
-export type FreeImageEditMovement = { history: FreeImageEditHistory; regions: FreeImageRegion[]; crop: FreeImageCropRect | null };
+export type FreeImageEditMovement = { history: FreeImageEditHistory; regions: FreeImageRegion[]; crop: FreeImageCropRect | null; photo?: FreeImagePhoto | null };
 
 // Copy mutable geometry and brush paths while sharing immutable text. Neither image blobs
 // nor source/save proofs belong to the editing history.
@@ -25,8 +26,9 @@ function sameEditValue(a: unknown, b: unknown): boolean {
   return keys.length === Object.keys(b).length && keys.every(key => Object.prototype.hasOwnProperty.call(b, key)
     && sameEditValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
 }
-function snapshot({ regions, crop }: FreeImageEditState) {
-  return { regions: regions.map(row => copyEditValue(row) as FreeImageRegion), crop: crop ? { ...crop } : null };
+function snapshot({ regions, crop, photo }: FreeImageEditState) {
+  return { regions: regions.map(row => copyEditValue(row) as FreeImageRegion), crop: crop ? { ...crop } : null,
+    ...(photo === undefined ? {} : { photo: photo ? { ...photo } : null }) };
 }
 export function sameFreeImageEditCrop(a: FreeImageCropRect | null, b: FreeImageCropRect | null): boolean {
   return sameEditValue(a, b);
@@ -40,28 +42,28 @@ export function endFreeImageEditGroup(history: FreeImageEditHistory): FreeImageE
 }
 export function recordFreeImageEdit(history: FreeImageEditHistory, before: readonly FreeImageRegion[],
   next: readonly FreeImageRegion[], group: string | null = null, beforeCrop: FreeImageCropRect | null = null,
-  nextCrop = beforeCrop): FreeImageEditHistory {
-  if (sameFreeImageEditCrop(beforeCrop, nextCrop) && sameEditValue(before, next)) return history;
+  nextCrop = beforeCrop, beforePhoto?: FreeImagePhoto | null, nextPhoto = beforePhoto): FreeImageEditHistory {
+  if (sameFreeImageEditCrop(beforeCrop, nextCrop) && sameEditValue(beforePhoto, nextPhoto) && sameEditValue(before, next)) return history;
   const coalesced = group !== null && group === history.group && history.past.length > 0 && history.future.length === 0;
   return {
-    past: coalesced ? history.past : [...history.past, snapshot({ regions: before, crop: beforeCrop })].slice(-FREE_IMAGE_EDIT_HISTORY_LIMIT),
+    past: coalesced ? history.past : [...history.past, snapshot({ regions: before, crop: beforeCrop, photo: beforePhoto })].slice(-FREE_IMAGE_EDIT_HISTORY_LIMIT),
     future: [], group,
   };
 }
-export function undoFreeImageEdit(history: FreeImageEditHistory, regions: readonly FreeImageRegion[], crop: FreeImageCropRect | null = null): FreeImageEditMovement | null {
+export function undoFreeImageEdit(history: FreeImageEditHistory, regions: readonly FreeImageRegion[], crop: FreeImageCropRect | null = null, photo?: FreeImagePhoto | null): FreeImageEditMovement | null {
   const previous = history.past.at(-1);
   if (!previous) return null;
   return {
     ...snapshot(previous),
-    history: { past: history.past.slice(0, -1), future: [...history.future, snapshot({ regions, crop })], group: null },
+    history: { past: history.past.slice(0, -1), future: [...history.future, snapshot({ regions, crop, photo })], group: null },
   };
 }
-export function redoFreeImageEdit(history: FreeImageEditHistory, regions: readonly FreeImageRegion[], crop: FreeImageCropRect | null = null): FreeImageEditMovement | null {
+export function redoFreeImageEdit(history: FreeImageEditHistory, regions: readonly FreeImageRegion[], crop: FreeImageCropRect | null = null, photo?: FreeImagePhoto | null): FreeImageEditMovement | null {
   const next = history.future.at(-1);
   if (!next) return null;
   return {
     ...snapshot(next),
-    history: { past: [...history.past, snapshot({ regions, crop })], future: history.future.slice(0, -1), group: null },
+    history: { past: [...history.past, snapshot({ regions, crop, photo })], future: history.future.slice(0, -1), group: null },
   };
 }
 

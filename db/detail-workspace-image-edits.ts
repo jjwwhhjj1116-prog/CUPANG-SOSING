@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers';
 import { readDetailWorkspaceImageSeal, confirmDetailWorkspaceImageSeal, applyDetailWorkspaceImageSeal, createDetailWorkspaceImageProofs, type DetailWorkspaceImageProofs, type DetailWorkspaceImageSeal } from '@/db/detail-workspaces';
 import { DetailWorkspaceError, detailWorkspaceExpectedView, detailWorkspaceRequestId } from '@/app/detail-workspace';
 import { freeImageSourceIdentity, validateFreeImageSource, type FreeImageSource } from '@/app/free-image-translation';
-import { validateFreeImageEditDocument, type FreeImageEditDocument } from '@/app/free-image-edit-document';
+import { freeImageEditOutputDimensions, validateFreeImageEditDocument, type FreeImageEditDocument } from '@/app/free-image-edit-document';
 import { freeImageEditDigest, freeImageEditOutputKey, prepareFreeImageEditRecord, readFreeImageEditRecord, storeFreeImageEditRecord } from '@/app/free-image-edit-record';
 import { inspectImage } from '@/app/automation/image-edit';
 import { MAX_IMAGE_BYTES, isOwnedImageKey } from '@/app/image-files';
@@ -104,7 +104,8 @@ export async function recoverWorkspaceImage(auth: WorkspaceImageIdentity, source
 export async function applyWorkspaceImage(auth: WorkspaceImageIdentity, source: FreeImageSource, document: FreeImageEditDocument, bytes: Uint8Array, signal: AbortSignal) {
   target(source, auth); if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) throw new DetailWorkspaceError('PNG 한 장은10MiB 이하여야 합니다.', 413);
   let dimensions; try { dimensions = inspectImage(bytes); } catch { throw new DetailWorkspaceError('유효한 PNG 결과를 전달해주세요.', 415); }
-  if (dimensions.mime !== 'image/png' || dimensions.width !== (document.crop?.width ?? document.width) || dimensions.height !== (document.crop?.height ?? document.height)) throw new DetailWorkspaceError('PNG와 편집 문서의 실제 크기가 다릅니다.', 400);
+  const expected = freeImageEditOutputDimensions(document);
+  if (dimensions.mime !== 'image/png' || dimensions.width !== expected.width || dimensions.height !== expected.height) throw new DetailWorkspaceError('PNG와 편집 문서의 실제 크기가 다릅니다.', 400);
   const sha256 = await freeImageEditDigest(bytes), acknowledged = await replay(auth, source, document, sha256, bytes.length, signal); if (acknowledged) return acknowledged;
   const current = await fresh(auth, source, signal), stored = await output(auth, source, document, sha256, bytes.length);
   if (!env.FILES) throw changed();

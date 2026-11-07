@@ -10,12 +10,13 @@ import { collectedImageDraft, type CollectedImageLink } from '@/app/collection-i
 import { productImageKeys } from '@/app/product-content';
 import { collectedPageOptionImageIndices } from '@/app/collected-page-option-binding';
 
-export async function prepareCollectedImageDraft(owner: string, jobId: string, productId: string, explicit?: { expectedVersion: string; roles?: ('main'|'additional'|'detail')[] }) {
+export async function prepareCollectedImageDraft(owner: string, jobId: string, productId: string, explicit?: { expectedVersion: string; roles?: ('main'|'additional'|'detail')[] }, initializeIntake=false) {
   if (!env.DB) throw Error('이미지 초안 저장소 연결이 필요합니다.');
   const db = env.DB;
   const job = await findCollectionJob(owner, jobId), link = await findCollectionProduct(owner, jobId);
   const receipt = await readCollectionResult(owner, jobId), product = await findProduct(owner, productId);
-  if (!job || job.status !== 'awaiting_connector' || (explicit ? !['collect','price','work','transmit'].includes(job.goal) : job.goal !== 'work') || !job.context?.category?.id || link?.product_id !== productId || !receipt || !product
+  const goals=explicit?['collect','price','work','transmit']:initializeIntake?['price','transmit']:['work'];
+  if (!job || job.status !== 'awaiting_connector' || !goals.includes(job.goal) || !job.context?.category?.id || link?.product_id !== productId || !receipt || !product
     || explicit && product.updated_at !== explicit.expectedVersion
     || receipt.result.offerId !== job.offer_id || receipt.result.sourceUrl !== job.source_url || product.source_url !== job.source_url) return null;
   const content = await readProductContent(owner, productId), options = await readProductOptions(owner, productId);

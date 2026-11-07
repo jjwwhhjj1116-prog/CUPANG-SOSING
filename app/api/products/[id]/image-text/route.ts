@@ -22,7 +22,7 @@ import { MAX_OCR_PIXELS, validFreeImageRole, validateFreeImageSource, validateIm
   freeImageSourceIdentity, freeImageApplyIdentity, freeImageRoleEditApplyIdentity, validateFreeImageOptionIds, type FreeImageSource, type FreeImageQuotationTarget } from '@/app/free-image-translation';
 import { readBoundedBytes, readBoundedStream, RequestBodyError } from '@/app/request-body';
 import { validateFreeImageCrop, type FreeImageCrop } from '@/app/free-image-crop';
-import { validateFreeImageEditDocument, MAX_FREE_IMAGE_EDIT_BYTES, type FreeImageEditDocument } from '@/app/free-image-edit-document';
+import { freeImageEditOutputDimensions, validateFreeImageEditDocument, MAX_FREE_IMAGE_EDIT_BYTES, type FreeImageEditDocument } from '@/app/free-image-edit-document';
 import { FreeImageEditRecordError, freeImageEditDigest, freeImageEditDocumentBytes, prepareFreeImageEditRecord, prepareFreeImageRoleEditRecord, readFreeImageEditRecord, storeFreeImageEditRecord, type PreparedFreeImageEditRecord } from '@/app/free-image-edit-record';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import {imageTextRecoveryConfigured,imageTextRecoveryWithinLimit,recoverImageTextRegions,unavailableImageTextRecovery,ImageTextRecoveryError,type ImageTextRecoveryEnvironment} from '@/app/automation/workers-image-text-recovery';
@@ -241,8 +241,9 @@ async function storedOutput(key: string, source: FreeImageSource, optionImageIds
   if (crop) {
     let dimensions;
     try { dimensions = inspectImage(bytes); } catch { throw new ImageTextError(409, '저장한 잘라내기 결과가 유효한 PNG가 아닙니다.'); }
-    if (dimensions.mime !== 'image/png' || dimensions.width !== crop.width || dimensions.height !== crop.height
-      || metadata?.imageWidth !== String(crop.width) || metadata?.imageHeight !== String(crop.height)) throw new ImageTextError(409, '저장한 잘라내기 결과의 실제 크기와 선택 영역이 다릅니다.');
+    const expected = editDocument ? freeImageEditOutputDimensions(editDocument) : crop;
+    if (dimensions.mime !== 'image/png' || dimensions.width !== expected.width || dimensions.height !== expected.height
+      || metadata?.imageWidth !== String(expected.width) || metadata?.imageHeight !== String(expected.height)) throw new ImageTextError(409, '저장한 잘라내기 결과의 실제 크기와 선택 영역이 다릅니다.');
   }
   if (editDocument) {
     const saved = await readFreeImageEditRecord(env.FILES, source.sourceKey.split('/')[0], source.productId, key);
@@ -695,7 +696,8 @@ export async function POST(request: Request, context: Context) {
     if (dimensions.width * dimensions.height > MAX_OCR_PIXELS) throw new ImageTextError(413, '번역 결과는 1,200만 픽셀 이하이어야 합니다.');
     const same = dimensions.width === source.width && dimensions.height === source.height;
     const rotated = dimensions.width === source.height && dimensions.height === source.width;
-    if (crop ? dimensions.width !== crop.width || dimensions.height !== crop.height : !same && !rotated) throw new ImageTextError(400, crop ? '잘라낸 PNG의 실제 크기가 선택 영역과 다릅니다.' : '번역 결과 크기가 원본 이미지와 다릅니다.');
+    const editedSize = editDocument ? freeImageEditOutputDimensions(editDocument) : crop;
+    if (editedSize ? dimensions.width !== editedSize.width || dimensions.height !== editedSize.height : !same && !rotated) throw new ImageTextError(400, crop ? '잘라낸 PNG의 실제 크기가 선택 영역과 다릅니다.' : '번역 결과 크기가 원본 이미지와 다릅니다.');
     const editDocumentSha256 = editDocument ? await freeImageEditDigest(freeImageEditDocumentBytes(editDocument)) : undefined;
     const applyIdentity = !source.quotationTarget && editDocumentSha256 ? freeImageRoleEditApplyIdentity(source, optionImageIds, crop, editDocumentSha256) : freeImageApplyIdentity(source, optionImageIds, crop, editDocumentSha256);
     const sha256 = await digest(bytes), fingerprint = await digest(new TextEncoder().encode(applyIdentity));

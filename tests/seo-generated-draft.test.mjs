@@ -27,6 +27,45 @@ test('captured memo composes the first brand, short feature and target noun with
  }finally{f.api.close();}
 });
 
+test('a short Korean brand does not consume a compound noun in a feature or provider title',()=>{
+ const f=fixture();try{
+  const {seoGuidanceTitle}=f.api.load('app/seo-guidance-composition.ts');
+  const memo={brand:'솜',features:'솜털 쿠션',keywords:'쿠션'};
+  assert.equal(seoGuidanceTitle({title:''},memo),'솜 솜털 쿠션');
+  assert.equal(seoGuidanceTitle({title:'솜털 쿠션'},{...memo,features:''}),'솜 솜털 쿠션');
+  assert.equal(seoGuidanceTitle({title:'솜 쿠션'},memo),'솜 솜털 쿠션');
+  assert.equal(seoGuidanceTitle({title:'솜쿠션'},memo),'솜 솜털 쿠션');
+ }finally{f.api.close();}
+});
+
+test('a sparse signed AI title uses the same deduplicated feature-based example without changing the stored response',()=>{
+ const f=fixture();try{
+  const memo={brand:'유앤채, 보조 브랜드',features:'100x200cm 반짝이 스트링 장식 실커튼',keywords:'실커튼'};
+  f.options.rows[0].originalName='浅紫 / 100*200cm';
+  f.options.rows[1].originalName='香槟 / 100*200cm';
+  f.job.review.source.title='闪亮线帘';
+  f.job.review.source.attributes=f.options.rows.map(row=>({name:'option:'+row.id,value:row.originalName}));
+  f.job.review.seoComposition={version:'couplus-current-composition-v1',memo,related:{source:'none',query:'실커튼',keywords:[],warnings:[]}};
+  f.job.review.seoCompositionContext=f.api.load('app/seo-composition-context.ts').seoCompositionContext(f.options);
+  f.job.result.draft.title='유앤채실커튼';
+  f.job.result.draft.attributes=[];
+  f.job.result.seoOptions=[{optionId:f.options.rows[0].id,name:'연보라 / 100*200cm'}];
+  const before=JSON.stringify(f.job),input={ownerId:'owner',productVersion:f.api.version,content:f.content,options:f.options,job:f.job,brand:'유앤채',memo};
+  const seed=f.module.createSeoGeneratedDraft(input);
+  assert.equal(seed.values.seo.title,'유앤채 100x200cm 반짝이 스트링 장식 실커튼');
+  assert.deepEqual(JSON.parse(JSON.stringify(seed.values.optionNames)),{[f.options.rows[0].id]:'연보라 / 100*200cm'});
+  assert.equal(JSON.stringify(f.job),before);
+  f.content.seo.title={value:'직접 저장한 제목',provenance:'manual',updatedAt:f.api.version};
+  assert.equal(f.module.createSeoGeneratedDraft(input).values.seo.title,undefined);
+  f.job.review.seoComposition.memo={...memo,features:'150x200cm 반짝이 실커튼'};
+  assert.equal(f.module.createSeoGeneratedDraft({...input,replaceSaved:true}).values.seo.title,'유앤채실커튼');
+  f.job.review.seoComposition.memo={...memo,features:'한국산 반짝이 실커튼'};
+  f.job.review.source.reference='https://detail.1688.com/offer/1234.html';
+  f.job.review.source.attributes.push({name:'产地',value:'中国'});
+  assert.equal(f.module.createSeoGeneratedDraft({...input,replaceSaved:true}).values.seo.title,'유앤채실커튼');
+ }finally{f.api.close();}
+});
+
 test('long or multiline features and a composed title above 100 keep the provider title instead of inserting invalid memo text',()=>{
  const f=fixture();try{for(const memo of [{brand:'수정 브랜드',features:'긴'.repeat(101),keywords:'바라클라바'},{brand:'수정 브랜드',features:'짧은 특징\n둘째 줄',keywords:'바라클라바'},{brand:'수정 브랜드',features:'긴'.repeat(80),keywords:'바라클라바, 방한 모자'}]){
   const seed=f.module.createSeoGeneratedDraft({ownerId:'owner',productVersion:f.api.version,content:f.content,options:f.options,job:f.job,brand:'예전 브랜드',memo});

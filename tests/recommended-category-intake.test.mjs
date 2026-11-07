@@ -17,7 +17,7 @@ const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='o
 /** Real CategoryPicker, company-scoped settings/profile handlers and SQLite.
  * Recommendation and live form inputs are inert company-bound fixtures; the
  * resolver itself is exercised separately by category-recommendations-client. */
-function setup(company,{resolve}={}){
+function setup(company,{resolve,searchLookup,resolveFallback}={}){
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});
  const snapshot={...hubSchemaSnapshot(company),draftInitialization:'couplus-required-v1',inputBindings:'couplus-paths-v1',settingsInitialization:'couplus-options-v1',
   metadata:{displayCategoryCode:'991234',kanCategoryId:3000,scopeType:'Retail_Categorized_Single',noticeNumber:17,version:190}};
@@ -26,8 +26,9 @@ function setup(company,{resolve}={}){
   supplierHub:{trail:[{categoryId:'991000',name:schemaPath[0],isLeaf:false}],ownerId:'owner',company:{...company}}};
  const recommendation={id:'synthetic-prediction-'+company.code,code:choice.categoryId,path:[...schemaPath],label:schemaPath.join(' > ')};
  const result={source:'supplier-hub-category-predict-api',ownerId:'owner',company:{...company},productName:sourceTitle,queryProductName:'합성 방한 귀달이 모자',observedAt:Date.now(),items:[recommendation]};
+ const search={source:'supplier-hub-category-keyword-api',ownerId:'owner',company:{...company},keyword:schemaPath.at(-1),observedAt:Date.now(),items:[recommendation]};
  const profileAPI=h.load('app/api/category-profiles/route.ts'),settingsAPI=h.load('app/api/settings/route.ts');
- let schemaReads=0,excelReads=0;const resolutions=[];
+ let schemaReads=0,excelReads=0;const resolutions=[],searches=[],searchResolutions=[];
  const request=async(path,init)=>{
   if(path==='/api/settings')return settingsAPI.GET();
   assert.equal(path.split('?')[0],'/api/category-profiles');
@@ -37,13 +38,19 @@ function setup(company,{resolve}={}){
   assert.equal(item,recommendation);assert.equal(envelope,result);assert.equal(ownerId,'owner');assert.equal(signal.aborted,false);
   resolutions.push({item,envelope,ownerId,signal});
   return resolve?resolve({item,envelope,ownerId,signal,choice}):choice;
- },catalog:{loadLiveHubCategorySchema:async(received,signal)=>{
+ },searchLoader:async(keyword,ownerId,signal)=>{
+  assert.equal(keyword,search.keyword);assert.equal(ownerId,'owner');assert.equal(signal.aborted,false);
+  searches.push({keyword,ownerId,signal});return searchLookup?searchLookup({search,signal}):search;
+ },searchResolver:async(item,envelope,ownerId,signal)=>{
+  assert.equal(item,recommendation);assert.equal(envelope,search);assert.equal(ownerId,'owner');assert.equal(signal.aborted,false);
+  searchResolutions.push({item,envelope,ownerId,signal});return choice;
+ },pathResolver:resolveFallback,catalog:{loadLiveHubCategorySchema:async(received,signal)=>{
   assert.equal(received,choice);assert.equal(signal.aborted,false);schemaReads++;return snapshot;
  },loadLiveHubCategoryTemplate:async()=>{excelReads++;assert.fail('Normal recommendation intake must not request Excel');}}});
  const retained=()=>JSON.stringify(Object.fromEntries(['products','product_options','product_content','product_quotation_fields','collection_jobs','collection_context','collection_results','workspace_settings']
   .map(table=>[table,h.sqlite.prepare('SELECT * FROM '+table+' ORDER BY rowid').all()])));
  const profileCount=()=>h.sqlite.prepare('SELECT COUNT(*) n FROM category_profiles').get().n;
- return {h,picker,snapshot,choice,recommendation,result,resolutions,retained,profileCount,get schemaReads(){return schemaReads;},get excelReads(){return excelReads;},close(){picker.close();h.close();}};
+ return {h,picker,snapshot,choice,recommendation,result,search,resolutions,searches,searchResolutions,retained,profileCount,get schemaReads(){return schemaReads;},get excelReads(){return excelReads;},close(){picker.close();h.close();}};
 }
 
 for(const company of schemaCompanies)test(`explicit recommendation selection verifies the Single form and opens intake without changing existing work (${company.code})`,async()=>{
@@ -78,13 +85,42 @@ for(const company of schemaCompanies)test(`explicit recommendation selection ver
 for(const company of schemaCompanies)test(`direct searched candidate uses the exact Single schema and one checked profile ACK (${company.code})`,async()=>{
  const f=setup(company);try{
   const before=f.retained();nodes(f.picker.render()).find(node=>node.props?.role==='tab'&&node.props.children==='직접 선택').props.onClick();
-  const search=nodes(f.picker.render()).find(node=>node.type?.name==='CategoryRecommendationsPanel'&&node.props.purpose==='search');
-  assert.equal(search.props.initialTitle,'');assert.equal(search.props.disabled,false);
-  await search.props.onChoose(f.recommendation,f.result);
-  assert.equal(f.resolutions.length,1);assert.equal(f.schemaReads,1);assert.equal(f.excelReads,0);assert.equal(f.picker.selected.length,1);assert.equal(f.profileCount(),1);
+  const search=nodes(f.picker.render()).find(node=>node.props?.['aria-label']==='카테고리 이름');
+  assert.equal(search.props.value,'');assert.equal(search.props.disabled,false);
+  search.props.onChange({target:{value:f.search.keyword}});
+  nodes(f.picker.render()).find(node=>node.type==='button'&&node.props.children==='검색').props.onClick();
+  const resultButton=()=>nodes(nodes(f.picker.render()).find(node=>node.props?.['aria-label']==='카테고리 검색 결과')).find(node=>node.type==='button');
+  await waitFor(()=>Boolean(resultButton()));assert.equal(f.profileCount(),0);
+  const select=resultButton().props.onClick;select();select();
+  await waitFor(()=>f.picker.selected.length===1);
+  assert.equal(f.searches.length,1);assert.equal(f.searchResolutions.length,1);assert.equal(f.resolutions.length,0);assert.equal(f.schemaReads,1);assert.equal(f.excelReads,0);assert.equal(f.picker.selected.length,1);assert.equal(f.profileCount(),1);
   assert.equal(f.picker.selected[0].categoryId,f.recommendation.code);assert.deepEqual(f.picker.selected[0].categoryPath,schemaPath);
   assert.deepEqual(f.picker.selected[0].hubSchema.company,company);assert.equal(f.picker.calls.filter(call=>call.method==='POST').length,1);
   assert.equal(f.retained(),before);assert.deepEqual(f.h.network,[]);assert.equal(f.h.sqlite.prepare('SELECT COUNT(*) n FROM supplier_hub_receipts').get().n,0);
+ }finally{f.close();}
+});
+
+test('when keyword lookup is unavailable, a saved name match still opens through live schema without writing another profile',async()=>{
+ const f=setup(schemaCompanies[0],{
+  searchLookup:()=>{throw Error('Official keyword endpoint HTTP 400');},
+  resolveFallback:async(code,path,ownerId,signal)=>{
+   assert.equal(code,f.choice.categoryId);assert.deepEqual([...path],schemaPath);assert.equal(ownerId,'owner');assert.equal(signal.aborted,false);
+   return f.choice;
+  }
+ });
+ try{
+  await f.picker.chooseRecommendation(f.recommendation,f.result);
+  const saved=f.picker.selected[0],before=f.retained();
+  assert.ok(saved);f.picker.reopen();f.picker.setProps({profiles:[saved]});f.picker.openDirect();
+  nodes(f.picker.render()).find(node=>node.props?.['aria-label']==='카테고리 이름').props.onChange({target:{value:f.search.keyword}});
+  nodes(f.picker.render()).find(node=>node.type==='button'&&node.props.children==='검색').props.onClick();
+  const resultButton=()=>nodes(nodes(f.picker.render()).find(node=>node.props?.['aria-label']==='카테고리 검색 결과')).find(node=>node.type==='button');
+  assert.ok(resultButton(),'saved result is available without waiting for the remote response');
+  await waitFor(()=>nodes(f.picker.render()).some(node=>node.props?.role==='status'&&JSON.stringify(node.props.children).includes('HTTP 400')));
+  resultButton().props.onClick();await waitFor(()=>f.picker.selected.length===2);
+  assert.equal(f.picker.selected[1].id,saved.id);assert.equal(f.schemaReads,2);
+  assert.equal(f.searches.length,1);assert.equal(f.searchResolutions.length,0);assert.equal(f.profileCount(),1);
+  assert.equal(f.picker.calls.filter(call=>call.method==='POST').length,1);assert.equal(f.retained(),before);
  }finally{f.close();}
 });
 
