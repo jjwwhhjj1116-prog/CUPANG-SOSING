@@ -51,7 +51,21 @@ test('redirects, HTML, oversized body and a company switch during a response are
  for(const options of [{redirected:true},{responseUrl:'https://supplier.coupang.com/login'},{length:String(4*1024*1024+1)},{companyAfterRead:2},{raw:(payload,{vendor})=>vendor?JSON.stringify(payload):' '.repeat(4*1024*1024+1)}])await assert.rejects(pageHarness(scope(),options).run());
 });
 test('same request ID in an absent or different native scope cannot establish a Quick Listing SKU relationship',async()=>{
- for(const nativeScope of [undefined,'Retail_Categorized_Excel','Retail_Categorized_Single','CBQF',''])await assert.rejects(pageHarness(scope(),{items:[row({scope:nativeScope})]}).run());
+ for(const nativeScope of [undefined,'Retail_Categorized_Excel','Retail_Categorized','CBQF',''])await assert.rejects(pageHarness(scope(),{items:[row({scope:nativeScope})]}).run());
+});
+test('the live single-registration scope accepts all eight exact receipt SKU rows without asserting option order',async()=>{
+ const value={...scope(),qvtRequestId:'33333333-3333-4333-8333-333333333333',membersCount:8};
+ const items=Array.from({length:8},(_,index)=>row({qvtRequestId:value.qvtRequestId,scope:'Retail_Categorized_Single',uniqueItemId:'single-row-'+index,skuId:String(9000+index)}));
+ const result=await pageHarness(value,{items}).run();
+ assert.equal(result.total,8);assert.equal(result.optionMapping,'unverified');assert.equal(result.registered,false);assert.equal(result.mutated,false);
+ assert.deepEqual(plain(result.rows.map(item=>item.skuId)),items.map(item=>item.skuId));
+});
+test('the live single-registration scope treats a literal null SKU as unissued',async()=>{
+ const value={...scope(),qvtRequestId:'33333333-3333-4333-8333-333333333333',membersCount:8};
+ const items=Array.from({length:8},(_,index)=>row({qvtRequestId:value.qvtRequestId,scope:'Retail_Categorized_Single',uniqueItemId:'single-row-'+index,skuId:'null'}));
+ const result=await pageHarness(value,{items}).run();
+ assert.equal(result.total,8);assert.ok(result.rows.every(item=>item.skuId===null&&item.status==='INSPECTION'));
+ await assert.rejects(pageHarness(scope(),{items:[row({skuId:'null'})]}).run());
 });
 function workerHarness(options={}){
  const original=scope(),calls=[],sender={frameId:0,url:origin+'/',tab:{id:1,windowId:7}},tabs=new Map([[1,{id:1,windowId:7,url:sender.url}],[2,{id:2,windowId:7,url:'https://supplier.coupang.com/dashboard/KR'}]]);let reads=0;

@@ -43,9 +43,10 @@ export async function querySupplierHubNativeRegistrations(scope){
     const key=nativeId?'id:'+canonical([typeof item.uniqueItemId,item.uniqueItemId]):'row:'+canonical(item);
     if(seenRows.has(key))throw Error('공식 등록 파일 조회의 행이 페이지 사이에서 중복되었습니다. 전체 결과를 확인하지 못했습니다.');seenRows.add(key);
     if(item.qvtRequestId!==scope.qvtRequestId)continue;
-    if(item.scope!=='SIMPLE_REGISTRATION'||typeof item.quotationId!=='string'||!/^CID-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(item.quotationId)||typeof item.productName!=='string'||!item.productName||item.productName!==item.productName.trim()||/[\u0000-\u001f]/.test(item.productName)||item.productName.length>2000||!knownStates.includes(item.state)
-     ||item.skuId!==null&&(typeof item.skuId!=='string'||!/^[1-9]\d{0,29}$/.test(item.skuId)))throw Error('같은 등록 파일의 견적서·SKU·상태 원문 형식을 확인하지 못했습니다.');
-    const quotationId=item.quotationId.slice(4),skuId=item.skuId;
+    const skuId=item.scope==='Retail_Categorized_Single'&&item.skuId==='null'?null:item.skuId;
+    if(!['SIMPLE_REGISTRATION','Retail_Categorized_Single'].includes(item.scope)||typeof item.quotationId!=='string'||!/^CID-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(item.quotationId)||typeof item.productName!=='string'||!item.productName||item.productName!==item.productName.trim()||/[\u0000-\u001f]/.test(item.productName)||item.productName.length>2000||!knownStates.includes(item.state)
+     ||skuId!==null&&(typeof skuId!=='string'||!/^[1-9]\d{0,29}$/.test(skuId)))throw Error('같은 등록 파일의 견적서·SKU·상태 원문 형식을 확인하지 못했습니다.');
+    const quotationId=item.quotationId.slice(4);
     if(skuId!==null&&seen.has(skuId))throw Error('같은 등록 파일에서 SKU ID가 중복되었습니다.');if(skuId!==null)seen.add(skuId);
     rows.push({quotationId,skuId,productName:item.productName,status:item.state});if(rows.length>scope.membersCount)throw Error('등록 파일의 상품 수가 원래 포함 옵션 수보다 많습니다.');
    }
