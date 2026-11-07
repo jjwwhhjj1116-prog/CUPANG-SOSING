@@ -87,7 +87,8 @@ for(const change of ['product','content','options','settings','owner','company']
    if(change==='owner')f.h.auth.getWorkspaceOwnerId=async()=>'other';
    if(change==='company')f.h.setCompany({code:'A01464742',name:'와이홉'});
   }return proofs;};
-  await assert.rejects(f.read());assert.equal(reads,2);assert.ok(f.requests.every(request=>request.method==='GET'));assert.ok(!f.requests.some(request=>request.path.endsWith('/quotation-fields')));
+  await assert.rejects(f.read());assert.equal(reads,2);assert.ok(f.requests.every(request=>request.method==='GET'));
+  assert.deepEqual(f.requests.map(request=>request.path),['options','content','quotation-fields'].map(route=>`${f.base}/${route}`));
  }finally{f.close();}
 });
 

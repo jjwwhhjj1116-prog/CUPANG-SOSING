@@ -41,6 +41,14 @@ const context={params:Promise.resolve({id:'product'})};
 const request=(body,profileId)=>new Request('http://localhost/api/products/product/quotation-fields'+(profileId?'?profileId='+profileId:''),{method:body?'PUT':'GET',headers:{'content-type':'application/json',origin:'http://localhost'},...(body?{body:JSON.stringify(body)}:{})});
 async function get(h,profileId){const response=await h.route.GET(request(null,profileId),context);assert.equal(response.status,200,await response.clone().text());return response.json();}
 function put(h,view,changes,profileId){return h.route.PUT(request({expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes},profileId),context);}
+async function patchContent(h,patch){
+  const current=await h.load('db/product-content.ts').readProductContent('owner','product');
+  const response=await h.load('app/api/products/[id]/content/route.ts').PATCH(new Request('http://localhost/api/products/product/content',{
+    method:'PATCH',headers:{'content-type':'application/json',origin:'http://localhost'},body:JSON.stringify({expectedRevision:current.revision,patch}),
+  }),context);
+  assert.equal(response.status,200,await response.clone().text());
+  return (await response.json()).content;
+}
 
 test('stage-seven review remains valid without display metadata and retains the same automatic fields', async () => {
  const h=await harness();try{
@@ -57,9 +65,7 @@ test('stage-seven review remains valid without display metadata and retains the 
 
 test('fresh automatic ALT follows saved SEO while explicit blank ALT and quotation overrides remain blank',async()=>{
  const h=await harness();try{
-  const model=h.load('app/product-content.ts'),initial=model.emptyProductContent('product');
-  const content=model.applyContentPatch(initial,{seo:{title:'검토한 한국어 상품명'}},version);
-  h.sqlite.prepare('INSERT INTO product_content VALUES(?,?,?,?,?)').run('product','owner',1,JSON.stringify(content),version);
+  const model=h.load('app/product-content.ts'),content=await patchContent(h,{seo:{title:'검토한 한국어 상품명'}});
   const view=await get(h);assert.equal(view.resolved.rows[0].fields.altText.value,'검토한 한국어 상품명');
   assert.equal(model.currentDetailContent(content,product.title).altText.value,'검토한 한국어 상품명');
   for(const provenance of ['collected','translated','generated']){
@@ -68,24 +74,24 @@ test('fresh automatic ALT follows saved SEO while explicit blank ALT and quotati
    h.sqlite.prepare('UPDATE product_content SET payload=? WHERE product_id=?').run(JSON.stringify(explicit),'product');
    assert.equal((await get(h)).resolved.rows[0].fields.altText.value,'',provenance+' blank is retained');
   }
-  const manual=model.applyContentPatch(content,{detail:{altText:''}},version);
+  const manual=await patchContent(h,{detail:{altText:''}});
   assert.equal(model.currentDetailContent(manual,product.title).altText.value,'');
-  h.sqlite.prepare('UPDATE product_content SET revision=?, payload=? WHERE product_id=?').run(2,JSON.stringify(manual),'product');
   const blank=await get(h);assert.equal(blank.resolved.rows[0].fields.altText.value,'');
   const override=await put(h,blank,[{fieldKey:'altText',optionId:null,value:''}]);assert.equal(override.status,200);
   assert.equal((await override.json()).resolved.rows[0].fields.altText.value,'');
  }finally{h.sqlite.close();}
 });
 async function profile(h,id='80719'){return h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'LOCAL TEST category',categoryId:id,categoryPath:h.load('app/quotation-schema.ts').getQuotationSchema(id).categoryPath.length?[...h.load('app/quotation-schema.ts').getQuotationSchema(id).categoryPath]:['미확인 카테고리'],template:null,mappings:[]});}
-const baseGuard=()=>({productVersion:version,imageKeys:product.image_keys,pricingPolicy:null,contentRevision:0,optionRevision:0,settingsPayload:null,profile:null,collection:null});
+const baseGuard=()=>({productVersion:version,imageKeys:product.image_keys,pricingPolicy:null,contentRevision:1,optionRevision:0,settingsPayload:null,profile:null,collection:null});
 
 test('stage-seven GET and saves share automatic public detail HTML without publishing or erasing a direct blank', async()=>{
  const h=await harness();try{
   h.env.YOOFAM_DETAIL_IMAGE_SECRET='a1'.repeat(32);h.env.YOOFAM_DETAIL_IMAGE_ORIGIN='https://example.com';
-  h.env.FILES={put:async()=>{throw Error('editor must not publish');}};
-  const model=h.load('app/product-content.ts');
-  const content=model.applyContentPatch(model.emptyProductContent('product'),{detail:{description:'확인한 설명',altText:'확인한 이미지'},assets:{detail:['owner/image.png']}},version);
-  h.sqlite.prepare('INSERT INTO product_content VALUES(?,?,?,?,?)').run('product','owner',1,JSON.stringify(content),version);
+  h.env.FILES={
+    head:async key=>key==='owner/image.png'?{httpMetadata:{contentType:'image/png'}}:null,
+    put:async()=>{throw Error('editor must not publish');},
+  };
+  await patchContent(h,{detail:{description:'확인한 설명',altText:'확인한 이미지'},assets:{detail:['owner/image.png']}});
   const view=await get(h);
   assert.match(view.automatic.rows[0].fields.detailHtml.value,/<p>확인한 설명<\/p>/);
   assert.match(view.resolved.rows[0].fields.detailHtml.value,/https:\/\/example.com\/media\/quotation\/[a-f0-9]{64}/);
@@ -147,20 +153,21 @@ test('category link removal between read and save rejects writes and preserves q
 
 test('saved SEO, option pricing and stage image changes reach editor and export while manual quotation values survive',async()=>{
  const h=await harness();try{
+  const assets={main:['owner/main.png'],additional:['owner/additional.png'],detail:['owner/detail.png'],label:['owner/label.png']};
+  const owned=Object.values(assets).flat();
+  h.sqlite.prepare('UPDATE products SET image_keys=? WHERE id=?').run(JSON.stringify(owned),'product');
+  h.env.FILES={head:async key=>owned.includes(key)?{httpMetadata:{contentType:'image/png'}}:null};
   await linkedFixture(h);let before=await get(h);
   const response=await put(h,before,[{fieldKey:'taxType',optionId:null,value:'면세'}]);assert.equal(response.status,200);
-  const content=h.load('app/product-content.ts').emptyProductContent('product');content.revision=1;content.updatedAt=version;
-  content.seo.title.value='수정된 SEO 상품명';content.seo.keywords.value=['검색어'];content.seo.description.value='SEO 설명';content.detail.description.value='수정 상세 설명';
-  for(const role of ['main','additional','detail','label'])content.assets[role].value=['owner/image.png'];
-  content.label.countryOfOrigin.value='확인 제조국';
-  h.sqlite.prepare('INSERT INTO product_content VALUES(?,?,?,?,?)').run('product','owner',1,JSON.stringify(content),version);
+  await patchContent(h,{seo:{title:'수정된 SEO 상품명',keywords:['검색어'],description:'SEO 설명'},
+    detail:{description:'수정 상세 설명'},label:{countryOfOrigin:'확인 제조국'},assets});
   const optionsModel=h.load('app/product-options.ts');
   const options=optionsModel.applyOptionRows(optionsModel.emptyProductOptions('product'),[{...optionsModel.emptyOptionInput('one'),unitCostCny:4,included:true,unitsPerPack:2}],version);
   h.sqlite.prepare('INSERT INTO product_options VALUES(?,?,?,?,?)').run('product','owner',1,JSON.stringify(options),version);
   const view=await get(h);assert.notEqual(view.inputFingerprint,before.inputFingerprint);
   const row=view.resolved.rows.find(row=>row.optionId==='one');
   for(const [id,value] of Object.entries({title:'수정된 SEO 상품명',searchTags:'검색어',quantity:'2',taxType:'면세',noticeCountryOfOrigin:'확인 제조국'}))assert.equal(row.fields[id].value,value);
-  for(const id of ['mainImage','additionalImages','detailImages','labelImages'])assert.equal(row.fields[id].value,'owner/image.png');
+  for(const [id,role] of [['mainImage','main'],['additionalImages','additional'],['detailImages','detail'],['labelImages','label']])assert.equal(row.fields[id].value,assets[role][0]);
   assert.match(row.fields.detailHtml.value,/수정 상세 설명/);assert.equal(row.fields.supplyPrice.source,'pricing');
   const exports=h.load('app/exports/quotation-source.ts');const saved=await exports.readQuotationExportSource('owner','product',null);
   assert.deepEqual(JSON.parse(JSON.stringify(exports.resolveQuotationExport(saved))),view.resolved);
@@ -250,7 +257,7 @@ test('SQLite save compares product, image, price-policy, content, options and se
     db=>db.prepare('UPDATE products SET updated_at=?').run('2999-01-02T00:00:00.000Z'),
     db=>db.prepare('UPDATE products SET image_keys=?').run('[]'),
     db=>db.prepare('INSERT INTO product_price_policy VALUES (?,?)').run('product','{"changed":true}'),
-    db=>db.prepare('INSERT INTO product_content VALUES (?,?,?,?,?)').run('product','owner',1,'{}',version),
+    db=>db.prepare('UPDATE product_content SET revision=revision+1 WHERE product_id=? AND owner_id=?').run('product','owner'),
     db=>db.prepare('INSERT INTO product_options VALUES (?,?,?,?,?)').run('product','owner',1,'{}',version),
     db=>db.prepare('INSERT INTO workspace_settings VALUES (?,?,?)').run('owner','{"changed":true}',version),
   ]){const h=await harness();try{mutate(h.sqlite);assert.equal(await h.store.saveQuotationFields('owner','product',{common:{title:'stale'},options:{}},0,baseGuard()),null);assert.equal((await h.store.readQuotationFields('owner','product')).revision,0);}finally{h.sqlite.close();}}
@@ -367,7 +374,7 @@ test('legacy unclassified edits remain recoverable and never silently enter a kn
 
 test('legacy selection can be saved to one category while legacy source and other category remain unchanged',async()=>{
  const h=await harness();try{
-  await h.store.saveQuotationFields('owner','product',{common:{brand:'검토할 이전값'},options:{}},0,baseGuard());
+  assert.ok(await h.store.saveQuotationFields('owner','product',{common:{brand:'검토할 이전값'},options:{}},0,baseGuard()));
   const a=await profile(h,'80719'),b=await profile(h,'77442');const view=await get(h,a.id);
   assert.equal(view.legacyOverrides.common.brand,'검토할 이전값');assert.equal(view.overrides.common.brand,undefined);
   const response=await put(h,view,[{fieldKey:'brand',optionId:null,value:view.legacyOverrides.common.brand}],a.id);assert.equal(response.status,200);

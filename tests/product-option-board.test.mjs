@@ -5,8 +5,19 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
 import {renderToStaticMarkup} from 'react-dom/server';
+import {stageRefreshDOM} from './helpers/stage-refresh-dom.mjs';
 const native=createRequire(import.meta.url);
-function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,fetch,AbortController,require(name){if(name.endsWith('.css'))return{};if(name in overrides)return overrides[name];if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);}});return exports;}
+function load(file,overrides={},modules=new Map()){
+ if(modules.has(file))return modules.get(file);
+ const exports={};modules.set(file,exports);
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,fetch,AbortController,require(name){
+  if(name.endsWith('.css'))return{};
+  if(name in overrides)return overrides[name];
+  if(name.startsWith('@/'))return name.endsWith('.mjs')?native('../'+name.slice(2)):load(name.slice(2)+'.ts',{},modules);
+  return native(name);
+ }});
+ return exports;
+}
 const boardFields=[...['title','mainImage','additionalImages','detailImages','labelImages'].map(id=>({id,section:id==='title'?'start':'image',visibility:'common',type:id==='title'?'text':'images',required:false})),...['supplyPrice','salePrice','msrp'].map(id=>({id,section:'product',visibility:'common',type:'number',required:false}))];
 function quotation(contentRevision=undefined,imageKeys=['owner/red.png','owner/shared.png','owner/source.png','owner/size.png'],content={},options=data){const assets=content.assets??{},keys=role=>assets[role]?.value??[];return {productVersion:options.productVersion,optionRevision:options.options.revision,contentRevision,imageKeys,resolved:{schema:{categoryId:'80719',categoryPath:['바스켓'],fields:boardFields},rows:options.options.rows.map(row=>({optionId:row.id,fields:{supplyPrice:{value:'4100'},salePrice:{value:'6200'},title:{value:content.seo?.title.value??''},mainImage:{value:(row.imageKey?[row.imageKey]:keys('main')).join('\n')},additionalImages:{value:keys('additional').join('\n')},detailImages:{value:[...keys('detailTop'),...keys('detail'),...keys('detailBottom')].join('\n')},labelImages:{value:keys('label').join('\n')}}}))}};}
 const model=load('app/components/product-option-board.tsx');
@@ -15,6 +26,25 @@ test('option board preserves the server required-size pending status when no cha
  const summary=load('app/registration-stage-status.ts').pendingRegistrationStages();summary.sizeChart={state:'pending',detail:'이 카테고리는 사이즈표가 필요합니다.'};
  const result=tree('',undefined,{...data,commonAssets:{size:[]},registrationStages:summary},[],undefined,0,{stage:true});
  const button=nodes(result.tree).find(node=>node.type==='button'&&node.props['aria-label']==='옵션 red 사이즈표 편집');assert.ok(button);assert.equal(button.props['data-stage-state'],'pending');assert.equal(text(button),'대기');
+});
+test('cold option board starts all three scoped GETs before any response arrives',async()=>{
+ const base='/api/products/p1',paths=[`${base}/options`,`${base}/content`,`${base}/quotation-fields`];
+ const content={productId:'p1',schemaVersion:1,revision:2,assets:{main:{value:[]}}};
+ const {promise:held,resolve:release}=Promise.withResolvers();
+ const requests=[],signal=new AbortController().signal;
+ const loading=model.readOptionBoard('p1',signal,async(url,init)=>{
+  requests.push({url,init});
+  await held;
+  return Response.json(url===paths[0]?data:url===paths[1]?{content}:quotation(content.revision));
+ });
+ await new Promise(setImmediate);
+ const started=[...requests];
+ release();
+ const board=await loading;
+ assert.deepEqual(started.map(request=>request.url),paths);
+ assert.ok(started.every(({init})=>(init.method??'GET')==='GET'&&init.cache==='no-store'&&init.signal===signal));
+ assert.equal(new Headers(started[1].init.headers).get('x-yoofam-option-image-stages'),'v1');
+ assert.equal(board.options.productId,'p1');
 });
 test('option board identifies each failed read without displaying platform HTML, private bodies or parser messages',async()=>{
  const paths=['options','content','quotation-fields'],content={productId:'p1',schemaVersion:1,assets:{main:{value:[]}}},before=JSON.stringify(data);
@@ -27,7 +57,7 @@ test('option board identifies each failed read without displaying platform HTML,
    assert.ok(error.message.includes('GET /api/products/:id/'+stage));assert.ok(error.message.includes('HTTP '+status));assert.ok(error.message.includes(reason));assert.ok(error.message.length<300);
    assert.doesNotMatch(error.message,/PRIVATE_|DOCTYPE|Unexpected|p1|owner\//);if(status===503)assert.doesNotMatch(error.message,/로그인/);return true;
   });
-  assert.deepEqual(requests,paths.slice(0,paths.indexOf(stage)+1).map(path=>'/api/products/p1/'+path));
+  assert.deepEqual(requests,paths.map(path=>'/api/products/p1/'+path));
  }
  assert.equal(JSON.stringify(data),before);
  const recovered=await model.readOptionBoard('p1',new AbortController().signal,async url=>Response.json(url.endsWith('/options')?data:url.endsWith('/content')?{content}:quotation()));
@@ -36,7 +66,29 @@ test('option board identifies each failed read without displaying platform HTML,
 test('option board propagates an interrupted JSON body without replacing it with a login diagnosis',async()=>{
  const controller=new AbortController(),abort=new DOMException('Stopped','AbortError');let requests=0;
  await assert.rejects(model.readOptionBoard('p1',controller.signal,async()=>{requests++;return {ok:true,status:200,headers:new Headers({'content-type':'application/json'}),json:async()=>{controller.abort();throw abort;}};}),error=>error===abort);
- assert.equal(requests,1);
+ assert.equal(requests,3);
+});
+test('mounted board aborts pending sibling reads on a current failure and retires a hidden retry silently',async()=>{
+ const {promise:content,resolve:failContent}=Promise.withResolvers(),requests=[];
+ let firstContent=true;
+ const dom=await stageRefreshDOM(async(url,{signal})=>{
+  requests.push(signal);
+  if(url.endsWith('/content')&&firstContent){firstContent=false;return content;}
+  return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+ });
+ try{
+  const Board=dom.load('app/components/product-option-board.tsx').ProductOptionBoard;
+  const props={productId:'p1',sourceUrl:'https://app.test/',imageKeys:'[]',active:true,onQuotation(){},onEdit(){}};
+  const alert=()=>dom.container.querySelector('[role="alert"]');
+  await dom.render(Board,props);assert.equal(requests.length,3);
+  await dom.React.act(async()=>failContent(Response.json({error:'공통 상품 자료를 불러오지 못했습니다.'},{status:503})));
+  await dom.settle();assert.equal(alert()?.textContent,'공통 상품 자료를 불러오지 못했습니다.');
+  assert.ok(requests.every(signal=>signal.aborted),'the current failure cancels its pending siblings');
+  const retry=[...dom.container.querySelectorAll('button')].find(button=>button.textContent==='새로고침');assert.ok(retry);
+  await dom.React.act(async()=>retry.click());await dom.settle();
+  assert.equal(requests.length,6);assert.equal(requests[3].aborted,false);assert.equal(alert(),null);
+  await dom.render(Board,{...props,active:false});assert.ok(requests.every(signal=>signal.aborted));assert.equal(alert(),null);
+ }finally{await dom.close();}
 });
 test('option board fetch checks product identity and propagates abort signal',async()=>{
  const signal=new AbortController().signal;const requests=[];
@@ -85,13 +137,13 @@ test('persisted option registration display survives search, reorder and deletio
  for(const options of [data,{...data,optionRegistrationNumbers:{red:'261015007001'}}])assert.equal(text(nodes(tree('sku-blue',undefined,options,[],undefined,0,features).tree).find(node=>node.type==='td'&&node.props['data-column']==='id')),'bluesku-blue');
 });
 
-test('option response validates persisted number maps and parent prefix before loading any content snapshot',async()=>{
+test('option board rejects invalid persisted number maps and parent prefixes',async()=>{
  const signal=new AbortController().signal,parent='261015007001',content={productId:'p1',schemaVersion:1,assets:{main:{value:[]}}};
  const read=async(body,parentNumber=parent)=>{const requests=[];const fetcher=async url=>{requests.push(url);return Response.json(url.endsWith('/options')?body:url.endsWith('/content')?{content}:quotation(undefined,undefined,content,body));};return{requests,result:await model.readOptionBoard('p1',signal,fetcher,parentNumber)};};
  const sparse={...data,optionRegistrationNumbers:{blue:'261015007002'}},received=await read(sparse);assert.equal(received.result.optionRegistrationNumbers.blue,'261015007002');assert.equal(Object.hasOwn(received.result.optionRegistrationNumbers,'red'),false);
  assert.equal(Object.hasOwn((await read(data)).result,'optionRegistrationNumbers'),false);
  for(const optionRegistrationNumbers of [null,[],1,{blue:261015007002},{blue:'26101500700'},{blue:'261015007002\n'},{blue:'261015007000'},{foreign:'261015007003'},{red:'261015007001',blue:'261015007001'},{blue:'261015008002'},{red:'261015007001',blue:'261014007002'}]){
-  const requests=[];await assert.rejects(model.readOptionBoard('p1',signal,async url=>{requests.push(url);return Response.json({...data,optionRegistrationNumbers});},parent),/옵션 등록번호/);assert.deepEqual(requests,['/api/products/p1/options']);
+  const requests=[];await assert.rejects(model.readOptionBoard('p1',signal,async url=>{requests.push(url);return Response.json({...data,optionRegistrationNumbers});},parent),/옵션 등록번호/);assert.deepEqual(requests,['/api/products/p1/options','/api/products/p1/content','/api/products/p1/quotation-fields']);
  }
  await assert.rejects(read(sparse,'bad-parent'),/옵션 등록번호/);
 });

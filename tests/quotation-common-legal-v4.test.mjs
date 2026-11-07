@@ -33,6 +33,92 @@ test('existing v3 plan/request/result bytes and per-option legal colors remain e
  assert.equal(hash({...plan,createdAt:null}),'5c9c20214a3c300e791aeba9347bc555580ea98e2ae567c800052779dc0dab57');assert.equal(hash(p.requests),'073b217affba167edd827454751731b1b72b76c04b0299428d1cba8634c212c6');assert.equal(hash({...result,generatedAt:null}),'11de49b0d33ce5feb75f25902a6a94585fe0d5afb99ebfeeea56eee2e0a58369');
 });
 
+test('v4 saves and rereads an unresolved Han legal material as a detail reference on the recorded wire',async()=>{
+ const {quotationAiApiFixture}=await import('./helpers/quotation-ai-api.mjs'),f=await quotationAiApiFixture();
+ const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
+ try{
+  const source=fixture(),profiles=f.h.load('db/category-profiles.ts'),profile=await profiles.getCategoryProfile('owner',f.profile.id);
+  assert.ok(await profiles.updateCategoryProfile('owner',profile.id,profile.revision,{...profile,hubSchema:source.snapshot}));
+  const store=f.h.load('db/product-content.ts'),beforeContent=await store.readProductContent('owner',f.id);
+  const content=f.h.load('app/product-content.ts').applyContentPatch(beforeContent,{seo:{description:'합성 제품 안내'}},new Date().toISOString());
+  const {getQuotationSchema}=f.h.load('app/quotation-schema.ts'),schema=getQuotationSchema(source.snapshot.categoryId,source.snapshot.categoryPath,source.snapshot);
+  const material=schema.fields.find(field=>field.label==='제품 소재');
+  assert.deepEqual(plain(material.hubWire),{path:['legalPage','notices'],nameKey:'noticeItemName',valueKey:'noticeItemValue',name:'제품 소재'});
+  assert.equal(material.type,'text');
+  content.initialLegalNotices=f.h.load('app/initial-legal-notices.ts').createInitialLegalNotices(schema,{},new Date().toISOString());
+  assert.ok(await store.saveProductContent('owner',content,beforeContent.revision));
+  const endpoint=f.base+'/quotation-fields'+f.query,read=()=>f.h.route(endpoint).then(json);
+  const save=(view,body)=>f.h.route(endpoint,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,...body}}).then(json);
+  const before=await read(),included=before.resolved.rows.filter(row=>row.included);
+  assert.ok(included.length>0);
+  assert.ok(included.every(row=>row.fields[material.id].value==='해당사항없음'&&row.fields[material.id].source==='couplus-default'));
+  let materialReply;
+  f.setProvider({async run(_model,input){
+   const request=JSON.parse(input.messages[1].content);
+   const changes=materialReply&&request.fields.some(field=>field.id===material.id)?[{fieldKey:material.id,value:materialReply}]:[];
+   return {response:JSON.stringify(request.task==='ANALYZE_SCHEMA_ATTRIBUTES'?{differentiatedFieldIds:[]}:{changes})};
+  }});
+  const generate=async()=>{
+   const view=await json(await f.request(undefined,'GET'));
+   const {job}=await json(await f.request(f.requestBody(view)));
+   assert.equal(job.generationPolicy,policy);
+   assert.deepEqual(job.generationFacts.material,[]);
+   return {job,fingerprint:view.fingerprint};
+  };
+  const {job:omitted}=await generate();
+  assert.deepEqual(omitted.result.changes,[]);
+  materialReply='不明材质';
+  const {job,fingerprint}=await generate();
+  const expected=included.map(row=>({optionId:row.optionId,fieldKey:material.id,value:'상세설명 참조'}));
+  assert.deepEqual(job.result.changes,expected);
+  const client=f.h.load('app/quotation-ai-client.ts');
+  assert.deepEqual(plain(client.quotationAiProposalChanges(before,job,fingerprint)),expected);
+  const adopted=await save(before,{changes:[],generatedAdoption:{jobId:job.id,targets:expected.map(({optionId,fieldKey})=>({optionId,fieldKey}))}});
+  const readback=await read();
+  f.h.load('app/quotation-fields-confirmation.ts').confirmGeneratedQuotationSave(before,adopted,[],expected,job.id,readback);
+  const cleared=await save(readback,{changes:[{optionId:null,fieldKey:material.id,value:''}]});
+  assert.ok(cleared.resolved.rows.filter(row=>row.included).every(row=>row.fields[material.id].value===''&&row.fields[material.id].source==='manual-common'));
+  assert.deepEqual((await generate()).job.result.changes,[]);
+  const manual=await save(cleared,{changes:[{optionId:included[0].optionId,fieldKey:material.id,value:'검토한 재질'}]});
+  assert.equal(manual.resolved.rows.find(row=>row.optionId===included[0].optionId).fields[material.id].value,'검토한 재질');
+  assert.deepEqual((await generate()).job.result.changes,[]);
+  assert.deepEqual(f.h.network,[]);
+ }finally{f.close();}
+});
+
+test('v4 material detail reference keeps exact wire, scalar and independent evidence guards',async()=>{
+ const f=fixture(),m=aiModule(),client=providedOptionModule('app/quotation-ai-client.ts'),reference='상세설명 참조';
+ const build=(generationPolicy=policy)=>m.buildQuotationAiPlan(f.saved,f.scope,undefined,generationPolicy);
+ const plan=build(),material=plan.fields.find(field=>field.label==='제품 소재'),facts=client.quotationAiGenerationFacts(plan.facts);
+ const optionId=plan.targets[0].optionId;
+ assert.equal(client.quotationAiGenerationIssue(material,optionId,reference,facts,policy),null);
+ assert.ok(client.quotationAiGenerationIssue(material,optionId,'실리콘',facts,policy));
+ for(const field of [
+  {...material,hubWire:{...material.hubWire,valueKey:'noticeContent'}},
+  {...material,label:'재질',hubWire:{...material.hubWire,name:'재질'}},
+  {...material,section:'product',hubWire:{path:['productPage','commonAttributes','exposedAttributes'],name:'제품 소재',nameKey:'attributeName',valueKey:'attributeValue'}},
+  {...material,type:'select',choices:[{value:reference,label:reference}]},
+  {...material,maxLength:2},
+  {...material,numericText:true},
+ ]){
+  assert.equal(client.quotationAiLegalMaterialReference(field,facts,policy),undefined);
+ }
+ for(const legacy of [client.LEGACY_QUOTATION_GENERATION_POLICY,client.RECEIPT_QUOTATION_GENERATION_POLICY,client.CANONICAL_QUOTATION_GENERATION_POLICY]){
+  const result=await m.executeQuotationAi(build(legacy),provider({material:'不明材质'}));
+  assert.ok(result.changes.every(change=>change.fieldKey!==material.id));
+ }
+ f.content.label.material={value:'涤纶',provenance:'collected',updatedAt:f.product.created_at};
+ const canonicalPlan=build(),canonical=await m.executeQuotationAi(canonicalPlan,provider({material:'不明材质'}));
+ assert.ok(client.quotationAiGenerationIssue(material,optionId,reference,client.quotationAiGenerationFacts(canonicalPlan.facts),policy));
+ assert.deepEqual(plain(canonical.changes.filter(change=>change.fieldKey===material.id).map(change=>change.value)),Array(6).fill('폴리에스테르'));
+ f.content.seo.description={value:'재질: 면\n재질: 폴리에스테르',provenance:'collected',updatedAt:f.product.created_at};
+ const conflictPlan=build(),conflictFacts=client.quotationAiGenerationFacts(conflictPlan.facts);
+ assert.ok(conflictFacts.material.some(fact=>fact.provenance==='detail-conflict'));
+ assert.ok(client.quotationAiGenerationIssue(material,optionId,reference,conflictFacts,policy));
+ const conflict=await m.executeQuotationAi(conflictPlan,provider({material:'不明材质'}));
+ assert.ok(conflict.changes.every(change=>change.fieldKey!==material.id));
+});
+
 test('actual saved multicolor job shares legal notices through apply without rewriting product colors',async()=>{
  const {quotationAiApiFixture}=await import('./helpers/quotation-ai-api.mjs');const f=await quotationAiApiFixture();const json=async(r,status=200)=>{assert.equal(r.status,status,await r.clone().text());return r.json();};
  try{

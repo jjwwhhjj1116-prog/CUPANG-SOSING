@@ -72,6 +72,13 @@ export function quotationAiCommonLegalField(field:QuotationField):boolean{
   return field.section==='legal'&&field.visibility==='common'&&wire?.path.join('.')==='legalPage.notices'
     &&wire.nameKey==='noticeItemName'&&['noticeItemValue','noticeContent'].includes(wire.valueKey??'')&&wire.name===field.label;
 }
+export function quotationAiLegalMaterialReference(field: QuotationField, facts: QuotationGenerationFacts, generationPolicy?: string): string | undefined {
+  const reference = '상세설명 참조';
+  if (generationPolicy === QUOTATION_GENERATION_POLICY && facts.material.length === 0 && field.label === '제품 소재'
+    && quotationAiCommonLegalField(field) && field.hubWire?.valueKey === 'noticeItemValue' && writableAiField(field)
+    && (field.type === 'text' || field.type === 'textarea') && !field.choices && !field.numericText && !field.numericValue
+    && !quotationValueIssues(field, reference).length) return reference;
+}
 // Existing shipped color translations provide negative evidence even when that color is not selected.
 const legalColorTranslations=Object.entries(seoCurrentLiterals.removeChineseDictionary).flatMap(([raw,word])=>{
   const reference=quotationAiColorReference({optionId:null,color:raw,translatedName:''});
@@ -111,6 +118,7 @@ export function quotationAiCommonLegalIssue(fields:readonly QuotationField[],cha
 /** Negative evidence checks do not certify translated names as actual product facts. */
 export function quotationAiGenerationIssue(field: QuotationField, optionId: string | null, value: string, facts: QuotationGenerationFacts, generationPolicy?:string): string | null {
   if (quotationAiMaterialField(field)) {
+    if (value === quotationAiLegalMaterialReference(field, facts, generationPolicy)) return null;
     if(generationPolicy===QUOTATION_GENERATION_POLICY||generationPolicy===CANONICAL_QUOTATION_GENERATION_POLICY){const expected=quotationAiCanonicalMaterial(field,facts);if(expected!==undefined&&value!==expected)return '원문 재질의 정규화 값과 제안값이 다릅니다.';}
     const priority = productFactPriorityIssue(value, 'material', '', facts.material);
     if (priority || unsupportedProductMaterial(value, facts.material.map(pair => pair.value).join('\n'), true)) return priority ?? '상품 원문의 명시된 재질 근거를 확인해주세요.';

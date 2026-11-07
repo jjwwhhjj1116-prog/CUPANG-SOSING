@@ -1,4 +1,4 @@
-import { CANONICAL_QUOTATION_GENERATION_POLICY, quotationAiCommonLegalIssue, QUOTATION_GENERATION_POLICY, RECEIPT_QUOTATION_GENERATION_POLICY, quotationAiCanonicalMaterial, quotationAiGenerationFacts, quotationAiGenerationIssue, quotationAiOptionColorNotice, quotationAiColorReference, validQuotationGenerationPolicy, type QuotationGenerationPolicy } from '@/app/quotation-ai-client';
+import { CANONICAL_QUOTATION_GENERATION_POLICY, quotationAiCommonLegalIssue, QUOTATION_GENERATION_POLICY, RECEIPT_QUOTATION_GENERATION_POLICY, quotationAiCanonicalMaterial, quotationAiGenerationFacts, quotationAiGenerationIssue, quotationAiLegalMaterialReference, quotationAiOptionColorNotice, quotationAiColorReference, validQuotationGenerationPolicy, type QuotationGenerationPolicy } from '@/app/quotation-ai-client';
 import {CURRENT_QUOTATION_RESULT_POLICY,currentAttributeRules,normalizeCurrentAttributeNumber,mandatoryHiddenProblems,type AttributeRule} from '@/app/current-quotation-attribute-rules';
 import type { QuotationExportSource } from '@/app/exports/quotation-source';
 import { getQuotationSchema, resolveQuotationFields, quotationGeneratedSourceWritable, type QuotationField } from '@/app/quotation-schema';
@@ -327,7 +327,13 @@ export async function executeQuotationAi(plan: QuotationAiPlan, ai: QuotationAiP
         }
         if(field.group==='hidden'&&(rule?.generationMandatory||rule?.applyRequired)&&typeof value==='string'&&(!value.trim()||/[㐀-䶿一-鿿豈-﫿]/u.test(value)))fail('AI_MANDATORY_UNEXPOSED',`${field.label}: 필수 비노출 속성을 확인해주세요.`);
       }
-      const untranslated = typeof value === 'string' && /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u.test(value);
+      let untranslated = typeof value === 'string' && /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u.test(value);
+      const materialReference = untranslated && generationFacts ? quotationAiLegalMaterialReference(field, generationFacts, plan.generationPolicy) : undefined;
+      if (materialReference !== undefined) {
+        value = materialReference;
+        untranslated = false;
+        warnings.push(`${field.label}: 번역되지 않은 재질을 상세설명 참조로 표시했습니다.`);
+      }
       let evidence: string | null = null;
       if(typeof value === 'string' && plan.facts.preferredAttributes){
         const notice=quotationNoticeInput(field),key=field.contentField??(notice?noticeLabels[notice]:undefined)??productFactKey(field.hubWire?.name??field.label);
