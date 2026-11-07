@@ -31,6 +31,7 @@ import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence
 import { quotationPriceInputs, quotationPriceTargets, quotationIndependentOptionalOsrp } from '@/app/quotation-price-targets';
 import { quotationSeoDocumentTitle } from '@/app/seo-title-document';
 import { isProductSizeAttribute, matchingSellingQuantity, productSizeValue, proposeProductName, supplierHubDisplayedProductName, supplierHubProductNameIssue, type ProductNameProposal } from '@/app/product-name-proposal';
+import { quotationOptionNameColor } from '@/app/quotation-option-color';
 import { registrationBrandChoices } from '@/app/quotation-brand-choices';
 import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
 import { productLabelFields, validateProductLabelOverrides, validateProductLabelStructure, type ProductLabelsState, type ProductLabelFixedKey } from '@/app/product-label';
@@ -812,6 +813,11 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
       const generated = input.generatedAdoption?.entries.find(entry => entry.optionId === optionId && entry.fieldKey === definition.id);
       if (generated && quotationGeneratedSourceWritable(automatic.source) && !automatic.issues?.length
         && !quotationValueIssues(definition, generated.value, ownedKeys).length) automatic = { value: generated.value, source: 'generated' };
+      if (option && !option.color?.trim() && option.provenance.color !== 'manual' && automatic.source === 'empty' && !automatic.issues?.length
+        && schema.status === 'observed' && definition.required && !definition.readOnly && definition.label === '색상' && isNamedExposedOption(definition)) {
+        const color = quotationOptionNameColor(option.originalName, option.translatedName, definition.choices);
+        if (color && !quotationValueIssues(definition, color, ownedKeys).length) automatic = literal(color, 'option');
+      }
       const preset = couplusQuotationDefault(schema.categoryId, definition);
       if (automatic.source === 'empty' && !automatic.issues?.length && preset !== undefined) automatic = {
         value: preset, source: 'couplus-default',

@@ -1,6 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+
+test('current recommendation keeps pen holder aliases and drops different items without changing legacy approvals',async()=>{
+ const h=mobileIntakeHarness();try{
+  const policyModule=h.load('app/seo-current-policy.ts'),translation=h.load('app/automation/translation.ts');
+  const source={title:'桌面笔筒',description:'',attributes:[{name:'option:one',value:'纯白笔筒'}],provenance:'manual',reference:'1688',category:{id:'80025',path:['문구/오피스','펜홀더/연필꽂이']}};
+  const keywords=['펜홀더','연필꽂이','펜클립','책갈피','펜꽂이','책상 펜 정리함','북마크 포함 펜홀더'];
+  const memo={brand:'유앤채',features:'책상 정리',keywords:'펜홀더'};
+  const related={source:'consumer',query:'펜홀더',keywords,warnings:[]};
+  const legacy=policyModule.validateSeoCompositionPolicy({version:'couplus-current-composition-v1',memo,related});
+  const current=policyModule.validateSeoCompositionPolicy({version:'couplus-current-composition-v2',memo,related});
+  const config={provider:'workers-ai',model:translation.WORKERS_QWEN_MODEL,maxOutputTokens:4096,apiKey:''};
+  const request=async policy=>translation.buildTranslationRequest(await translation.prepareTranslationReview(source,config,new Date(),policy));
+  assert.match((await request(current)).instructions,/같은 상품을 찾는/);
+  assert.doesNotMatch((await request(legacy)).instructions,/같은 상품을 찾는/);
+  const draft={title:'책상 펜홀더',description:'',keywords,attributes:[],warnings:[]};
+  const result=policyModule.guardCurrentSeoDraft(draft,source,current);
+  assert.deepEqual(Array.from(result.keywords),['펜홀더','연필꽂이','펜꽂이','책상 펜 정리함']);
+  assert.deepEqual(Array.from(policyModule.guardCurrentSeoDraft(draft,source,legacy).keywords),keywords);
+  assert.deepEqual(Array.from(current.related.keywords),keywords);
+  assert.deepEqual(Array.from(policyModule.guardCurrentSeoDraft(draft,{...source,category:{id:'1',path:['책갈피']}},current).keywords),keywords);
+  const bundle=policyModule.guardCurrentSeoDraft(draft,{...source,title:'桌面笔筒 附赠书签'},current);
+  assert.ok(bundle.keywords.includes('북마크 포함 펜홀더'));
+  assert.ok(!bundle.keywords.includes('책갈피'));
+ }finally{h.close();}
+});
 test('new composition prompts 70, related preferences stay out of source facts, legacy prompt unchanged',async()=>{
  const h=mobileIntakeHarness();try{const t=h.load('app/automation/translation.ts'),p=h.load('app/seo-current-policy.ts');const source={title:'袜子',description:'',attributes:[{name:'option:one',value:'白色 长筒 2个'}],provenance:'manual',reference:'inert',category:{id:'1',path:['양말']}};
  const config={provider:'workers-ai',model:t.WORKERS_QWEN_MODEL,maxOutputTokens:4096,apiKey:''},old=await t.prepareTranslationReview(source,config),before=t.buildTranslationRequest(old);

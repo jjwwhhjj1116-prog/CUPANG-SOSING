@@ -1,9 +1,11 @@
 import { GOOGLE_TEXT_MODEL, WORKERS_TEXT_MODEL, WORKERS_QWEN_MODEL, translationAttributeCoverage, validateTranslationSource, type TranslationJob } from '@/app/automation/translation';
 import { runReviewedTranslation } from '@/app/reviewed-translation';
 import { awaitIntakeTranslation } from '@/app/intake-translation-result';
+import { acquireSeoComposition } from '@/app/seo-related-keywords-client';
+import type { SeoCompositionPolicy } from '@/app/seo-current-policy';
 
 /** User-started intake produces editable content; never submits to Supplier Hub. */
-export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch, signal: AbortSignal, onCompleted: () => void = () => {}, onReviewRequired: () => void = () => {}, onManualReady: () => void = () => {}) {
+export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch, signal: AbortSignal, onCompleted: () => void = () => {}, onReviewRequired: () => void = () => {}, onManualReady: () => void = () => {}, intakeSeoMemo?: SeoCompositionPolicy['memo']) {
   if (signal.aborted) return '';
   let generating = false;
   // Keep source-review warnings visible at the entry point as well as in the
@@ -61,13 +63,25 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
   };
   try {
     const base = `/api/products/${encodeURIComponent(productId)}`;
-    let next: Record<string,unknown> = {action:'prepare-collected',intake:true};
+    const request = async (payload: Record<string,unknown>) => {
+      const response = await fetcher(`${base}/translation`, {
+        method: 'POST', signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      const body = await response.json() as { job?: TranslationJob; error?: string; remainingOptions?: number; autoDraft?: boolean; intakePreserved?: boolean; intakeSourceChanged?:boolean; productVersion?:string; productId?:string; done?:boolean; optionsOnly?:boolean; applyVersion?:string; intakeSeoMemo?:unknown };
+      return { response, body };
+    };
+    let next: Record<string,unknown> = {action:'prepare-collected',intake:true,...(intakeSeoMemo ? {lookupSeoKeywords:true} : {})};
     let appliedAny=false;
     for(let batch=0;batch<14;batch++){
-    const response = await fetcher(`${base}/translation`, {
-      method: 'POST', signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify(next),
-    });
-    const body = await response.json() as { job?: TranslationJob; error?: string; remainingOptions?: number; autoDraft?: boolean; intakePreserved?: boolean; intakeSourceChanged?:boolean; productVersion?:string; productId?:string; done?:boolean; optionsOnly?:boolean; applyVersion?:string };
+    let { response, body } = await request(next);
+    if (signal.aborted) return '';
+    if (body.intakeSeoMemo !== undefined) {
+      if (!response.ok || body.productId !== productId || !intakeSeoMemo || next.lookupSeoKeywords !== true
+        || JSON.stringify(body.intakeSeoMemo) !== JSON.stringify(intakeSeoMemo)) throw Error('저장된 수집 SEO 참고 입력이 변경되었습니다.');
+      const seoComposition = await acquireSeoComposition(intakeSeoMemo, signal, () => !signal.aborted);
+      if (signal.aborted) return '';
+      ({ response, body } = await request({action:'prepare-collected',intake:true,seoComposition}));
+    }
     if (signal.aborted) return '';
     if(response.ok && body.done === true && next.action==='prepare-intake-options' && typeof next.expectedVersion==='string'
       && body.productId===productId && body.productVersion===next.expectedVersion){
@@ -195,8 +209,8 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
 }
 
 /** Message text is never evidence that all pending draft fields were saved. */
-export async function prepareIntakeSeoOutcome(productId: string, fetcher: typeof fetch, signal: AbortSignal) {
+export async function prepareIntakeSeoOutcome(productId: string, fetcher: typeof fetch, signal: AbortSignal, intakeSeoMemo?: SeoCompositionPolicy['memo']) {
   let completed = false, reviewRequired = false, manualReady = false;
-  const message = await prepareIntakeSeo(productId, fetcher, signal, () => { completed = true; }, () => { reviewRequired = true; }, () => { manualReady = true; });
+  const message = await prepareIntakeSeo(productId, fetcher, signal, () => { completed = true; }, () => { reviewRequired = true; }, () => { manualReady = true; }, intakeSeoMemo);
   return { completed, reviewRequired, manualReady, message };
 }

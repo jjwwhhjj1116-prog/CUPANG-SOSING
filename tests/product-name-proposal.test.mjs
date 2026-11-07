@@ -75,6 +75,95 @@ test('new Hub submissions reject placeholder title values without touching archi
   assert.equal(supplierHubDisplayedProductName(document), base + ' 그린 Free 1개');
 });
 
+test('a color in the option name fills the required exposed field and native title without overriding saved choices', () => {
+  const snapshot = syntheticSnapshot(), raw = JSON.parse(snapshot.schemaString);
+  const colorSchema = raw.properties.productPage.properties.commonAttributes.properties.exposedAttributes.allOf[0].contains.properties;
+  colorSchema.attributeValue = { type: 'string' };
+  snapshot.categoryId = '80025';
+  snapshot.nativeSerializationPolicy = 'supplier-hub-native-required-form-v1';
+  snapshot.schemaString = JSON.stringify(raw);
+  const title = '유앤채 다용도 책상 정리 펜홀더';
+  const content = module('app/product-content.ts').emptyProductContent('p1');
+  content.quotationWorkflow = 'collected-native-v1';
+  content.seo.title.value = title;
+  const optionsModel = module('app/product-options.ts'), model = module('app/quotation-schema.ts');
+  const options = optionsModel.applyOptionRows(optionsModel.emptyProductOptions('p1'), [
+    { ...optionsModel.emptyOptionInput('pen'), originalName: '纯白笔筒', translatedName: '순백색 펜통', included: true },
+  ], '2026-11-08T00:00:00Z');
+  const input = {
+    categoryId: snapshot.categoryId, categoryPath: snapshot.categoryPath, hubSchema: snapshot, content, options,
+    product: { id: 'p1', title, image_keys: '[]', supply_price: 1000, sale_price: 2000 },
+    settings: { ...module('app/workspace-settings.ts').defaultSettings, brand: '유앤채' },
+  };
+  const resolve = () => model.resolveQuotationFields(input);
+  const initial = resolve();
+  const color = initial.schema.fields.find(field => field.visibility === 'exposed' && field.hubWire?.name === '색상');
+  assert.equal(color.required, true);
+  assert.equal(initial.rows[0].fields[color.id].value, '');
+  assert.equal(initial.rows[1].fields[color.id].value, '화이트');
+  assert.deepEqual(plain(initial.rows[1].fields[color.id].validationIssues), []);
+  assert.equal(initial.rows[1].productNameProposal.value, title + ' 화이트');
+  assert.equal(options.rows[0].color, '');
+
+  // Preserve exact official wire values and do not guess an ambiguous or unavailable choice.
+  colorSchema.attributeValue.enum = ['흰색', '검정'];
+  snapshot.schemaString = JSON.stringify(raw);
+  assert.equal(resolve().rows[1].productNameProposal.value, title + ' 흰색');
+  colorSchema.attributeValue.enum = ['화이트', '흰색'];
+  snapshot.schemaString = JSON.stringify(raw);
+  assert.equal(resolve().rows[1].fields[color.id].value, '');
+  colorSchema.attributeValue.enum = ['검정'];
+  snapshot.schemaString = JSON.stringify(raw);
+  assert.equal(resolve().rows[1].fields[color.id].value, '');
+  delete colorSchema.attributeValue.enum;
+  snapshot.schemaString = JSON.stringify(raw);
+
+  options.rows[0].translatedName = '순백색 / 블랙 펜통';
+  assert.equal(resolve().rows[1].fields[color.id].value, '');
+  options.rows[0].translatedName = '블랙 펜통';
+  assert.equal(resolve().rows[1].fields[color.id].value, '');
+  options.rows[0].translatedName = '순백색 펜통';
+  options.rows[0].originalName = '白色/黑色笔筒';
+  assert.equal(resolve().rows[1].fields[color.id].value, '');
+  options.rows[0].originalName = '白色混色笔筒';
+  assert.equal(resolve().rows[1].fields[color.id].value, '');
+  options.rows[0].originalName = '粉色笔筒';
+  options.rows[0].translatedName = '';
+  assert.equal(resolve().rows[1].productNameProposal.value, title + ' 핑크');
+  options.rows[0].originalName = '黑色笔筒收纳';
+  options.rows[0].translatedName = '검은색 펜꽂이';
+  assert.equal(resolve().rows[1].productNameProposal.value, title + ' 블랙');
+  options.rows[0].originalName = '';
+  options.rows[0].translatedName = '펜통 (순백색)';
+  assert.equal(resolve().rows[1].productNameProposal.value, title + ' 화이트');
+  options.rows[0].translatedName = '오렌지 껍질 제거기';
+  assert.equal(resolve().rows[1].fields[color.id].value, '');
+  options.rows[0].translatedName = '펜통 (순백색)';
+  options.rows[0].originalName = '纯白笔筒';
+  options.rows[0].color = '검정';
+  options.rows[0].provenance.color = 'manual';
+  assert.equal(resolve().rows[1].productNameProposal.value, title + ' 검정');
+  options.rows[0].color = '';
+  assert.equal(resolve().rows[1].fields[color.id].value, '');
+  options.rows[0].provenance.color = 'unverified';
+  input.overrides = { common: {}, options: { pen: { [color.id]: '' } } };
+  const cleared = resolve().rows[1];
+  assert.equal(cleared.fields[color.id].source, 'manual-option');
+  assert.equal(cleared.fields[color.id].value, '');
+  assert.deepEqual(plain(cleared.productNameProposal.missing), ['색상']);
+  input.overrides.options.pen[color.id] = '검정';
+  assert.equal(resolve().rows[1].productNameProposal.value, title + ' 검정');
+  delete input.overrides;
+  delete content.quotationWorkflow;
+  options.rows[0].size = 'Free';
+  assert.equal(resolve().rows[1].productNameProposal.value, title + ' 화이트 Free 1개');
+  colorSchema.attributeName.enum = ['재질'];
+  snapshot.schemaString = JSON.stringify(raw);
+  const unrelated = resolve();
+  const material = unrelated.schema.fields.find(field => field.visibility === 'exposed' && field.hubWire?.name === '재질');
+  assert.equal(unrelated.rows[1].fields[material.id].value, '해당사항없음');
+});
+
 test('the preview follows the exposed order and preserves legitimate zero and false choices', () => {
   const document = { startPage: { productName: base }, productPage: {
     commonAttributes: { exposedAttributes: [option('형태', '원형'), option('수량', 0)] },

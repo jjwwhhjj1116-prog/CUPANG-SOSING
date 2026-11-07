@@ -6,6 +6,7 @@ import {seoCurrentLiterals} from '@/app/seo-current-literals';
 import type {TranslationSource,TranslationDraft} from '@/app/automation/translation';
 export class SeoFactEmptyError extends Error{code='SEO_FACT_EMPTY';}
 export const SEO_COMPOSITION_VERSION='couplus-current-composition-v1';
+export const CURRENT_SEO_COMPOSITION_VERSION='couplus-current-composition-v2';
 export const SEO_KEYWORD_CAPABILITY='couplus-consumer-keywords-v1';
 /** Generated acceptance only: replay identity checks must still reach closure. */
 export function assertGeneratedSeoTitle(title:string,brand:string){
@@ -19,16 +20,22 @@ export function assertGeneratedSeoTitle(title:string,brand:string){
  if(!/[가-힣A-Za-z]/u.test(product))throw new SeoFactEmptyError('SEO_FACT_EMPTY: 생성 상품명에 브랜드 외의 품목명이 남지 않았습니다. 원문과 직접 입력을 유지했습니다.');
 }
 export type SeoRelatedPreferences={source:'provided'|'consumer'|'unavailable'|'none';query:string;keywords:string[];warnings:string[];observedAt?:string};
-export type SeoCompositionPolicy={version:typeof SEO_COMPOSITION_VERSION;memo:{brand:string;features:string;keywords:string};related:SeoRelatedPreferences};
+export type SeoCompositionPolicy={version:typeof SEO_COMPOSITION_VERSION|typeof CURRENT_SEO_COMPOSITION_VERSION;memo:{brand:string;features:string;keywords:string};related:SeoRelatedPreferences};
 const exact=(value:unknown,keys:string):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===keys;
 const bounded=(value:unknown,max:number):value is string=>typeof value==='string'&&value.length<=max&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value);
 export function validateSeoCompositionPolicy(value:unknown):SeoCompositionPolicy{
- if(!exact(value,'memo,related,version')||value.version!==SEO_COMPOSITION_VERSION||!exact(value.memo,'brand,features,keywords')||!bounded(value.memo.brand,500)||!bounded(value.memo.features,2000)||!bounded(value.memo.keywords,2000)||(!exact(value.related,'keywords,query,source,warnings')&&!exact(value.related,'keywords,observedAt,query,source,warnings'))||!['provided','consumer','unavailable','none'].includes(String(value.related.source))||!bounded(value.related.query,200)||!Array.isArray(value.related.keywords)||value.related.keywords.length>1000||value.related.keywords.some(word=>!bounded(word,200)||!word.trim())||!Array.isArray(value.related.warnings)||value.related.warnings.length>4||value.related.warnings.some(word=>!bounded(word,300))||JSON.stringify(value).length>64000)throw Error('SEO 구성 입력 정책을 확인해주세요.');
+ if(!exact(value,'memo,related,version')||(value.version!==SEO_COMPOSITION_VERSION&&value.version!==CURRENT_SEO_COMPOSITION_VERSION)||!exact(value.memo,'brand,features,keywords')||!bounded(value.memo.brand,500)||!bounded(value.memo.features,2000)||!bounded(value.memo.keywords,2000)||(!exact(value.related,'keywords,query,source,warnings')&&!exact(value.related,'keywords,observedAt,query,source,warnings'))||!['provided','consumer','unavailable','none'].includes(String(value.related.source))||!bounded(value.related.query,200)||!Array.isArray(value.related.keywords)||value.related.keywords.length>1000||value.related.keywords.some(word=>!bounded(word,200)||!word.trim())||!Array.isArray(value.related.warnings)||value.related.warnings.length>4||value.related.warnings.some(word=>!bounded(word,300))||JSON.stringify(value).length>64000)throw Error('SEO 구성 입력 정책을 확인해주세요.');
  if(value.related.observedAt!==undefined&&(typeof value.related.observedAt!=='string'||value.related.observedAt.length>40||!Number.isFinite(Date.parse(value.related.observedAt))))throw Error('SEO 관련어 조회 시간을 확인해주세요.');
  const query=value.memo.keywords.trim();if(value.related.query!==(query.length<=200?query:''))throw Error('SEO 현재 메모와 관련어 조회가 다릅니다.');
- return {version:SEO_COMPOSITION_VERSION,memo:{brand:value.memo.brand,features:value.memo.features,keywords:value.memo.keywords},related:{source:value.related.source as SeoRelatedPreferences['source'],query:value.related.query,keywords:[...new Set(value.related.keywords as string[])],warnings:value.related.warnings as string[],...(typeof value.related.observedAt==='string'?{observedAt:value.related.observedAt}:{})}};
+ return {version:value.version,memo:{brand:value.memo.brand,features:value.memo.features,keywords:value.memo.keywords},related:{source:value.related.source as SeoRelatedPreferences['source'],query:value.related.query,keywords:[...new Set(value.related.keywords as string[])],warnings:value.related.warnings as string[],...(typeof value.related.observedAt==='string'?{observedAt:value.related.observedAt}:{})}};
 }
 export const currentSeoInstructions='\n현재 SEO 구성 정책: 상품명은 자연스러운 한국어 핵심 품목으로 최대70자를 목표로 작성하세요. 일부 색상·사이즈·옵션값을 열거하지 마세요. 브랜드는 앱이 쉼표 첫 항목을 접두어로 한 번 붙입니다. 모델 상품명에 브랜드를 붙이거나 반복하지 마세요. 특징·타겟·관련어를 뒤에 기계적으로 붙이지 마세요. related는 검색 선호이며 상품 사실의 증거가 아닙니다. 실제 상품과 맞는 많은 관련 검색어를 쉼표 포함150자 안으로 요청하지만 반환된 전체 후보는 보존합니다. 금지 특징은 타겟·원제목보다 우선합니다. 선택 옵션이나 특징이 있으면 원제목의 개수·색·형태를 사실로 간주하지 말고 선택 옵션과 특징을 우선하세요. 전체옵션요약은 첫 배치가 전체옵션이 아님을 나타냅니다. 중국 国产/国内를 한국산으로 옮기지 마세요.';
+export function seoCompositionInstructions(policy:SeoCompositionPolicy) {
+ return policy.version===CURRENT_SEO_COMPOSITION_VERSION
+  ? currentSeoInstructions.replace('실제 상품과 맞는 많은 관련 검색어를 쉼표 포함150자 안으로 요청하지만 반환된 전체 후보는 보존합니다.',
+    '검색태그는 타겟 검색어·쿠팡 연관어·자동완성 후보 중 같은 상품을 찾는 데 직접 맞는 것만 골라 관련도 순으로 작성하세요. 후보에 없어도 실제 상품의 동의어, 표기 변형, 확인된 용도는 사용할 수 있습니다. 함께 구매할 다른 품목, 포함되지 않은 부품, 경쟁 브랜드, 확인되지 않은 특징은 빼고 개수를 채우려고 관련 없는 표현을 보태지 마세요. 쉼표와 공백을 포함해 150자 이내를 목표로 하되 전체 추천 배열을 반환하세요.')
+  : currentSeoInstructions;
+}
 type LiteralRegex={pattern:string;flags:string};
 export function normalizeSeoQuantityNumbers(text:string){const map=seoCurrentLiterals.modules['7d6a'].W;return text.replace(/([一两二三四五六七八九十])(?=\s*(?:个|只|件|套|包|装))/gu,(_,value:keyof typeof map)=>String(map[value]));}
 const re=(value:LiteralRegex)=>new RegExp(value.pattern,value.flags);
@@ -87,6 +94,19 @@ export function guardCurrentSeoDraft(draft:TranslationDraft,source:TranslationSo
  title=title.replace(/(\d+)\s*(?:매|장)(?!\s*(?:수납|보관))/gu,(whole,n:string)=>capacities.has(n)?n+'매 수납':whole);
  title=supported(title);title=forbidden(title);if(!optionsOnly&&!tidy(title))throw new SeoFactEmptyError('SEO_FACT_EMPTY: 상품명 사실이 남지 않았습니다.');
  keywords=keywords.filter(word=>{const next=forbidden(supported(audience(word),true));const valid=tidy(next)===tidy(word);if(!valid)warning('tags',[word]);return valid;});
+ if(policy.version===CURRENT_SEO_COMPOSITION_VERSION&&source.category?.id==='80025'){
+  const penHolder=/펜\s*(?:홀더|꽂이)|연필\s*꽂이|펜\s*정리함/u;
+  const sourceFacts=[source.title,source.description,...source.attributes.map(pair=>pair.value)].join(' ');
+  const otherItems=[
+   {tag:/펜\s*클립/u,source:/笔夹|筆夾|펜\s*클립/u},
+   {tag:/책\s*갈피|북\s*마크/u,source:/书签|書籤|책\s*갈피|북\s*마크/u},
+  ];
+  keywords=keywords.filter(word=>{
+   if(!otherItems.some(item=>item.tag.test(word)&&(!penHolder.test(word)||!item.source.test(sourceFacts))))return true;
+   warning('tags',[word]);
+   return false;
+  });
+ }
  if(!re(medical.i).test(category)){const pattern=new RegExp(medical.p.join.join('|'),'g'),before=title;title=title.replace(/[^\s,/·()[\]+&]+/gu,token=>{const match=new RegExp(medical.p.join.join('|')).exec(token);if(!match)return token;warning('efficacyClaim',[match[0]]);const prefix=token.slice(0,match.index);if(prefix&&!re(medical.l).test(prefix))return ' ';const tail=token.slice(match.index).replace(pattern,'').replace(/^(?:걱정없는|효과용|없는|없이|걱정|예방|방지|효과|에도|성|용|적|엔|에)/u,'');return prefix+tail;});if(!tidy(title))title=before;keywords=keywords.filter(word=>{if(new RegExp(medical.p.join.join('|')).test(word)){warning('tags',[word]);return false;}return true;});}
  for(const item of rules.he)if(re(item.item).test(target+' '+category)&&!re(item.words).test(target+' '+category))title=replace(title,re(item.words),'itemType',true);
  const skus=[...optionFacts.matchAll(/[A-Za-z]{1,3}-?\d{3,}/gu)].map(match=>match[0]);for(const sku of skus)title=replace(title,new RegExp('(?<![A-Za-z0-9])'+escape(sku)+'(?![A-Za-z0-9])','gi'),'supplierSku',true);

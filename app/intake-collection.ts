@@ -153,7 +153,10 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
    return;
   }
   reportProgress('저장 원문으로 SEO·옵션 초안 작성 중');
-  seo=await prepareIntakeSeoOutcome(productId,fetcher,options.signal);
+  const context=received.context;
+  const intakeSeoMemo=typeof window!=='undefined'&&!job.product_id&&!received.product_id&&context?.keywords.trim()
+    ? {brand:context.settings.brand.trim(),features:context.features.trim(),keywords:context.keywords.trim()} : undefined;
+  seo=await prepareIntakeSeoOutcome(productId,fetcher,options.signal,intakeSeoMemo);
  };
  const importFetcher:typeof fetch=async(url,init)=>{
   const productRequest=String(url)===`/api/collection-jobs/${encodeURIComponent(job.id)}/product`&&init?.method==='POST';

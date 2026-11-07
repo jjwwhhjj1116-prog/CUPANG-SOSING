@@ -1,5 +1,5 @@
 import {readSeoCompositionSnapshot} from '@/app/seo-composition-server';
-import {validateSeoCompositionPolicy} from '@/app/seo-current-policy';
+import {CURRENT_SEO_COMPOSITION_VERSION,validateSeoCompositionPolicy,type SeoCompositionPolicy} from '@/app/seo-current-policy';
 import { env } from 'cloudflare:workers';
 import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
@@ -13,7 +13,7 @@ import {seoRetryReviewProof} from '@/app/seo-translation-retry';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {CollectionCompanyError,verifyCapturedCollectionCompany} from '@/app/collection-company';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
-import { TranslationError, translationDestination, translationConfiguration, requireTranslationConfig, validateTranslationSource, prepareTranslationReview, executeTranslation, type TranslationJob, type TranslationSecrets } from '@/app/automation/translation';
+import { WORKERS_QWEN_MODEL, TranslationError, translationDestination, translationConfiguration, requireTranslationConfig, validateTranslationSource, prepareTranslationReview, executeTranslation, type TranslationJob, type TranslationSecrets } from '@/app/automation/translation';
 import { google429RecoveryCandidate, workersRecoveryConfiguration, requireWorkersRecoveryConfig, workersRecoveryReviewProof, WORKERS_RECOVERY_MAX_INPUT_CHARACTERS, WORKERS_RECOVERY_VERSION } from '@/app/workers-translation-recovery';
 import {WORKERS_M2M_MODEL,WORKERS_M2M_STRATEGY,planWorkersM2mTranslation,WorkersM2mError} from '@/app/automation/workers-m2m-translation';
 
@@ -198,9 +198,15 @@ export async function POST(request: Request, context: Context) {
     }
     if (body.action === 'prepare-collected' || body.action === 'prepare-intake-options') {
       const optionsOnly = body.action === 'prepare-intake-options';
-      if (Object.keys(body).some(key => !(optionsOnly ? ['action','expectedVersion'] : ['action','intake']).includes(key)) || (body.intake !== undefined && body.intake !== true)) throw new TranslationError('INVALID_REQUEST', '저장된 수집 원문만 사용할 수 있습니다.');
+      const lookupSeoKeywords = body.lookupSeoKeywords === true;
+      if (Object.keys(body).some(key => !(optionsOnly ? ['action','expectedVersion'] : ['action','intake','lookupSeoKeywords','seoComposition']).includes(key))
+        || (body.intake !== undefined && body.intake !== true)
+        || body.lookupSeoKeywords !== undefined && (!lookupSeoKeywords || body.seoComposition !== undefined)
+        || (lookupSeoKeywords || body.seoComposition !== undefined) && body.intake !== true)
+        throw new TranslationError('INVALID_REQUEST', '저장된 수집 원문만 사용할 수 있습니다.');
       const autoDraft = (body.intake === true || optionsOnly) && ['workers-ai','google-free'].includes(config.provider??'');
       let staleUnstarted: TranslationJob | null = null;
+      let expiredUnstarted: TranslationJob | null = null;
       let initialIntake: TranslationJob | null = null;
       if(optionsOnly){
         initialIntake=await findIntakeTranslation(owner,id);
@@ -208,8 +214,8 @@ export async function POST(request: Request, context: Context) {
       }
       if(autoDraft && !optionsOnly){
         const prior=await findIntakeTranslation(owner,id);
-        const expiredUnstarted = prior && ['prepared','approved'].includes(prior.status) &&
-          Date.parse(prior.review.expiresAt) <= Date.now() && prior.productVersion === product.updated_at;
+        if(prior && ['prepared','approved'].includes(prior.status) &&
+          Date.parse(prior.review.expiresAt) <= Date.now() && prior.productVersion === product.updated_at)expiredUnstarted=prior;
         if(prior && ['prepared','approved'].includes(prior.status) && !prior.startedAt && !prior.result && !prior.error && prior.productVersion!==product.updated_at)staleUnstarted=prior;
         if(prior && !expiredUnstarted && !staleUnstarted){
           // The completed canonical result remains reusable after an unrelated
@@ -252,6 +258,20 @@ export async function POST(request: Request, context: Context) {
       if (initialIntake && !recoveryJobs.some(job => job.id === initialIntake!.id)) recoveryJobs.push(initialIntake);
       const { source, remainingOptions } = collectedSeoSource(receipt.result, collection, options, optionsOnly, recoveryJobs);
       if(optionsOnly && !source.attributes.length)return json({done:true,productId:id,productVersion:product.updated_at});
+      const memo = !optionsOnly && autoDraft && config.provider === 'workers-ai' && config.model === WORKERS_QWEN_MODEL
+        && source.guidance?.keywords && collection.context
+        ? { brand: collection.context.settings.brand.trim(), ...source.guidance } : undefined;
+      const previousUnstarted = expiredUnstarted ?? staleUnstarted;
+      if (lookupSeoKeywords && memo && !previousUnstarted) return json({ productId: id, intakeSeoMemo: memo });
+      let composition = previousUnstarted?.review.seoComposition;
+      if (body.seoComposition !== undefined) {
+        let supplied: SeoCompositionPolicy;
+        try { supplied = validateSeoCompositionPolicy(body.seoComposition); }
+        catch { throw new TranslationError('INVALID_REQUEST', '수집 SEO 연관어 입력을 확인해주세요.'); }
+        if (supplied.version !== CURRENT_SEO_COMPOSITION_VERSION || !memo || JSON.stringify(supplied.memo) !== JSON.stringify(memo)) return conflict();
+        if (!previousUnstarted) composition = supplied;
+      }
+      if (composition && (!memo || JSON.stringify(composition.memo) !== JSON.stringify(memo))) return conflict();
       const optionsFingerprint = optionsOnly ? await fingerprint(source.attributes) : null;
       if(optionsFingerprint){
         const completed=await findIntakeOptionsTranslation(owner,id,optionsFingerprint);
@@ -267,7 +287,9 @@ export async function POST(request: Request, context: Context) {
         item.review.destination === translationDestination(config) && item.review.model === config.model && item.review.maxOutputTokens === config.maxOutputTokens && JSON.stringify(item.review.source) === JSON.stringify(source) &&
         (!['prepared', 'approved'].includes(item.status) || Date.parse(item.review.expiresAt) > Date.now()));
       if (previous && !autoDraft) return json({ job: previous, replayed: true, remainingOptions, configuration: configuration() });
-      const prepared = await prepareTranslationReview(source, config);
+      // The winning canonical request owns its candidate snapshot. A retry or
+      // another tab may see different public suggestions for the same source.
+      const prepared = await prepareTranslationReview(source, config, new Date(), composition);
       const intakeOptions = optionsOnly && config.provider === 'google-free'
         ? { initialJobId: initialIntake!.id, optionRevision: options.revision, scope: 'options' as const } : null;
       const paidNotice = '저장된 최초 SEO 초안을 유지하고 수집 원문에 연결된 미번역 옵션값만 사용자 지정 Google 번역 주소로 보냅니다. 상품명·설명은 검토 문맥으로만 보존하며 번역에 전송하지 않습니다. 참고 메모·카테고리·옵션 ID도 보내지 않습니다. API 키나 유료 AI는 사용하지 않으며 실패 후 자동 재시도하지 않습니다.';
