@@ -41,13 +41,54 @@ async function fixture(){
  }catch(error){h.close();throw error;}
 }
 
-test('actual current preservation receipts reach only their option image stages through the existing three GETs',async()=>{
+test('option board reuses the exact stable quotation sealed with its real image projection',async()=>{
+ const f=await fixture();try{
+  await f.record(f.options.rows[0].imageKey);
+  const snapshot=f.h.load('app/quotation-fields-snapshot.ts'),original=snapshot.stableQuotationFieldsView,calls=[],views=[];
+  snapshot.stableQuotationFieldsView=async(...args)=>{calls.push(args);const saved=await original(...args);views.push(plain(saved.view));return saved;};
+  const getContent=headers=>f.h.load('app/api/products/[id]/content/route.ts').GET(new Request('https://app.test'+f.base+'/content',{headers}),{params:Promise.resolve({id:f.product.id})});
+  const boardPaths=[f.base+'/options',f.base+'/content'];
+  let bundled;
+  f.intercept(async(path,init)=>{
+   if(path!==f.base+'/content')return;
+   const response=await getContent(init.headers);
+   assert.equal(response.headers.get('cache-control'),'no-store');bundled=await response.clone().json();return response;
+  });
+  const board=await f.read();
+  assert.deepEqual(calls,[['owner',f.product.id,null]]);
+  assert.deepEqual(f.requests,[{path:f.base+'/options',method:'GET'},{path:f.base+'/content',method:'GET'}]);
+  assert.deepEqual(bundled.optionBoardQuotation,views[0]);
+  assert.deepEqual(plain(board.optionImageStages),bundled.optionImageStages);
+  assert.equal(board.optionStages[f.options.rows[0].id].mainImage.state,bundled.optionImageStages.stages[f.options.rows[0].id].mainImage.state);
+  const ordinary=await json(await getContent({'x-yoofam-option-board-quotation':'v1'}));
+  assert.equal(Object.hasOwn(ordinary,'optionBoardQuotation'),false);assert.equal(Object.hasOwn(ordinary,'optionImageStages'),false);assert.equal(calls.length,1);
+  for(const malformed of [{...bundled,optionBoardQuotation:null},{...bundled,optionImageStages:undefined},
+   {...bundled,optionBoardQuotation:{...bundled.optionBoardQuotation,categoryContext:{...bundled.optionBoardQuotation.categoryContext,source:'profile'}}}]){
+   f.requests.length=0;f.intercept(path=>path===boardPaths[1]?Response.json(malformed):undefined);
+   await assert.rejects(f.read(),/옵션 목록 견적 응답/);
+   assert.deepEqual(f.requests.map(request=>request.path),boardPaths);assert.equal(calls.length,1);
+  }
+  f.requests.length=0;calls.length=0;
+  f.intercept(async(path,init)=>{
+   if(path!==boardPaths[1])return;
+   const headers=new Headers(init.headers);headers.delete('x-yoofam-option-board-quotation');
+   const response=await getContent(headers),legacy=await response.clone().json();
+   assert.equal(Object.hasOwn(legacy,'optionBoardQuotation'),false);assert.ok(legacy.optionImageStages);return response;
+  });
+  const legacyBoard=await f.read();
+  assert.deepEqual(f.requests.map(request=>request.path),[...boardPaths,f.base+'/quotation-fields']);assert.equal(calls.length,2);
+  assert.deepEqual(plain(legacyBoard.quotationPrices),plain(board.quotationPrices));
+  assert.deepEqual(plain(legacyBoard.optionImageStages),plain(board.optionImageStages));
+ }finally{f.close();}
+});
+
+test('actual current preservation receipts reach only their option image stages',async()=>{
  const f=await fixture();try{
   const [proved,unproved]=f.options.rows;assert.notEqual(proved.imageKey,unproved.imageKey);
   await f.record(proved.imageKey);const unknown=await f.record(unproved.imageKey,'uncertain');
   const before=JSON.stringify(f.h.sqlite.prepare('SELECT * FROM image_vision_requests').all()),products=JSON.stringify(f.h.sqlite.prepare('SELECT * FROM products').all()),network=f.h.network.length,ai=f.h.aiSources.length;
   const board=await f.read();assert.equal(board.optionStages[proved.id].mainImage.state,'complete');assert.match(board.optionStages[proved.id].mainImage.detail,/실물 인쇄/);assert.equal(board.optionStages[unproved.id].mainImage.state,'pending');
-  assert.equal(board.registrationStages.mainImage.state,'pending');assert.ok(f.requests.every(request=>request.method==='GET'));assert.equal(f.requests.length,3);
+  assert.equal(board.registrationStages.mainImage.state,'pending');assert.ok(f.requests.every(request=>request.method==='GET'));assert.equal(f.requests.length,2);
   assert.equal(JSON.stringify(f.h.sqlite.prepare('SELECT * FROM image_vision_requests').all()),before);assert.equal(JSON.stringify(f.h.sqlite.prepare('SELECT * FROM products').all()),products);assert.equal(f.h.sqlite.prepare('SELECT status FROM image_vision_requests WHERE request_id=?').get(unknown).status,'uncertain');assert.equal(f.h.network.length,network);assert.equal(f.h.aiSources.length,ai);
  }finally{f.close();}
 });
@@ -64,7 +105,7 @@ test('additional completion requires receipts for every selected original',async
  const f=await fixture();try{
   const keys=[...new Set(f.content.assets.additional.value)];assert.ok(keys.length>1);for(const key of keys.slice(0,-1))await f.record(key);
   const partial=await f.read();assert.ok(f.options.rows.every(row=>partial.optionStages[row.id].additionalImages.state==='pending'));
-  await f.record(keys.at(-1));const complete=await f.read();assert.ok(f.options.rows.every(row=>complete.optionStages[row.id].additionalImages.state==='complete'));assert.equal(f.requests.length,6);assert.ok(f.requests.every(request=>request.method==='GET'));
+  await f.record(keys.at(-1));const complete=await f.read();assert.ok(f.options.rows.every(row=>complete.optionStages[row.id].additionalImages.state==='complete'));assert.equal(f.requests.length,4);assert.ok(f.requests.every(request=>request.method==='GET'));
  }finally{f.close();}
 });
 
@@ -76,8 +117,14 @@ test('unauthenticated development keeps legacy board data without projecting pre
  }finally{f.close();}
 });
 
-for(const change of ['product','content','options','settings','owner','company'])test(`an intervening ${change} change cannot apply receipt-based option completion`,async()=>{
+for(const change of ['product','content','options','settings','owner','company','quotation metadata'])test(`an intervening ${change} change cannot apply receipt-based option completion`,async()=>{
  const f=await fixture();try{
+  let quotation;
+  if(change==='quotation metadata'){
+   const state=await f.h.load('db/quotation-fields.ts').readQuotationFields('owner',f.product.id);
+   quotation={...state,revision:1,updatedAt:f.product.updated_at};
+   f.h.sqlite.prepare('INSERT INTO product_quotation_fields(product_id,owner_id,revision,payload,updated_at) VALUES(?,?,?,?,?)').run(f.product.id,'owner',quotation.revision,JSON.stringify(quotation),quotation.updatedAt);
+  }
   await f.record(f.options.rows[0].imageKey);const reader=f.h.load('db/image-no-text-receipts.ts'),original=reader.readImageNoTextReceipts;let reads=0;
   reader.readImageNoTextReceipts=async(...args)=>{const proofs=await original(...args);if(++reads===2){
    if(change==='product')f.h.sqlite.prepare('UPDATE products SET updated_at=? WHERE id=?').run('2099-01-01T00:00:00.000Z',f.product.id);
@@ -86,9 +133,24 @@ for(const change of ['product','content','options','settings','owner','company']
    if(change==='settings')await f.h.load('db/queries.ts').saveSettings('owner',JSON.stringify({...f.h.settings,brand:'변경된 설정'}));
    if(change==='owner')f.h.auth.getWorkspaceOwnerId=async()=>'other';
    if(change==='company')f.h.setCompany({code:'A01464742',name:'와이홉'});
+   if(quotation){
+    // The saved-input check writes only the quotation payload at these clocks.
+    quotation.savedValidation={sourceBinding:'a'.repeat(64)};
+    f.h.sqlite.prepare('UPDATE product_quotation_fields SET payload=? WHERE product_id=?').run(JSON.stringify(quotation),f.product.id);
+   }
   }return proofs;};
-  await assert.rejects(f.read());assert.equal(reads,2);assert.ok(f.requests.every(request=>request.method==='GET'));
-  assert.deepEqual(f.requests.map(request=>request.path),['options','content','quotation-fields'].map(route=>`${f.base}/${route}`));
+  if(quotation){
+   f.intercept(async(path,init)=>{
+    if(path!==f.base+'/content')return;
+    const response=await f.h.load('app/api/products/[id]/content/route.ts').GET(new Request('https://app.test'+path,{headers:init.headers}),{params:Promise.resolve({id:f.product.id})});
+    assert.equal(response.status,503);assert.deepEqual(await response.clone().json(),{error:'저장한 콘텐츠를 불러오지 못했습니다.'});return response;
+   });
+   await assert.rejects(f.read(),/저장한 콘텐츠/);
+   assert.equal(f.h.sqlite.prepare('SELECT revision FROM product_quotation_fields').get().revision,quotation.revision);
+   assert.equal(f.h.sqlite.prepare('SELECT updated_at FROM products').get().updated_at,f.product.updated_at);
+  }else await assert.rejects(f.read());
+  assert.equal(reads,2);assert.ok(f.requests.every(request=>request.method==='GET'));
+  assert.deepEqual(f.requests.map(request=>request.path),['options','content'].map(route=>`${f.base}/${route}`));
  }finally{f.close();}
 });
 
@@ -104,6 +166,6 @@ for(const stale of ['productVersion','contentRevision','optionRevision','quotati
    else projection[stale]++;
    return Response.json(body);
   });
-  await assert.rejects(f.read(),/옵션 이미지/);assert.equal(f.requests.length,3);assert.ok(f.requests.every(request=>request.method==='GET'));
+  await assert.rejects(f.read(),/옵션 이미지/);assert.equal(f.requests.length,2);assert.ok(f.requests.every(request=>request.method==='GET'));
  }finally{f.close();}
 });

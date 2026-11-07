@@ -27,7 +27,7 @@ test('option board preserves the server required-size pending status when no cha
  const result=tree('',undefined,{...data,commonAssets:{size:[]},registrationStages:summary},[],undefined,0,{stage:true});
  const button=nodes(result.tree).find(node=>node.type==='button'&&node.props['aria-label']==='옵션 red 사이즈표 편집');assert.ok(button);assert.equal(button.props['data-stage-state'],'pending');assert.equal(text(button),'대기');
 });
-test('cold option board starts all three scoped GETs before any response arrives',async()=>{
+test('cold option board overlaps the first two scoped GETs and reads the legacy quotation once',async()=>{
  const base='/api/products/p1',paths=[`${base}/options`,`${base}/content`,`${base}/quotation-fields`];
  const content={productId:'p1',schemaVersion:1,revision:2,assets:{main:{value:[]}}};
  const {promise:held,resolve:release}=Promise.withResolvers();
@@ -41,9 +41,12 @@ test('cold option board starts all three scoped GETs before any response arrives
  const started=[...requests];
  release();
  const board=await loading;
- assert.deepEqual(started.map(request=>request.url),paths);
- assert.ok(started.every(({init})=>(init.method??'GET')==='GET'&&init.cache==='no-store'&&init.signal===signal));
- assert.equal(new Headers(started[1].init.headers).get('x-yoofam-option-image-stages'),'v1');
+ assert.deepEqual(started.map(request=>request.url),paths.slice(0,2));
+ assert.deepEqual(requests.map(request=>request.url),paths);
+ assert.ok(requests.every(({init})=>(init.method??'GET')==='GET'&&init.cache==='no-store'&&init.signal===signal));
+ const headers=new Headers(started[1].init.headers);
+ assert.equal(headers.get('x-yoofam-option-image-stages'),'v1');
+ assert.equal(headers.get('x-yoofam-option-board-quotation'),'v1');
  assert.equal(board.options.productId,'p1');
 });
 test('option board identifies each failed read without displaying platform HTML, private bodies or parser messages',async()=>{
@@ -57,7 +60,7 @@ test('option board identifies each failed read without displaying platform HTML,
    assert.ok(error.message.includes('GET /api/products/:id/'+stage));assert.ok(error.message.includes('HTTP '+status));assert.ok(error.message.includes(reason));assert.ok(error.message.length<300);
    assert.doesNotMatch(error.message,/PRIVATE_|DOCTYPE|Unexpected|p1|owner\//);if(status===503)assert.doesNotMatch(error.message,/로그인/);return true;
   });
-  assert.deepEqual(requests,paths.map(path=>'/api/products/p1/'+path));
+  assert.deepEqual(requests,paths.slice(0,stage==='quotation-fields'?3:2).map(path=>'/api/products/p1/'+path));
  }
  assert.equal(JSON.stringify(data),before);
  const recovered=await model.readOptionBoard('p1',new AbortController().signal,async url=>Response.json(url.endsWith('/options')?data:url.endsWith('/content')?{content}:quotation()));
@@ -66,7 +69,7 @@ test('option board identifies each failed read without displaying platform HTML,
 test('option board propagates an interrupted JSON body without replacing it with a login diagnosis',async()=>{
  const controller=new AbortController(),abort=new DOMException('Stopped','AbortError');let requests=0;
  await assert.rejects(model.readOptionBoard('p1',controller.signal,async()=>{requests++;return {ok:true,status:200,headers:new Headers({'content-type':'application/json'}),json:async()=>{controller.abort();throw abort;}};}),error=>error===abort);
- assert.equal(requests,3);
+ assert.equal(requests,2);
 });
 test('mounted board aborts pending sibling reads on a current failure and retires a hidden retry silently',async()=>{
  const {promise:content,resolve:failContent}=Promise.withResolvers(),requests=[];
@@ -80,13 +83,13 @@ test('mounted board aborts pending sibling reads on a current failure and retire
   const Board=dom.load('app/components/product-option-board.tsx').ProductOptionBoard;
   const props={productId:'p1',sourceUrl:'https://app.test/',imageKeys:'[]',active:true,onQuotation(){},onEdit(){}};
   const alert=()=>dom.container.querySelector('[role="alert"]');
-  await dom.render(Board,props);assert.equal(requests.length,3);
+  await dom.render(Board,props);assert.equal(requests.length,2);
   await dom.React.act(async()=>failContent(Response.json({error:'공통 상품 자료를 불러오지 못했습니다.'},{status:503})));
   await dom.settle();assert.equal(alert()?.textContent,'공통 상품 자료를 불러오지 못했습니다.');
   assert.ok(requests.every(signal=>signal.aborted),'the current failure cancels its pending siblings');
   const retry=[...dom.container.querySelectorAll('button')].find(button=>button.textContent==='새로고침');assert.ok(retry);
   await dom.React.act(async()=>retry.click());await dom.settle();
-  assert.equal(requests.length,6);assert.equal(requests[3].aborted,false);assert.equal(alert(),null);
+  assert.equal(requests.length,4);assert.equal(requests[2].aborted,false);assert.equal(alert(),null);
   await dom.render(Board,{...props,active:false});assert.ok(requests.every(signal=>signal.aborted));assert.equal(alert(),null);
  }finally{await dom.close();}
 });
@@ -143,7 +146,7 @@ test('option board rejects invalid persisted number maps and parent prefixes',as
  const sparse={...data,optionRegistrationNumbers:{blue:'261015007002'}},received=await read(sparse);assert.equal(received.result.optionRegistrationNumbers.blue,'261015007002');assert.equal(Object.hasOwn(received.result.optionRegistrationNumbers,'red'),false);
  assert.equal(Object.hasOwn((await read(data)).result,'optionRegistrationNumbers'),false);
  for(const optionRegistrationNumbers of [null,[],1,{blue:261015007002},{blue:'26101500700'},{blue:'261015007002\n'},{blue:'261015007000'},{foreign:'261015007003'},{red:'261015007001',blue:'261015007001'},{blue:'261015008002'},{red:'261015007001',blue:'261014007002'}]){
-  const requests=[];await assert.rejects(model.readOptionBoard('p1',signal,async url=>{requests.push(url);return Response.json({...data,optionRegistrationNumbers});},parent),/옵션 등록번호/);assert.deepEqual(requests,['/api/products/p1/options','/api/products/p1/content','/api/products/p1/quotation-fields']);
+  const requests=[];await assert.rejects(model.readOptionBoard('p1',signal,async url=>{requests.push(url);return Response.json({...data,optionRegistrationNumbers});},parent),/옵션 등록번호/);assert.deepEqual(requests,['/api/products/p1/options','/api/products/p1/content']);
  }
  await assert.rejects(read(sparse,'bad-parent'),/옵션 등록번호/);
 });

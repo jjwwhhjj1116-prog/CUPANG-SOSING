@@ -71,6 +71,25 @@ test('a changed collection source between snapshot and final SQL fence rejects i
  }finally{h.db.prepare=prepare;h.close();}
 });
 
+test('registration layout proves the captured category without calculating quotation rows or detail HTML',async()=>{
+ const f=await setup(schemaCompanies[0],{captured:true}),{h}=f;
+ try{
+  const schemaModule=h.load('app/quotation-schema.ts'),detail=h.load('app/quotation-public-detail.ts');
+  const resolvePair=schemaModule.resolveQuotationFieldsPair,resolveDetail=detail.resolvePublicDetail;
+  const calls={quotationRows:0,publicDetail:0};
+  schemaModule.resolveQuotationFieldsPair=(...args)=>{calls.quotationRows++;return resolvePair(...args);};
+  detail.resolvePublicDetail=(...args)=>{calls.publicDetail++;return resolveDetail(...args);};
+  const before=stored(h),layout=await json(await f.request());
+  assert.equal(layout.categoryContext.source,'collection');assert.equal(layout.sizeChartRequired,true);
+  assert.deepEqual(calls,{quotationRows:0,publicDetail:0});
+  const quotation=await json(await f.fields());
+  assert.equal(quotation.productVersion,layout.productVersion);
+  assert.deepEqual(quotation.categoryContext,layout.categoryContext);
+  assert.deepEqual(calls,{quotationRows:1,publicDetail:2});
+  assert.equal(stored(h),before);
+ }finally{h.close();}
+});
+
 test('unverified production access is unavailable and does not reach the snapshot',async()=>{
  const h=seoWorkspaceHarness({authenticated:false}),api=h.load('app/api/products/[id]/registration-layout/route.ts');
  try{const before=stored(h);await json(await api.GET(new Request('https://app.test/api/products/'+h.id+'/registration-layout'),{params:Promise.resolve({id:h.id})}),503);assert.equal(stored(h),before);}

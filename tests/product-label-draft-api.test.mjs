@@ -153,4 +153,65 @@ for(const company of companies)test(`Stage6 draft rejects stale/auth/provider fa
  }finally{f.close();}
 });
 
+test('Stage6 verified processing preserves the canonical material used by the saved quotation',async()=>{
+ frozenHashes??=hashes();
+ const {fixture:receiptFixture}=await import('./helpers/quotation-receipt-source.mjs');
+ const material={name:'材质',value:'涤纶'}, {f,h,receipt}=await receiptFixture([material]);
+ try{
+  const profiles=h.load('db/category-profiles.ts'),profile=await profiles.getCategoryProfile('owner',f.profile.id);
+  const raw=JSON.parse(profile.hubSchema.schemaString);
+  raw.properties.legalPage.properties.notices.allOf.find(entry=>entry.contains.properties.noticeItemName.enum.includes('소재')).contains.properties.noticeItemName.enum=['제품 소재'];
+  delete raw.properties.productPage.properties.unexposedAttributes;
+  h.context.category=await profiles.updateCategoryProfile('owner',profile.id,profile.revision,{...profile,hubSchema:{...profile.hubSchema,schemaString:JSON.stringify(raw)}});
+  assert.ok(h.context.category);
+  h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context),'job');
+  const quote=f.base+'/quotation-fields'+f.query, labels=f.base+'/product-labels'+f.query,draft=f.base+'/product-label-draft'+f.query;
+  const read=endpoint=>h.route(endpoint).then(json), row=view=>view.rows.find(item=>item.optionId===option);
+  const save=(endpoint,view,body,status=200)=>h.route(endpoint,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,...body}}).then(response=>json(response,status));
+  const q0=await read(quote),field=q0.resolved.schema.fields.find(item=>item.label==='제품 소재');
+  const quoteMaterial=view=>row(view.resolved).fields[field.id];
+  assert.deepEqual(field.hubWire,{path:['legalPage','notices'],nameKey:'noticeItemName',valueKey:'noticeItemValue',name:'제품 소재'});
+  let reply={content:'',material:'상세정보참조',type:'상세정보참조'};
+  const labelProvider=()=>f.setProvider({async run(){return {response:JSON.stringify(reply)};}});
+  const generate=view=>h.route(draft,{method:'POST',body:{optionId:option,expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint}}).then(json);
+  const source=(attributes,description='')=>h.sqlite.prepare('UPDATE collection_results SET payload=? WHERE job_id=?').run(JSON.stringify({...receipt,attributes,description}),'job');
+  labelProvider();
+  for(const [attributes,description] of [[[material,{name:'面料',value:'棉'}],''],[[{...material,value:'100D 涤纶'}],''],[[material],'재질: 폴리에스테르\n재질: 면'],[[material],'재질: 폴리에스테르 80%']]){
+   source(attributes,description);
+   assert.equal((await generate(await read(labels))).values.material,'상세정보참조');
+  }
+  source([material,{name:'재질',value:'나일론'}]);
+  assert.equal((await generate(await read(labels))).values.material,'나일론');
+  const manual=await save(quote,q0,{changes:[{optionId:option,fieldKey:field.id,value:'검토한 재질'}]});
+  assert.equal((await generate(await read(labels))).values.material,'검토한 재질');
+  const cleared=await save(quote,manual,{changes:[{optionId:option,fieldKey:field.id,value:null}]});
+  source([material,{name:'面料',value:'涤纶'}]);
+  f.setProvider({async run(_model,input){
+   const request=JSON.parse(input.messages[1].content),changes=request.fields.filter(item=>item.id===field.id).map(item=>({fieldKey:item.id,value:'涤纶'}));
+   return {response:JSON.stringify(request.task==='ANALYZE_SCHEMA_ATTRIBUTES'?{differentiatedFieldIds:[]}:{changes})};
+  }});
+  const job=(await json(await f.request(f.requestBody(await json(await f.request(undefined,'GET')))))).job;
+  const adopted=await save(quote,await read(quote),{changes:[],generatedAdoption:{jobId:job.id,targets:[{optionId:option,fieldKey:field.id}]}});
+  assert.equal(adopted.revision,cleared.revision+1);
+  assert.equal(quoteMaterial(adopted).source,'generated');
+  assert.equal(quoteMaterial(adopted).value,'폴리에스테르');
+  labelProvider();reply={...reply,material:'不明材质'};
+  const before=await read(labels),proposal=await generate(before);
+  assert.equal(proposal.values.material,'폴리에스테르');
+  assert.equal(proposal.classifications.material,'suggestion');
+  const processing={optionId:option,values:proposal.values,candidates:proposal.candidates};
+  await save(labels,before,{changes:[],automaticProcessing:{...processing,values:{...processing.values,material:'임의 재질'}}},400);
+  const saved=await save(labels,before,{changes:[],automaticProcessing:processing}),readback=await read(labels);
+  h.load('app/product-label.ts').verifyProcessedProductLabelSave(before,saved,option,proposal.values);
+  assert.equal(row(readback).values.material,'폴리에스테르');
+  assert.equal(row(readback).sources.material,'label-suggestion');
+  assert.equal(quoteMaterial(await read(quote)).value,'폴리에스테르');
+  const blank=await save(labels,readback,{changes:[{optionId:option,fieldKey:'material',value:''}]});
+  assert.equal(row(blank).values.material,'');
+  assert.equal(row(blank).sources.material,'manual-option');
+  assert.equal(Object.hasOwn((await generate(blank)).values,'material'),false);
+  assert.deepEqual(h.network,[]);
+ }finally{f.close();}
+});
+
 test.after(()=>{assert.deepEqual(hashes(),frozenHashes,'tested sources stayed fixed');if(process.env.STEP704_API_PROOF_PATH)fs.writeFileSync(process.env.STEP704_API_PROOF_PATH,JSON.stringify({cases:proofs,sourceHashes:frozenHashes,allowedDatabaseMutation:'one existing quotation_ai_daily reservation per provider call',externalRequests:0,browserActions:0,supplierHubWrites:0,operatingProductWrites:0},null,2));});

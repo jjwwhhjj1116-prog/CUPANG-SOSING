@@ -1,12 +1,13 @@
 import {getChatGPTUser,getWorkspaceOwnerId} from '@/app/chatgpt-auth';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {stableQuotationFieldsView,QuotationFieldsSnapshotError} from '@/app/quotation-fields-snapshot';
-import {quotationSourcesCurrent} from '@/db/quotation-fields';
+import {quotationSourcesCurrent,readQuotationFields} from '@/db/quotation-fields';
 import {readImageNoTextReceipts} from '@/db/image-no-text-receipts';
 import {exactPrimaryQuotationTarget} from '@/app/quotation-seo-targets';
 import {registrationStagesFromSavedContent,type RegistrationStageStatus} from '@/app/registration-stage-status';
 import type {ProductContent} from '@/app/product-content';
 import type {ProductRecord} from '@/db/queries';
+import type {QuotationFieldsView} from '@/app/quotation-schema';
 import {parseWorkspaceSettingsScope,type WorkspaceSettingsScope} from '@/app/workspace-settings-scope';
 
 type ImageStages=Record<'mainImage'|'additionalImages',RegistrationStageStatus>;
@@ -23,7 +24,7 @@ async function actor(owner:string){
 }
 /** Read-only, opt-in metadata for the option board. Never add changing receipt
  * projections to the quotation views used as image-operation checkpoints. */
-export async function readOptionImageStageProjection(owner:string,product:ProductRecord,content:ProductContent):Promise<OptionImageStageProjection|undefined>{
+export async function readOptionImageStageProjection(owner:string,product:ProductRecord,content:ProductContent,includeQuotation=false):Promise<{projection:OptionImageStageProjection;quotation?:QuotationFieldsView}|undefined>{
  const before=await actor(owner);if(!before)return;
  const assertActor=async()=>{if(!same(await actor(owner),before))throw changed();};
  const saved=await stableQuotationFieldsView(owner,product.id,null);await assertActor();
@@ -46,7 +47,14 @@ export async function readOptionImageStageProjection(owner:string,product:Produc
  }
  // Includes product/content/options/settings/profile/captured source and the
  // current approved member. A receipt must not bridge an intervening edit.
- if(!await quotationSourcesCurrent(owner,product.id,{...saved.source,member:before.member}))throw changed();await assertActor();
- return{format:'option-image-stages-v1',scope:{ownerId:owner,company:before.company},productId:product.id,productVersion:view.productVersion,contentRevision:view.contentRevision,
+ const source=includeQuotation?(saved.mappedGenerated?.source??saved.source):saved.source;
+ const [current,quotationState]=await Promise.all([
+  quotationSourcesCurrent(owner,product.id,{...source,member:before.member}),
+  includeQuotation?readQuotationFields(owner,product.id):saved.state,
+ ]);
+ // The input check can update saved validation without advancing the product or quotation clock.
+ if(!current||includeQuotation&&!same(quotationState,saved.state))throw changed();await assertActor();
+ const projection:OptionImageStageProjection={format:'option-image-stages-v1',scope:{ownerId:owner,company:before.company},productId:product.id,productVersion:view.productVersion,contentRevision:view.contentRevision,
   optionRevision:view.optionRevision,quotationRevision:view.revision,inputFingerprint:view.inputFingerprint,stages};
+ return{projection,...(includeQuotation?{quotation:view}:{})};
 }

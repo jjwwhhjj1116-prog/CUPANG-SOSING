@@ -9,7 +9,7 @@ import { readProductContent } from '@/db/product-content';
 import { readProductOptions, readOptionRegistrationNumbers } from '@/db/product-options';
 import { getCategoryProfile } from '@/db/category-profiles';
 import { readQuotationFields, readQuotationCollectionSource, quotationSourcesCurrent, type QuotationSourceGuard } from '@/db/quotation-fields';
-import { resolveQuotationFieldsPair, type QuotationFieldsView } from '@/app/quotation-schema';
+import { getQuotationSchema, resolveQuotationFieldsPair, type QuotationFieldsView } from '@/app/quotation-schema';
 import { savedRegistrationSettings } from '@/app/workspace-settings';
 import { validateCategoryProfile, type TemplateDefinition } from '@/app/category-profiles';
 import { validateCategoryIdentity } from '@/app/category-identity';
@@ -37,7 +37,7 @@ import {readQuotationValidationActor} from '@/db/quotation-save-validation';
 export class QuotationFieldsSnapshotError extends Error { constructor(message: string, public status: number, public code?: string) { super(message); } }
 const FieldsError = QuotationFieldsSnapshotError;
 const changed = () => new FieldsError('상품·옵션·설정·카테고리 또는 다른 편집 내용이 바뀌었습니다. 입력한 수정값을 보존한 채 최신 자료를 다시 불러와 비교해주세요.', 409, 'QUOTATION_FIELDS_CONFLICT');
-async function snapshot(owner: string, id: string, profileId: string | null) {
+async function readSnapshotSource(owner: string, id: string, profileId: string | null) {
   const user = await getChatGPTUser();
   const company = user?.verifiedAccess && user.userId === owner ? approvedSupplierHubCompany(user.membership) : null;
   const product = await findProduct(owner, id);
@@ -97,6 +97,14 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     contentRevision: content.revision, optionRevision: options.revision, labelRevision: labelsState.revision, settingsPayload: savedSettings?.payload ?? null,
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
   const inputs = { categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath, product, content, options, settings, labelsState,labelSettingsPayload:source.settingsPayload,...(hubSchema?{hubSchema}:{}),...(template?{template}:{}) };
+  const registrationLayout: RegistrationLayout = { format: 'yoofam-registration-layout-v1', productId: id, productVersion: product.updated_at,
+    categoryContext: { ...categoryContext, categoryPath: [...categoryContext.categoryPath] }, sizeChartRequired: sizeChartRequiredFromSchemaString(hubSchema?.schemaString) };
+  return { user, company, state, profile, imageKeys, categoryContext, collection, hubSchema, template, capturedTemplate, source, inputs, registrationLayout };
+}
+
+async function snapshot(owner: string, id: string, profileId: string | null) {
+  const { user, company, state, profile, imageKeys, categoryContext, collection, hubSchema, template, capturedTemplate, source, inputs, registrationLayout } = await readSnapshotSource(owner, id, profileId);
+  const { product, content, options, settings, labelsState } = inputs;
   let generatedProfileFence:QuotationSourceGuard|null=null;
   let generatedAdoption = scopedGeneratedQuotation(state, categoryContext.categoryId, await quotationGeneratedSourceBasis({ ...inputs, categoryContext, source },quotationGeneratedResultPolicy(state,categoryContext.categoryId)));
   // Older collection-context layers remain first; mapped jobs seal the exact recorded profile instead.
@@ -144,8 +152,6 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   if(stageTwoMsrp)view.stageTwoMsrp=stageTwoMsrp;
   const editorInputs = detailEditorInputs(view, state, id);
   if (editorInputs) view.detailEditorInputs = editorInputs;
-  const registrationLayout: RegistrationLayout = { format: 'yoofam-registration-layout-v1', productId: id, productVersion: view.productVersion,
-    categoryContext: { ...view.categoryContext, categoryPath: [...view.categoryContext.categoryPath] }, sizeChartRequired: sizeChartRequiredFromSchemaString(hubSchema?.schemaString) };
   let actor=await readQuotationValidationActor(owner),validationBinding:string|null=null;
   if(!company||JSON.stringify(actor?.company)!==JSON.stringify(company)||actor?.email!==user?.membership?.email.trim().toLowerCase()||actor?.role!==user?.membership?.role)actor=null;
   if(actor)try{validationBinding=await quotationValidationSourceBinding({actor,product,content,options,state,source,schema:resolved.schema,categoryContext,detailVersion,validation:savedQuotationValidationResult(view,id,profileId)});}catch{/* Unconfirmed metadata cannot complete a quotation. */}
@@ -158,4 +164,13 @@ export async function stableQuotationFieldsView(owner: string, id: string, profi
   const saved = await snapshot(owner, id, profileId);
   if (!await quotationSourcesCurrent(owner, id, saved.source)) throw changed();
   return saved;
+}
+
+export async function stableRegistrationLayout(owner: string, id: string, profileId: string | null): Promise<RegistrationLayout> {
+  const { inputs, registrationLayout, source } = await readSnapshotSource(owner, id, profileId);
+  publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
+  // Use the same category and workbook validation without resolving every option row.
+  getQuotationSchema(inputs.categoryId, inputs.categoryPath, inputs.hubSchema, inputs.template);
+  if (!await quotationSourcesCurrent(owner, id, source)) throw changed();
+  return registrationLayout;
 }

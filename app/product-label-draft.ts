@@ -5,7 +5,7 @@ import { quotationAiProviderResponse } from '@/app/quotation-ai-provider';
 import { translationNumbers } from '@/app/translation-attribute-evidence';
 import { unsupportedTranslatedProductClaim } from '@/app/product-translation-quality';
 import { unsupportedProductMaterial } from '@/app/product-material-evidence';
-import {prioritizedProductAttributes,productFactPriorityIssue,productFactQuantityTokens} from '@/app/product-fact-priority';
+import {canonicalProductMaterialLiteral,prioritizedProductAttributes,productFactKey,productFactPriorityIssue,productFactQuantityTokens} from '@/app/product-fact-priority';
 import {quotationTextModel,quotationTextProviderInput,quotationTextProviderResponse,validQuotationTextExecution,type QuotationTextExecution} from '@/app/quotation-text-execution';
 
 export const PRODUCT_LABEL_DRAFT_MODEL = QUOTATION_AI_MODEL;
@@ -169,7 +169,7 @@ export function processCurrentLabelCandidates(plan:ProductLabelDraftPlan,respons
  const values:ProductLabelDraftResult['values']={},classifications:Partial<Record<LabelSuggestionKey,'suggestion'|'default'>>={},warnings=[...plan.warnings];
  for(const field of plan.fields){
   const raw=response[outputs[field.key]]??'',issue=labelEvidenceIssue(raw,field.key,plan);let value=issue?'상세정보참조':raw.trim();
-  if(issue)warnings.push(`${field.label}: ${issue}. 검토 기본 표기를 사용했습니다.`);
+  let normalizedMaterial=false;
   let classification:'suggestion'|'default'=issue?'default':'suggestion';
   if(plan.resultPolicy){
    if(field.key==='netContents')value=normalizeCurrentLabelContent(value,plan.facts.bundleQuantity??1);
@@ -177,10 +177,20 @@ export function processCurrentLabelCandidates(plan:ProductLabelDraftPlan,respons
    if(field.key==='material'&&value==='상세정보참조'){
     const candidate=plan.facts.attributes.find(pair=>pair.name==='재질')?.value.trim();
     if(candidate&&candidate!=='기타'&&!currentLabelHan(candidate)&&!productFactPriorityIssue(candidate,'material',plan.facts.description,plan.facts.preferredAttributes)){value=candidate;classification='suggestion';}
+    else if(!plan.facts.savedNotices?.material){
+     const original=plan.facts.attributes.filter(pair=>productFactKey(pair.name)==='material');
+     const detail=plan.facts.preferredAttributes?.filter(pair=>pair.provenance?.startsWith('detail-')&&productFactKey(pair.name)==='material')??[];
+     const materials=[...original,...detail].map(pair=>canonicalProductMaterialLiteral(pair.value));
+     const canonical=materials[0];
+     if(original.length&&canonical&&materials.every(material=>material===canonical)&&!labelEvidenceIssue(canonical,'material',plan)){
+      value=canonical;classification='suggestion';normalizedMaterial=true;
+     }
+    }
    }
    const saved=field.key==='material'?plan.facts.savedNotices?.material:field.key==='netContents'?plan.facts.savedNotices?.netContents:undefined;
    if(saved&&saved!==value){value=field.key==='netContents'?normalizeCurrentLabelContent(saved,plan.facts.bundleQuantity??1):saved;classification='suggestion';}
   }
+  if(issue)warnings.push(`${field.label}: ${issue}. ${normalizedMaterial?'원문 재질의 표준 표기를 사용했습니다.':'검토 기본 표기를 사용했습니다.'}`);
   values[field.key]=value;classifications[field.key]=classification;
  }
  return{values,classifications,warnings};

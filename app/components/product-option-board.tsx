@@ -4,7 +4,7 @@ import {useEffect,useState} from 'react';
 import type {ProductContent} from '@/app/product-content';
 import type {CollectionEditorTab} from '@/app/registration-navigation';
 import {quotationMainImageKeys,optionQuotationName,type ProductOption,type ProductOptionsResponse} from '@/app/product-options';
-import type {QuotationField,QuotationFieldsView} from '@/app/quotation-schema';
+import type {QuotationFieldsView} from '@/app/quotation-schema';
 import {currentSavedQuotationValidation,savedQuotationValidationStage} from '@/app/quotation-save-validation';
 import {validOptionRegistrationNumbers} from '@/app/product-registration';
 import {exactPrimaryQuotationTarget} from '@/app/quotation-seo-targets';
@@ -54,10 +54,10 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
     if(!response.ok)throw Error(body?.error||fallback);
     return body;
   };
-  const [body,saved,quote]=await Promise.all([
+  const [body,saved]=await Promise.all([
     read<ProductOptionsResponse & {optionRegistrationNumbers?:Record<string,string>}>('options','옵션 목록 조회','옵션을 불러오지 못했습니다.'),
-    read<{content?:ProductContent;registrationStages?:RegistrationStageSummary|null;optionImageStages?:OptionImageStageProjection}>('content','공통 상품 자료 조회','공통 상품 자료를 불러오지 못했습니다.',{'x-yoofam-option-image-stages':'v1'}),
-    read<{revision?:number;inputFingerprint?:string;productVersion?:string;optionRevision?:number;contentRevision?:number;imageKeys?:string[];resolved?:{schema?:{fields:QuotationField[]};rows?:{optionId:string|null;fields:Record<string,{value:string;issues?:string[];validationIssues?:string[]}>}[]}}>('quotation-fields','견적서 조회','저장된 견적 가격을 불러오지 못했습니다.'),
+    read<{content?:ProductContent;registrationStages?:RegistrationStageSummary|null;optionImageStages?:OptionImageStageProjection;optionBoardQuotation?:QuotationFieldsView}>(
+      'content','공통 상품 자료 조회','공통 상품 자료를 불러오지 못했습니다.',{'x-yoofam-option-image-stages':'v1','x-yoofam-option-board-quotation':'v1'}),
   ]);
   if(!body||body.options?.productId!==productId||body.options.schemaVersion!==1||!Number.isSafeInteger(body.options.revision)||body.options.revision<0
     ||typeof body.productVersion!=='string'||!body.productVersion||!Array.isArray(body.options.rows)||body.options.rows.length>200||body.options.rows.some(row=>!validOption(row))
@@ -73,6 +73,19 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
     if((field!==undefined&&!record(field))||!Array.isArray(keys)||keys.some(key=>typeof key!=='string'))throw Error('상품의 공통 이미지 응답을 확인하지 못했습니다.');
     return keys;
   };
+  const hasBundle=Object.hasOwn(saved,'optionBoardQuotation');
+  let quote:QuotationFieldsView;
+  if(hasBundle){
+    const bundled=saved.optionBoardQuotation;
+    if(!record(bundled)||!record(saved.optionImageStages)||!record(bundled.categoryContext)
+      ||bundled.categoryContext.source!=='collection'&&bundled.categoryContext.source!=='unknown'
+      ||!record(bundled.automatic)||!Array.isArray(bundled.automatic.rows)||!record(bundled.overrides)||bundled.submissionReady!==false)
+      throw Error('상품의 옵션 목록 견적 응답을 확인하지 못했습니다.');
+    quote=bundled;
+  }else{
+    signal.throwIfAborted();
+    quote=await read<QuotationFieldsView>('quotation-fields','견적서 조회','저장된 견적 가격을 불러오지 못했습니다.');
+  }
   if(!quote?.resolved||!Array.isArray(quote.resolved.rows)||quote.productVersion!==body.productVersion||quote.optionRevision!==body.options.revision||quote.contentRevision!==content.revision)throw Error('상품·옵션·견적서가 변경되었습니다. 새로고침해주세요.');
   if(!Array.isArray(quote.imageKeys)||quote.imageKeys.some(key=>typeof key!=='string'||!key))throw Error('상품의 이미지 목록 응답을 확인하지 못했습니다.');
   if(quote.resolved.rows.some(row=>!record(row)||(row.optionId!==null&&typeof row.optionId!=='string')||!record(row.fields)))throw Error('옵션별 견적 가격 응답을 확인하지 못했습니다.');
@@ -118,7 +131,8 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
     const projection=saved.optionImageStages,scope=parseWorkspaceSettingsScope(projection?.scope),roles=['mainImage','additionalImages']as const;
     if(!record(projection)||projection.format!=='option-image-stages-v1'||!scope?.company||projection.productId!==productId
       ||!Number.isFinite(Date.parse(projection.productVersion))||projection.productVersion!==quote.productVersion||!Number.isSafeInteger(projection.contentRevision)||projection.contentRevision<0||projection.contentRevision!==content.revision||projection.optionRevision!==body.options.revision
-      ||!Number.isSafeInteger(projection.quotationRevision)||projection.quotationRevision!==quote.revision||!/^([a-f0-9]{64})$/.test(projection.inputFingerprint)||projection.inputFingerprint!==quote.inputFingerprint
+      ||!Number.isSafeInteger(projection.quotationRevision)||projection.quotationRevision<0||projection.quotationRevision!==quote.revision||!/^([a-f0-9]{64})$/.test(projection.inputFingerprint)||projection.inputFingerprint!==quote.inputFingerprint
+      ||hasBundle&&quote.imageKeys.some(key=>!key.startsWith(scope.ownerId+'/'))
       ||!record(projection.stages)||Object.keys(projection.stages).length!==body.options.rows.length||body.options.rows.some(row=>!record(projection.stages[row.id])||Object.keys(projection.stages[row.id]).length!==roles.length
         ||roles.some(role=>{const stage=projection.stages[row.id][role];return!record(stage)||!['pending','complete','failed','running','unused'].includes(stage.state)||typeof stage.detail!=='string'||!stage.detail.trim()
           ||stage.sourceProofAt!==undefined&&(typeof stage.sourceProofAt!=='string'||!Number.isFinite(Date.parse(stage.sourceProofAt)));})))throw Error('옵션 이미지 완료 근거의 회원·저장 원본이 변경되었습니다. 목록을 다시 불러와주세요.');
@@ -130,7 +144,7 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
       optionStages[row.id][role]=projection.stages[row.id][role];
     }
   }
-  const checked=currentSavedQuotationValidation(quote as QuotationFieldsView,productId);
+  const checked=currentSavedQuotationValidation(quote,productId);
   if(checked)for(const row of body.options.rows)optionStages[row.id].quotation=savedQuotationValidationStage(checked,row.id);
   const registrationStages=checked?{...(stages??pendingRegistrationStages()),quotation:savedQuotationValidationStage(checked)}:stages?{...stages,quotation:{state:'pending' as const,detail:'현재 저장본의 입력 검사 결과를 확인해주세요.'}}:undefined;
   return {...body,imageKeys:quote.imageKeys,quotationPrices,quotationContent,registrationStages,optionStages,...(saved.optionImageStages?{optionImageStages:saved.optionImageStages}:{}),seoTitle:content.seo?.title.value??null,commonImageKeys:content.assets.main.value,commonAssets};

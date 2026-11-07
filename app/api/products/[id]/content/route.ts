@@ -37,9 +37,10 @@ export async function GET(request: Request, context: Context) {
     if(!product)return response({error:'상품을 찾을 수 없습니다.'},404);
     const content=await readProductContent(owner,id),banners=await bannerMetadata(owner,product,content);
     const summary=await readRegistrationSummaries(owner,[product]).catch(()=>null);
-    const optionImageStages=request.headers.get('x-yoofam-option-image-stages')==='v1'
-      ?await(await import('@/db/option-image-stage-projection')).readOptionImageStageProjection(owner,product,content):undefined;
-    return response({content,registrationStages:summary?.[id]?.stages??null,...(banners?{capturedSettingsBanners:banners}:{}),...(optionImageStages?{optionImageStages}:{})});
+    const optionBoard=request.headers.get('x-yoofam-option-image-stages')==='v1'
+      ?await(await import('@/db/option-image-stage-projection')).readOptionImageStageProjection(owner,product,content,request.headers.get('x-yoofam-option-board-quotation')==='v1'):undefined;
+    return response({content,registrationStages:summary?.[id]?.stages??null,...(banners?{capturedSettingsBanners:banners}:{}),
+      ...(optionBoard?{optionImageStages:optionBoard.projection}:{}),...(optionBoard?.quotation?{optionBoardQuotation:optionBoard.quotation}:{})});
   } catch { return response({ error: '저장한 콘텐츠를 불러오지 못했습니다.' }, 503); }
 }
 
