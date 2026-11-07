@@ -10,10 +10,11 @@ import {reviewSourceFixture,sourceReviewModule} from './helpers/source-review-in
 // existing contract tests retain their original explicit-start defaults.
 const helperUrl=new URL('./helpers/intake-owner-scope.mjs',import.meta.url);
 let helper=fs.readFileSync(helperUrl,'utf8').replaceAll('import.meta.url',JSON.stringify(helperUrl.href));
-helper=helper.replace('sourceSeed,rowCount=1}={})','sourceSeed,rowCount=1,autoStartSource=false}={})')
- .replace('seed=sourceSeed;','seed=sourceSeed,sourceItemsOverride;')
- .replace('sourceSeed:seed,onSourceConsumed','sourceSeed:seed,autoStartSource,sourceItems:sourceItemsOverride??(seed?.sourceItem?[seed.sourceItem]:[]),onSourceConsumed')
- .replace('setSeed(value){seed=value;render();}','setSourceItems(value){sourceItemsOverride=value;render();},setSeed(value){seed=value;render();}')
+helper=helper.replace('sourceSeed,rowCount=1}={})','sourceSeed,rowCount=1,autoStartSource=false,readReady}={})')
+ .replace('seed=sourceSeed;','seed=sourceSeed,sourceItemsOverride,sourceCompany=company;')
+ .replace('sourceSeed:seed,onSourceConsumed','sourceSeed:seed,autoStartSource,sourceCompany,sourceItems:sourceItemsOverride??(seed?.sourceItem?[seed.sourceItem]:[]),onSourceConsumed')
+ .replace('setSeed(value){seed=value;render();}','setSourceItems(value){sourceItemsOverride=value;render();},setSourceCompany(value){sourceCompany=value;render();},setJobs(value){jobs=value;render();},setSeed(value){seed=value;render();}')
+ .replace("if(url!=='/api/collection-jobs')", "if(readReady&&url.startsWith('/api/source-inbox/ready?'))return readReady(url,init);if(url!=='/api/collection-jobs')")
  .replace("goal:'work',onGoal(){}","goal:autoStartSource?'collect':'work',onGoal(){}");
 const exports={};vm.runInNewContext(ts.transpileModule(helper,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText,
  {exports,require:createRequire(helperUrl),URL,URLSearchParams,Response,Request,Headers,File,Blob,FormData,AbortController,AbortSignal,TextEncoder,TextDecoder,structuredClone,crypto,queueMicrotask,setTimeout,clearTimeout,setImmediate});
@@ -59,6 +60,48 @@ test('autostart waits for the category row commit instead of sending an old or m
  const company=companies[0],h=harness(company,{sourceSeed:seed(company),rowCount:0,autoStartSource:true,deferRows:true});try{
   await h.settle();picker(h).props.onSelected(h.profile);await h.settle();assert.equal(h.posts.length,0);assert.equal(h.rows.length,0);assert.ok(h.flushRows()>0);await h.settle();assert.equal(h.posts.length,1);assert.equal(h.collections.length,1);await finish(h,0,'deferred-row-product');h.flushRows();await h.settle();assert.equal(h.posts.length,1);
  }finally{h.close();}
+});
+
+async function staleListStart(){
+ const company=companies[0],selected=seed(company),{before}=reviewSourceFixture(company.owner,company),reads=[];
+ let release;const response=new Promise(resolve=>{release=resolve;});
+ const h=harness(company,{sourceSeed:selected,rowCount:0,autoStartSource:true,readReady:(url,init)=>{reads.push({url,init});return response;}});
+ h.setSourceItems([before]);await h.settle();const choose=picker(h).props.onSelected;choose(h.profile);choose(h.profile);await h.settle();
+ const ready={ownerId:company.owner,company:{code:company.code,name:company.name},capture:selected.sourceCapture};
+ return {h,selected,reads,release,ready};
+}
+
+test('a newly selected capture starts once when the drawer is newer than the dashboard list',async()=>{
+ const {h,selected,reads,release,ready}=await staleListStart();try{
+  assert.equal(h.rows.length,1);assert.deepEqual(plain(h.rows[0].sourceCapture),plain(selected.sourceCapture));assert.equal(h.posts.length,0);
+  release(Response.json(ready));await h.settle();
+  assert.equal(h.posts.length,1,'the dashboard list may stay stale while the exact drawer selection is ready');
+  assert.equal(reads.length,1);const readyUrl=new URL(reads[0].url,'https://app.test');const {sourceUrl,captureId,fingerprint,revision}=selected.sourceCapture;
+  assert.deepEqual(Object.fromEntries(readyUrl.searchParams),{sourceUrl,captureId,fingerprint,revision:String(revision),activeOnly:'1'});assert.equal(reads[0].init.cache,'no-store');
+  assert.deepEqual(plain(h.collections[0].callbacks.selectedCapture),plain(selected.sourceCapture));await finish(h,0,'drawer-capture-product');assert.equal(h.posts.length,1);
+ }finally{h.close();}
+});
+
+test('a stale-list read never starts a removed capture or a changed input, account or receipt',async()=>{
+ for(const mode of ['archived','revision','response-owner','response-company','invalid-body','owner','company','row','receipt','close']){
+  const {h,reads,release,ready,selected}=await staleListStart();try{
+   assert.equal(reads.length,1,mode);assert.equal(h.posts.length,0,mode);
+   let response=Response.json(ready);
+   if(mode==='archived')response=Response.json({code:'PAGE_SOURCE_LOOKUP_UNCERTAIN'},{status:409});
+   if(mode==='revision')response=Response.json({...ready,capture:{...ready.capture,revision:ready.capture.revision+1}});
+   if(mode==='response-owner')response=Response.json({...ready,ownerId:companies[1].owner});
+   if(mode==='response-company')response=Response.json({...ready,company:{code:companies[1].code,name:companies[1].name}});
+   if(mode==='invalid-body')response=new Response('invalid JSON');
+   if(mode==='owner')h.switchOwner(companies[1].owner);
+   if(mode==='company')h.setSourceCompany(companies[1]);
+   if(mode==='row')h.setRows([]);
+   if(mode==='receipt')h.setJobs([{id:'changed-receipt',source_url:selected.sourceUrl,product_id:'different-product'}]);
+   if(mode==='close')h.close();
+   if(mode==='owner'||mode==='close')assert.equal(reads[0].init.signal.aborted,true,mode);
+   release(response);await h.settle();h.setSourceItems([selected.sourceItem]);await h.settle();
+   assert.equal(h.posts.length,0,mode);assert.equal(h.collections.length,0,mode);assert.equal(reads.length,1,mode);assert.equal(h.lateStateWrites,0,mode);
+  }finally{h.close();}
+ }
 });
 
 function pendingTitleSeed(company){

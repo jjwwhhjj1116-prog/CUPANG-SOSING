@@ -65,7 +65,10 @@ test('explicit ready selectors reject missing/partial/stale or cross-offer captu
   const first=await x.post(1);await x.post(2);
   const exact={captureId:id(1),fingerprint:first.input.fingerprint,revision:'1'};
   for(const selection of [{captureId:id(1)},{...exact,captureId:id(99)},{...exact,fingerprint:'0'.repeat(64)},{...exact,revision:'2'},{...exact,revision:'01'},{...exact,sourceUrl:'https://detail.1688.com/offer/700000000754.html'}]){const result=await x.lookup(selection);assert.equal(result.response.status,409);assert.equal(result.body.code,'PAGE_SOURCE_LOOKUP_UNCERTAIN');}
+  const active=await x.lookup({...exact,activeOnly:'1'});assert.equal(active.response.status,200);assert.equal(active.response.headers.get('cache-control'),'no-store');assert.equal(active.body.capture.captureId,id(1));assert.deepEqual(active.body.company,{code:companies[1].companyCode,name:companies[1].companyName});
+  assert.equal((await x.lookup({activeOnly:'1'})).response.status,409,'active verification never substitutes the latest URL capture');
   const original=await x.db.readSourceInbox('owner',id(1));await x.archive(original);const allowed=await x.lookup({...exact,revision:'2'});assert.equal(allowed.response.status,200,'archiving only hides the source; it does not destroy an exact selected original');
+  const archived=await x.lookup({...exact,revision:'2',activeOnly:'1'});assert.equal(archived.response.status,409);assert.equal(archived.body.code,'PAGE_SOURCE_LOOKUP_UNCERTAIN');assert.equal(archived.body.capture,undefined);
   assert.equal((await x.lookup()).body.capture.captureId,id(2));assert.equal(h.network.length,0);
  }finally{h.close();}
 });

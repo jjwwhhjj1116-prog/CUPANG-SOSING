@@ -190,3 +190,33 @@ test('a committed Single profile reply arriving after picker close never opens U
     assert.equal(f.h.sqlite.prepare('SELECT COUNT(*) n FROM collection_jobs').get().n, 1, 'only the original inert fixture job exists');
   } finally { f.close(); }
 });
+
+test('an unavailable live category list exposes the verified saved form for the current company',async()=>{
+ const f=setup(schemaCompanies[0]);let picker;
+ try{
+  await f.picker.chooseLive(f.choice);
+  const saved=f.picker.selected[0];assert.ok(saved,JSON.stringify(f.picker.alerts()));
+  const before=f.retained();
+  picker=categoryPickerUI(f.request,{workspaceOwnerId:'owner',profiles:[saved],catalog:{
+   loadLiveHubCategorySchema(){assert.fail('Using the verified saved form must not call Supplier Hub');},
+  }});
+  picker.openDirect();
+  const disclosure=()=>nodes(picker.render()).find(node=>node.props?.className==='category-saved');
+  assert.equal(Boolean(disclosure().props.open),false);
+  const browser=nodes(picker.render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser');
+  browser.props.onUnavailable?.();
+  assert.equal(disclosure().props.open,true,'a failed official read must reveal saved categories');
+  assert.deepEqual(picker.calls,[]);
+  disclosure().props.onToggle({currentTarget:{open:false}});
+  nodes(picker.render()).find(node=>node.props?.role==='tab'&&node.props.children==='추천 선택').props.onClick();
+  nodes(picker.render()).find(node=>node.type==='button'&&node.props.children==='저장한 카테고리 선택').props.onClick();
+  assert.equal(disclosure().props.open,true,'the saved shortcut works from the first recommendation tab');
+  assert.deepEqual(picker.calls,[]);
+  const select=nodes(disclosure()).find(node=>node.type==='select');
+  select.props.onChange({target:{value:saved.id}});await picker.confirm();
+  assert.equal(picker.selected[0]?.id,saved.id,JSON.stringify(picker.alerts()));
+  assert.equal(picker.selected[0].hubSchema.schemaString,f.snapshot.schemaString);
+  assert.ok(picker.calls.every(call=>call.method==='GET'));
+  assert.equal(f.retained(),before);
+ }finally{picker?.close();f.close();}
+});

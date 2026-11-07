@@ -257,6 +257,8 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     const active=()=>ownerCurrent()&&running.current===controller&&!controller.signal.aborted;
     const publishJobs=(values:CollectionJob[])=>{if(active())onJobs(values);};
     try {
+      const unavailableCapture='선택한 수집본을 다시 확인해주세요. 같은 URL의 다른 수집본으로 바꾸지 않았습니다.';
+      const missingCaptures:Readonly<SourceCaptureSelection>[]=[];
       const incomplete=processing.map(row=>{
         if(row.sourceReviewContinuation){if(!reviewContinuationCurrent(row))throw Error('원래 URL 수집의 회원·회사·입력 범위가 변경되었습니다. 수집본을 명시적으로 다시 선택해주세요.');return undefined;}
         if(!row.sourceCapture)return sourceItems.find(item=>sameSourceUrl(item.snapshot.sourceUrl,row.url));
@@ -265,10 +267,30 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
         // browser PageSource review list cannot represent this source format.
         if(row.sourceCapture.format==='yoofam-saved-query-capture-v1'){validateSourceCaptureSelection(row.sourceCapture,row.url);return undefined;}
         const item=selectedSourceInboxItem(target?current.sourceItems:sourceItems,row.sourceCapture);
-        if(!item||target&&item.archivedAt||workspaceOwnerId&&item.ownerId!==workspaceOwnerId)throw Error('선택한 수집본을 다시 확인해주세요. 같은 URL의 다른 수집본으로 바꾸지 않았습니다.');
+        if(!item&&workspaceOwnerId&&sourceCompany){missingCaptures.push(validateSourceCaptureSelection(row.sourceCapture,row.url));return undefined;}
+        if(!item||target&&item.archivedAt||workspaceOwnerId&&item.ownerId!==workspaceOwnerId)throw Error(unavailableCapture);
         return item;
       }).find(item=>item?.issues.length);
       if(incomplete)throw Error('수집정보 확인·수정에서 '+incomplete.issues.join(' · ')+'을 확인한 뒤 초안을 작성해주세요.');
+      // The drawer can see a newly saved revision before the dashboard list catches up.
+      for(const capture of missingCaptures){
+        const {sourceUrl,captureId,fingerprint,revision}=capture;
+        const query=new URLSearchParams({sourceUrl,captureId,fingerprint,revision:String(revision),activeOnly:'1'});
+        const response=await fetch('/api/source-inbox/ready?'+query,{cache:'no-store',credentials:'same-origin',redirect:'error',signal:controller.signal}).catch(()=>null);
+        const body=await response?.json().catch(()=>null) as {ownerId?:unknown;company?:{code?:unknown;name?:unknown};capture?:unknown;code?:unknown;error?:unknown}|null|undefined;
+        if(!active())return;
+        const latest=navigation.current;
+        if(latest.rows!==rows||latest.settings!==settings||latest.goal!==goal||latest.jobs!==current.jobs||latest.sourceReviewScope!==sourceReviewScope||latest.sourceCompany!==sourceCompany)
+          throw Error('수집본을 확인하는 중 상품 대기열이나 작업 범위가 변경되었습니다. 다시 확인해주세요.');
+        if(!response?.ok&&body?.ownerId===workspaceOwnerId&&body?.code==='PAGE_SOURCE_REVIEW_REQUIRED'&&typeof body.error==='string')throw Error(body.error);
+        if(!response?.ok||!body||body.ownerId!==workspaceOwnerId||!sourceCompany||body.company?.code!==sourceCompany.code||body.company?.name!==sourceCompany.name||!sameSourceCaptureSelection(capture,body.capture))throw Error(unavailableCapture);
+      }
+      if(missingCaptures.some(capture=>{
+        const latest=navigation.current.sourceItems.find(item=>item.id===capture.captureId);
+        if(!latest)return current.sourceItems.some(item=>item.id===capture.captureId);
+        return latest.revision>capture.revision||latest.revision===capture.revision&&
+          (latest.archivedAt!==null||latest.ownerId!==workspaceOwnerId||latest.fingerprint!==capture.fingerprint||latest.snapshot.sourceUrl!==capture.sourceUrl||latest.issues.length>0);
+      }))throw Error(unavailableCapture);
       await submitIntakeQueue(rows, goal, { signal: controller.signal, fetcher: fetch, expectedSettings:settings, onSettingsChanged:()=>{if(active()){setSettingsChanged(true);setSettingsMessage('');}}, selectedIds: new Set(processing.map(row => row.id)),
         collect: (job,onProgress,onProduct,selectedCapture) => {if(job.product_id)reusedProductIds.add(job.product_id);return collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,...(selectedCapture?{selectedCapture}:{}),captureFromBrowser:capture1688FromChrome,probeExistingFromBrowser:probe1688FromChrome,onProductReused:id=>{if(active())reusedProductIds.add(id);},onJob:updated=>{if(!active())return;publishJobs([updated]);if(updated.product_id)onProduct(updated.product_id);},onProgress});},
         onRow: (id, patch) => {if(!active())return;if(patch.productId)productIds.set(id,patch.productId);if(patch.status==='saved')completed.add(id);onRows(previous => sameOwner()?previous.map(row => {

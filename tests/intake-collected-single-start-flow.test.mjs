@@ -44,8 +44,8 @@ for(const company of companies)for(const outcome of ['created','late-reused'])te
   const oldId='synthetic-protected-single-start-770',oldKey='owner/protected-single-start-770.png',policy=h.load('app/pricing.ts').pricePolicy(settings),birth=new Date().toISOString();
   h.objects.set(oldKey,Uint8Array.of(1,7,7,0));
   await h.load('db/queries.ts').insertProduct({id:oldId,owner_id:'owner',source_url:'synthetic://protected-work-770',title:'기존 합성 작업 유지',source_price_cny:8,exchange_rate:policy.exchangeRate,supply_margin:policy.supplyMargin,coupang_margin:policy.coupangMargin,supply_price:5600,sale_price:9340,msrp:12150,options_count:1,seo_status:'완료',image_status:'완료',quote_status:'대기',registration_status:'대기',supplier_hub_status:'미전송',image_keys:JSON.stringify([oldKey]),goal_stage:'work',created_at:birth,updated_at:birth},policy);
-  const oldContent=h.load('app/product-content.ts').emptyProductContent(oldId);oldContent.revision=1;oldContent.updatedAt=birth;
-  h.sqlite.prepare('INSERT INTO product_content(product_id,owner_id,revision,payload,updated_at) VALUES(?,?,?,?,?)').run(oldId,'owner',1,JSON.stringify(oldContent),birth);
+  const oldContent=await h.load('db/product-content.ts').readProductContent('owner',oldId);
+  assert.equal(oldContent.productId,oldId);assert.ok(oldContent.revision>0,'protected product already has saved content');
   const oldBefore=retainedProduct(h,oldId),oldBytes=Buffer.from(h.objects.get(oldKey)).toString('hex'),oldJob=JSON.stringify(h.sqlite.prepare("SELECT * FROM collection_jobs WHERE id='job'").get()),oldContext=JSON.stringify(h.sqlite.prepare("SELECT * FROM collection_context WHERE job_id='job'").get());
   const snapshot=syntheticSnapshot(company),profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'SYNTHETIC-SINGLE-START-770',categoryId:snapshot.categoryId,categoryPath:snapshot.categoryPath,template:null,mappings:[],hubSchema:snapshot});
   const source=capturedPage(),fingerprint=await h.load('app/source-inbox.ts').pageSourceFingerprint(source),captureId='00000000-0000-4000-8000-000000000770';

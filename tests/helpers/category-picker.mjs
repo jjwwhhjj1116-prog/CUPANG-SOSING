@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
+import * as pageSourcePriceBasis from '../../extensions/supplier-hub/page-source-price-basis.mjs';
 
 const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
@@ -18,6 +19,7 @@ export function categoryPickerUI(request,{catalog,profiles=[],selectedId='',work
   if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,
    {exports,Error,crypto,AbortController,TextEncoder,TextDecoder,structuredClone,fetch:fetcher,require(name){
+    if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs'||name==='../extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
     if(name==='@/app/components/category-recommendations-panel')return{CategoryRecommendationsPanel:function CategoryRecommendationsPanel(){return null;}};
     if(name==='@/app/supplier-hub-category-recommendations')return{resolveRecommendedHubCategoryChoice:recommendationResolver??(()=>{throw Error('No fixture recommendation chosen');})};
     if(name==='react')return hooks;if(name.endsWith('.css'))return {};

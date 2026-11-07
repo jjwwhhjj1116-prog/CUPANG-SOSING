@@ -60,6 +60,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
   const [liveChoice,setLiveChoice]=useState<CategoryChoice|null>(null);
   const [catalogMode,setCatalogMode]=useState<'recommend'|'direct'>('recommend');
   const [directOpened,setDirectOpened]=useState(false),[modeEpoch,setModeEpoch]=useState(0);
+  const [savedCategoriesOpen,setSavedCategoriesOpen]=useState(false);
   const modeScope=useRef({mode:'recommend' as 'recommend'|'direct',epoch:0});
   const [connectionMode,setConnectionMode]=useState<'single'|'excel'>('single');
   const profiles = refreshedProfiles ?? suppliedProfiles;
@@ -86,7 +87,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
     // when those props later return to the same values (A -> B -> A).
     selectionEpoch.current++;clearWorkbookSelection();
     activeRequest.current?.abort();activeRequest.current=null;setBusy(false);setError('');
-    modeScope.current={mode:'recommend',epoch:modeScope.current.epoch+1};setModeEpoch(modeScope.current.epoch);setCatalogMode('recommend');setDirectOpened(false);
+    modeScope.current={mode:'recommend',epoch:modeScope.current.epoch+1};setModeEpoch(modeScope.current.epoch);setCatalogMode('recommend');setDirectOpened(false);setSavedCategoriesOpen(false);
   },[selectionInputs]);
   useAccountEffect(() => {
     if(account.current.ownerId!==workspaceOwnerId){
@@ -94,7 +95,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
       activeRequest.current?.abort();activeRequest.current=null;completed.current=false;createRequest.current=null;definitionRefreshRequest.current=null;
       selectionEpoch.current++;clearWorkbookSelection();
       modeScope.current={mode:'recommend',epoch:modeScope.current.epoch+1};setModeEpoch(modeScope.current.epoch);
-      setRefreshedProfiles(null);setLiveChoice(null);setSelectedKey('');setPath([]);setQuery('');setCatalogMode('recommend');setDirectOpened(false);setConnectionMode('single');setBusy(false);setError('');
+      setRefreshedProfiles(null);setLiveChoice(null);setSelectedKey('');setPath([]);setQuery('');setCatalogMode('recommend');setDirectOpened(false);setSavedCategoriesOpen(false);setConnectionMode('single');setBusy(false);setError('');
     }
     setAccountEpoch(account.current.epoch);
     account.current.mounted=true;
@@ -105,6 +106,11 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
     if(!current()||busy||activeRequest.current||completed.current||modeScope.current.mode===mode)return;
     modeScope.current={mode,epoch:modeScope.current.epoch+1};setModeEpoch(modeScope.current.epoch);setCatalogMode(mode);
     if(mode==='direct')setDirectOpened(true);
+  }
+  function openSavedCategories() {
+    if(!current()||busy||activeRequest.current||completed.current)return;
+    changeCatalogMode('direct');
+    setSavedCategoriesOpen(true);
   }
   function tabKeyboard(event:KeyboardEvent<HTMLButtonElement>) {
     if(busy||event.altKey||event.ctrlKey||event.metaKey||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
@@ -311,14 +317,15 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
     <div className="category-mode-tabs" role="tablist" aria-label="카테고리 선택 방식">{([['recommend','추천 선택'],['direct','직접 선택']] as const).map(([mode,label])=><button key={mode} id={`${pickerId}-${mode}-tab`} data-category-mode={mode} type="button" role="tab" aria-selected={catalogMode===mode} aria-controls={`${pickerId}-${mode}-panel`} tabIndex={catalogMode===mode?0:-1} disabled={busy} onKeyDown={tabKeyboard} onClick={()=>changeCatalogMode(mode)}>{label}</button>)}</div>
     <div id={`${pickerId}-recommend-panel`} className="category-mode-panel" role="tabpanel" aria-label="추천 선택" aria-labelledby={`${pickerId}-recommend-tab`} hidden={catalogMode!=='recommend'}>
       <CategoryRecommendationsPanel initialTitle={sourceTitle??''} workspaceOwnerId={workspaceOwnerId} sourceScope={sourceScope} selectionScope={selectionInputs} disabled={busy||catalogMode!=='recommend'} onChoose={(item,result)=>chooseRecommendation(item,result,'recommend',modeEpoch)}/>
+      {profiles.length>0&&<button type="button" className="btn ghost" disabled={busy} onClick={openSavedCategories}>저장한 카테고리 선택</button>}
     </div>
     <div id={`${pickerId}-direct-panel`} className="category-mode-panel" role="tabpanel" aria-label="직접 선택" aria-labelledby={`${pickerId}-direct-tab`} hidden={catalogMode!=='direct'}>
     {directOpened&&<>
     <CategoryRecommendationsPanel purpose="search" initialTitle="" workspaceOwnerId={workspaceOwnerId} sourceScope={sourceScope} selectionScope={selectionInputs} disabled={busy||catalogMode!=='direct'} onChoose={(item,result)=>chooseRecommendation(item,result,'direct',modeEpoch)}/>
     <p className="category-instructions">단계별로 선택하면 하위 카테고리가 표시됩니다. 최종 카테고리의 전체 경로를 확인해주세요.</p>
-    <SupplierHubCategoryBrowser disabled={busy||catalogMode!=='direct'} onNavigating={()=>{if(!current()||activeRequest.current||modeScope.current.mode!=='direct'||modeScope.current.epoch!==modeEpoch)return;selectionEpoch.current++;clearWorkbookSelection();completed.current=false;setLiveChoice(null);setSelectedKey('');setPath([]);setError('');}} onChoice={choice=>{if(!current()||activeRequest.current||completed.current||modeScope.current.mode!=='direct'||modeScope.current.epoch!==modeEpoch)return;selectionEpoch.current++;clearWorkbookSelection();setLiveChoice(choice);setPath(choice.path);setSelectedKey(choice.key);setError('');if(canConfirmCategory(choice))void confirm(choice);}}/>
+    <SupplierHubCategoryBrowser disabled={busy||catalogMode!=='direct'} onUnavailable={()=>{if(current()&&modeScope.current.mode==='direct'&&modeScope.current.epoch===modeEpoch)setSavedCategoriesOpen(true);}} onNavigating={()=>{if(!current()||activeRequest.current||modeScope.current.mode!=='direct'||modeScope.current.epoch!==modeEpoch)return;selectionEpoch.current++;clearWorkbookSelection();completed.current=false;setLiveChoice(null);setSelectedKey('');setPath([]);setError('');}} onChoice={choice=>{if(!current()||activeRequest.current||completed.current||modeScope.current.mode!=='direct'||modeScope.current.epoch!==modeEpoch)return;selectionEpoch.current++;clearWorkbookSelection();setLiveChoice(choice);setPath(choice.path);setSelectedKey(choice.key);setError('');if(canConfirmCategory(choice))void confirm(choice);}}/>
     {path.length > 0 && <nav className="category-breadcrumb" aria-label="선택한 카테고리 경로">{path.map((name,index)=><button type="button" key={index} disabled={busy||Boolean(liveChoice)} onClick={()=>navigate(path.slice(0,index+1))}>{name}</button>)}</nav>}
-    <details className="category-saved"><summary>저장한 카테고리·관찰 목록에서 선택</summary>
+    <details className="category-saved" open={savedCategoriesOpen} onToggle={event=>setSavedCategoriesOpen(event.currentTarget.open)}><summary>저장한 카테고리·관찰 목록에서 선택</summary>
     {profiles.length > 0 && <label className="field"><span>저장한 카테고리 설정</span><select value={selected?.profileId ?? ''} disabled={busy} onChange={event => { const found = choices.find(choice => choice.profileId === event.target.value); if (found) { choose(found); setQuery(''); } }}><option value="">저장한 설정 선택</option>{profiles.map(profile => { const company = savedDefinitions.get(profile.id)?.profile.hubSchema?.company; return <option key={profile.id} value={profile.id}>{profile.name} · {profile.categoryId || '코드 미입력'} · {company ? `${company.name} (${company.code})` : '회사 미확인'} · {profile.categoryPath.join(' › ')}</option>; })}</select></label>}
     <label className="field"><span>저장·관찰 목록 검색</span><input type="search" placeholder="카테고리 이름 또는 번호" value={query} onChange={event => setQuery(event.target.value)} disabled={busy}/></label>
     {query.trim() ? <div className="category-search-results">{visible.map(choice => <button key={choice.key} type="button" className={selectedKey === choice.key ? 'selected' : ''} onClick={() => { if (!current() || activeRequest.current || completed.current || modeScope.current.mode!=='direct' || modeScope.current.epoch!==modeEpoch) return; if (choice.isLeaf) { choose(choice); if (canConfirmCategory(choice)) void confirm(choice); } else { navigate(choice.path); setQuery(''); } }} disabled={busy}><span>{choice.path.join(' › ')}{choice.profileName && <em>{choice.profileName}</em>}</span><small className={canConfirmCategory(choice) ? 'ready' : 'unconfirmed'}>{choice.categoryId ? `${choice.evidence === 'saved' ? '저장 설정 · ' : ''}${choice.categoryId}` : choice.isLeaf ? '최종 · 코드 미확인' : choice.childrenObserved ? '하위 분류 보기' : '하위 목록 미확인'}</small></button>)}{!visible.length && <p>관찰한 목록과 저장 설정에서 일치하는 분류가 없습니다. 전체 목록에 없는 것으로 단정할 수는 없습니다.</p>}</div> : <div className="category-tree">{Array.from({ length: depths }, (_, depth) => <section key={depth}><h3>{depth + 1}단계 카테고리</h3><div className="category-tree-options">{categoryLevel(choices, path, depth).map(name => {

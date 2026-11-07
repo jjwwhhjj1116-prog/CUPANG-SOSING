@@ -3,16 +3,16 @@ import {useCallback,useEffect,useRef,useState,type KeyboardEvent} from 'react';
 import {hubCategoryChoice,loadSupplierHubCategoryBranch,type HubCategoryBranch,type HubCategoryNode} from '@/app/supplier-hub-catalog';
 import type {CategoryChoice} from '@/app/category-catalog';
 
-export function SupplierHubCategoryBrowser({disabled,onChoice,onNavigating}:{disabled:boolean;onChoice:(choice:CategoryChoice)=>void;onNavigating:()=>void}){
+export function SupplierHubCategoryBrowser({disabled,onChoice,onNavigating,onUnavailable}:{disabled:boolean;onChoice:(choice:CategoryChoice)=>void;onNavigating:()=>void;onUnavailable?:()=>void}){
   const [branches,setBranches]=useState<HubCategoryBranch[]>([]),[trail,setTrail]=useState<HubCategoryNode[]>([]);
   const [selected,setSelected]=useState(''),[loading,setLoading]=useState(false),[error,setError]=useState('');
-  const active=useRef<AbortController|null>(null),callbacks=useRef({onChoice,onNavigating});
+  const active=useRef<AbortController|null>(null),callbacks=useRef({onChoice,onNavigating,onUnavailable});
   const identity=useRef<{ownerId:string;code:string;name:string}|null>(null);
   const retryTrail=useRef<HubCategoryNode[]>([]);
   const columns=useRef(new Map<string,HTMLElement>()),buttons=useRef(new Map<string,HTMLButtonElement>());
   const focusAfterLoad=useRef<string|null>(null);
   const mounted=useRef(true),currentBranches=useRef<HubCategoryBranch[]>([]);
-  useEffect(()=>{callbacks.current={onChoice,onNavigating};},[onChoice,onNavigating]);
+  useEffect(()=>{callbacks.current={onChoice,onNavigating,onUnavailable};},[onChoice,onNavigating,onUnavailable]);
   const load=useCallback(async(next:HubCategoryNode[],focusChild=false)=>{
     if(!mounted.current)return;
     active.current?.abort();const controller=new AbortController();active.current=controller;
@@ -26,7 +26,10 @@ export function SupplierHubCategoryBrowser({disabled,onChoice,onNavigating}:{dis
       }
       identity.current={ownerId:branch.ownerId,code:branch.company.code,name:branch.company.name};
       const visible=[...currentBranches.current.slice(0,next.length),branch];currentBranches.current=visible;setBranches(visible);setTrail(next);
-    }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'카테고리 목록을 읽지 못했습니다.');}
+    }catch(cause){if(!controller.signal.aborted){
+      setError(cause instanceof Error?cause.message:'카테고리 목록을 읽지 못했습니다.');
+      callbacks.current.onUnavailable?.();
+    }}
     finally{if(active.current===controller)active.current=null;if(!controller.signal.aborted)setLoading(false);}
   },[]);
   useEffect(()=>{
