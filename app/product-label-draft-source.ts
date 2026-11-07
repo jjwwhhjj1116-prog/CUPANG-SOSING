@@ -14,5 +14,6 @@ export async function savedProductLabelDraftSource(owner:string,input:{product:P
  const original=receipt?.result;
  return{originalTitle:original?.title??product.title,productName:quotation.resolved.rows.find(row=>row.optionId===optionId)?.fields.title?.value??content.seo.title.value,
  description:content.detail?.description?.provenance==='manual'?content.detail.description.value:original?.description??content.detail?.description?.value??content.seo.description.value,attributes:original?.attributes??[],manualKeys:(['netContents','material','productType'] as const).filter(key=>content.label[key].provenance==='manual'),
+ officialCategory:quotation.categoryContext.source!=='unknown'&&quotation.resolved.schema.status==='observed',
  option:option?{optionId:option.id,originalName:option.originalName,translatedName:option.translatedName,unitsPerPack:option.unitsPerPack}:null,bundleQuantity:currentLabelBundleQuantity(options,optionId),savedNotices:currentSavedLabelNotices(quotation.resolved.schema,quotation.overrides,optionId,content)};
 }

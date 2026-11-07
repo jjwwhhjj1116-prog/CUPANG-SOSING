@@ -13,8 +13,9 @@ const offerId = '630800250001';
 const sourceUrl = `https://detail.1688.com/offer/${offerId}.html`;
 const memo = { brand: '검토 브랜드', features: '책상 정리', keywords: '펜홀더' };
 const lookup = { action: 'prepare-collected', intake: true, lookupSeoKeywords: true };
+const matchingTags = ['펜홀더', '펜꽂이', '연필꽂이'];
 const seoComposition = {
-  version: 'couplus-current-composition-v2',
+  version: 'couplus-current-composition-v3',
   memo,
   related: { source: 'consumer', query: memo.keywords, keywords: ['펜홀더', '펜꽂이', '연필꽂이', '책갈피', '펜클립'], warnings: [] },
 };
@@ -97,7 +98,7 @@ test('fresh Qwen intake requests candidates against its captured memo and reuses
     assert.deepEqual(job.review.source.guidance, { features: memo.features, keywords: memo.keywords });
     assert.ok(!job.review.source.attributes.some(row => row.value === '책갈피'));
     const request = h.load('app/automation/translation.ts').buildTranslationRequest(job.review);
-    assert.deepEqual(JSON.parse(request.input[0].content[0].text).composition.related.keywords, seoComposition.related.keywords);
+    assert.deepEqual(JSON.parse(request.input[0].content[0].text).composition.related.keywords, matchingTags);
     const { job: replayed, replayed: reused } = await json(await post(lookup));
     assert.equal(reused, true);
     assert.deepEqual(replayed, job);
@@ -149,7 +150,7 @@ test('fresh browser intake recommends and saves only same-product tags, with the
     assert.deepEqual(payloads[0], lookup);
     assert.deepEqual(payloads[1].seoComposition, seoComposition);
     assert.equal(h.aiSources.length, 1);
-    assert.deepEqual(h.aiSources[0].composition.related.keywords, seoComposition.related.keywords);
+    assert.deepEqual(h.aiSources[0].composition.related.keywords, matchingTags);
     const product = h.sqlite.prepare('SELECT id, supplier_hub_status FROM products WHERE source_url = ?').get(sourceUrl);
     const base = `/api/products/${product.id}`;
     const { content } = await json(await h.route(base + '/content'));

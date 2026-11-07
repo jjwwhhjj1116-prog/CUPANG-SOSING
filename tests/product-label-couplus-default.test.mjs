@@ -8,10 +8,10 @@ import * as parse5 from 'parse5';
 const cache=new Map();
 function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,Date,Set,Map,Error,require:name=>{if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;if(name==='parse5')return parse5;assert(name.startsWith('@/'));return load(name.slice(2)+'.ts');}});return exports;}
 const model=load('app/product-label.ts'),plain=value=>JSON.parse(JSON.stringify(value));
-test('new Couplus structure freezes importer before manufacturer with unchanged semantic keys',()=>{
+test('new Couplus structure puts manufacturer before importer with unchanged semantic keys',()=>{
  const structure=plain(model.couplusProductLabelStructure());
- assert.deepEqual(structure.map(field=>field.id),['productName','importer','manufacturer','countryOfOrigin','netContents','material','productType','precautions','usageStandard']);
- assert.deepEqual(structure.slice(0,4).map(field=>field.label),['제품명','수입 및 판매원','제조원','제조국']);
+ assert.deepEqual(structure.map(field=>field.id),['productName','manufacturer','importer','countryOfOrigin','netContents','material','productType','precautions','usageStandard']);
+ assert.deepEqual(structure.slice(0,4).map(field=>field.label),['제품명','제조원','수입 및 판매원','제조국']);
  assert.deepEqual(structure.filter(field=>field.required).map(field=>field.id),['productName']);
  assert.deepEqual(plain(model.validateProductLabelStructure(structure)),structure);
 });

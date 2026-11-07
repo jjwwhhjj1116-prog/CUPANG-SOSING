@@ -133,6 +133,9 @@ test('a color in the option name fills the required exposed field and native tit
   options.rows[0].originalName = '黑色笔筒收纳';
   options.rows[0].translatedName = '검은색 펜꽂이';
   assert.equal(resolve().rows[1].productNameProposal.value, title + ' 블랙');
+  options.rows[0].originalName = '咖色笔筒收纳';
+  options.rows[0].translatedName = '카라펜홀더수납';
+  assert.equal(resolve().rows[1].productNameProposal.value, title + ' 커피');
   options.rows[0].originalName = '';
   options.rows[0].translatedName = '펜통 (순백색)';
   assert.equal(resolve().rows[1].productNameProposal.value, title + ' 화이트');

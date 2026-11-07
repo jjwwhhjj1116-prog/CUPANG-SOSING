@@ -4,7 +4,7 @@ import { mobileIntakeHarness } from './helpers/mobile-intake.mjs';
 import { collectionNewDraftFixture, forkCompanies } from './helpers/collection-new-draft.mjs';
 import { optionSplitFixture } from './helpers/product-option-splits-api.mjs';
 
-const keys = ['productName','importer','manufacturer','countryOfOrigin','netContents','material','productType','precautions','usageStandard'];
+const keys = ['productName','manufacturer','importer','countryOfOrigin','netContents','material','productType','precautions','usageStandard'];
 const plain = value => JSON.parse(JSON.stringify(value));
 const json = async (response, status = 200) => { assert.equal(response.status, status, await response.clone().text()); return response.json(); };
 const total = h => Number(h.sqlite.prepare('SELECT total_changes() n').get().n);

@@ -1,6 +1,7 @@
 import type { QuotationField } from '@/app/quotation-schema';
 import { quotationPriceEditInput, quotationPriceVisibleFields } from '@/app/quotation-price-edits';
 const basicOrder = ['model','brand','manufacturer','tradeType','taxType','importType','searchTags'];
+const yogaSockBasicOrder = [...basicOrder.slice(1), 'model'];
 function imageRole(field: QuotationField): string {
   const wire=field.hubWire;
   if(['mainImage','additionalImages','labelImages','detailImages','detailHtml','altText'].includes(field.id))return field.id;
@@ -42,14 +43,15 @@ export function quotationFieldGroup(field: QuotationField, fields?: readonly Quo
 
 /** Arrange the controls within each page without mutating the source schema.
  * Unknown fields retain their relative order after the known inputs. */
-export function quotationSectionDisplayFields(fields:readonly QuotationField[],section:QuotationField['section']):QuotationField[]{
+export function quotationSectionDisplayFields(fields:readonly QuotationField[],section:QuotationField['section'],categoryId?:string|null):QuotationField[]{
   const visible=quotationPriceVisibleFields(fields).filter(field=>field.section===section);
   if(section!=='product'&&section!=='image')return visible;
   const groups=section==='product'?['기본 정보','가격 정보','노출 속성','비노출 속성','원본 Excel 추가 항목']:['기본 이미지','라벨 이미지','상세 정보','원본 Excel 추가 항목'];
+  const orderedBasics=categoryId==='103689'?yogaSockBasicOrder:basicOrder;
   return visible.map((field,index)=>{
     const group=quotationFieldGroup(field,fields);
     let order=0;
-    if(group==='기본 정보')order=basicOrder.includes(field.id)?basicOrder.indexOf(field.id):basicOrder.length;
+    if(group==='기본 정보')order=orderedBasics.includes(field.id)?orderedBasics.indexOf(field.id):orderedBasics.length;
     if(section==='image'){
       const role=imageRole(field),known=['mainImage','additionalImages','sizeImages','labelImages','detailImages','detailHtml','altText'];
       order=known.includes(role)?known.indexOf(role):known.length;

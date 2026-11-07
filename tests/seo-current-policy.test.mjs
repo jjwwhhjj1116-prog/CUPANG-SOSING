@@ -26,6 +26,24 @@ test('current recommendation keeps pen holder aliases and drops different items 
   assert.ok(!bundle.keywords.includes('책갈피'));
  }finally{h.close();}
 });
+
+test('new pen holder recommendations filter mismatched live suggestions before and after generation',()=>{
+ const h=mobileIntakeHarness();try{
+  const policyModule=h.load('app/seo-current-policy.ts');
+  const source={title:'桌面多功能笔筒文具名片收纳盒',description:'',attributes:[{name:'option:three',value:'黑色笔筒收纳'}],provenance:'manual',reference:'1688',category:{id:'80025',path:['문구/오피스','펜홀더/연필꽂이']}};
+  const kept=['펜홀더','연필꽂이','펜꽂이','책상 펜 정리함'];
+  const keywords=[...kept,'펜홀더클립','연필클립','펜고정','다이어리펜홀더','펜홀더탁구라켓','자석펜홀더','펜홀더미끄럼방지패드','클립보드펜홀더','북밴드펜홀더','다이어리펜홀더밴드'];
+  const memo={brand:'유앤채',features:'책상 정리',keywords:'펜홀더'};
+  const related={source:'consumer',query:'펜홀더',keywords,warnings:[]};
+  const current=policyModule.validateSeoCompositionPolicy({version:policyModule.CURRENT_SEO_COMPOSITION_VERSION,memo,related});
+  assert.deepEqual(Array.from(current.related.keywords),keywords);
+  assert.deepEqual(Array.from(policyModule.currentSeoInput(source,current).composition.related.keywords),kept);
+  const draft={title:'책상 펜홀더',description:'',keywords,attributes:[],warnings:[]};
+  assert.deepEqual(Array.from(policyModule.guardCurrentSeoDraft(draft,source,current).keywords),kept);
+  const confirmed={...source,attributes:[{name:'구성품',value:'防滑垫'}]};
+  assert.ok(policyModule.guardCurrentSeoDraft(draft,confirmed,current).keywords.includes('펜홀더미끄럼방지패드'));
+ }finally{h.close();}
+});
 test('new composition prompts 70, related preferences stay out of source facts, legacy prompt unchanged',async()=>{
  const h=mobileIntakeHarness();try{const t=h.load('app/automation/translation.ts'),p=h.load('app/seo-current-policy.ts');const source={title:'袜子',description:'',attributes:[{name:'option:one',value:'白色 长筒 2个'}],provenance:'manual',reference:'inert',category:{id:'1',path:['양말']}};
  const config={provider:'workers-ai',model:t.WORKERS_QWEN_MODEL,maxOutputTokens:4096,apiKey:''},old=await t.prepareTranslationReview(source,config),before=t.buildTranslationRequest(old);

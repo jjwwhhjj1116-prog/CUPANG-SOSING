@@ -10,6 +10,7 @@
 .registration-workspace .registration-navigation{gap:12px;min-height:56px;padding:9px 20px;box-shadow:none}
 .registration-workspace .registration-navigation .btn{border:1px solid #32bdea;color:#32bdea;background:#fff;border-radius:10px;font-size:16px;line-height:24px;min-height:42.667px;padding:6px 12px;min-width:80px;font-weight:400}
 .registration-workspace .registration-navigation .btn:first-child{border-color:#ff7e41;color:#ff7e41}
+.registration-workspace .registration-navigation .btn[aria-label="편집 완료"]{border-color:#78c091;background:#78c091;color:#fff}
 .registration-workspace:has(.detail-body[data-registration-stage="SEO"]) .registration-navigation .btn:first-child{display:none}
 .registration-workspace .registration-navigation>span{font-size:14px;color:#676e8a;min-width:40px}
 .registration-workspace .registration-steps{padding-bottom:12px;border-bottom:1px solid #eceef2}

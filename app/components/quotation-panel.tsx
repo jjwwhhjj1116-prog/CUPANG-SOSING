@@ -6,7 +6,7 @@ import { QuotationMappingReview, type QuotationMappingFinding } from '@/app/comp
 
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { quotationStartRow, type CategoryProfile } from '@/app/category-profiles';
 import { QuotationFieldsEditor } from '@/app/components/quotation-fields-editor';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
@@ -19,11 +19,11 @@ type Preview = {
   submissionReview?: QuotationPreviewReviewData;
   report:{dataStartRow:number;mappingCoverage?:QuotationMappingFinding[];rowCount:number;missingRequired:{row:number;column:number;header:string}[];warnings:string[];contentRevision:number;optionRevision:number;profileRevision:number};
 };
-type QuotationPanelProps = {uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;submissionActive?:boolean;onPrepareSubmission?:(profileId?:string)=>void;onProfilePrepared?:(profile:CategoryProfile,source:CategoryProfile)=>void;onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;onReceiptSaved?:()=>void;onEditSeo?:()=>void;navigationTarget?:QuotationNavigationTarget;navigationSequence?:number;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
+type QuotationPanelProps = {uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;submissionActive?:boolean;onPrepareSubmission?:(profileId?:string)=>void;onProfilePrepared?:(profile:CategoryProfile,source:CategoryProfile)=>void;onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;onReceiptSaved?:()=>void;onEditSeo?:()=>void;navigationTarget?:QuotationNavigationTarget;navigationSequence?:number;initialOptionId?:string;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string;canAdminTools?:boolean;adminExtras?:ReactNode};
 export function QuotationPanel(props: QuotationPanelProps) {
-  return <QuotationPanelContent key={JSON.stringify([props.productId,props.preferredProfileId ?? '',props.navigationTarget?.categoryId])} {...props}/>;
+  return <QuotationPanelContent key={JSON.stringify([props.productId,props.preferredProfileId ?? '',props.navigationTarget?.categoryId,props.initialOptionId])} {...props}/>;
 }
-function QuotationPanelContent({uiReads,onBeginSourceWrite,submissionActive=true,onPrepareSubmission,onProfilePrepared,onProfileChange,onSaved,onReceiptSaved,onEditSeo,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget,navigationSequence=0}: QuotationPanelProps) {
+function QuotationPanelContent({uiReads,onBeginSourceWrite,submissionActive=true,onPrepareSubmission,onProfilePrepared,onProfileChange,onSaved,onReceiptSaved,onEditSeo,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget,navigationSequence=0,initialOptionId,canAdminTools=false,adminExtras}: QuotationPanelProps) {
   const uiReadRef=useRef(uiReads);useLayoutEffect(()=>{uiReadRef.current=uiReads;},[uiReads]);
   const [profiles,setProfiles]=useState<CategoryProfile[]>([]);
   const [profileId,setProfileId]=useState('');const [startRow,setStartRow]=useState(2);
@@ -57,6 +57,8 @@ function QuotationPanelContent({uiReads,onBeginSourceWrite,submissionActive=true
   const [profileVersion,setProfileVersion]=useState(0);
   const [templateMessage,setTemplateMessage]=useState('');
   const [templateError,setTemplateError]=useState('');
+  const [adminMode,setAdminMode]=useState<'visible'|'hidden'>();
+  const adminTools=canAdminTools?adminMode:undefined;
   const lockKey=JSON.stringify([productId,profileId,overrideProfileId,refreshToken,profileVersion,navigationSequence,currentReviewTarget?.sequence]);
   const submissionScope=useMemo(()=>({key:lockKey}),[lockKey]);
   const lockScope=useRef(submissionScope),retiredScopes=useRef(new WeakSet<typeof submissionScope>());
@@ -174,15 +176,18 @@ function QuotationPanelContent({uiReads,onBeginSourceWrite,submissionActive=true
   }
   if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn primary" disabled={sourceLocked} onClick={()=>{if(!sourceActionCurrent())return;setContextError('');setContextLoaded(false);setLoadAttempt(value=>value+1);}}>카테고리 연결 다시 확인</button><button type="button" className="btn ghost" disabled={sourceLocked} onClick={manageCategories}>카테고리·양식 설정 확인</button></section>;
   return <section className="panel-stack couplus-quotation-stage" aria-busy={busy||closeLocked} data-workspace-saving={busy||closeLocked}>
-    <h2 className="couplus-quotation-heading">등록 세부정보</h2>
+    <div className="couplus-quotation-title-row">
+      <h2 className="couplus-quotation-heading">등록 세부정보</h2>
+      {canAdminTools && <button type="button" className="btn ghost quotation-admin-toggle" aria-expanded={adminTools==='visible'} disabled={busy||closeLocked} onClick={()=>setAdminMode(mode=>mode==='visible'?'hidden':'visible')}>관리자 모드</button>}
+    </div>
     {connectionWarning && <p role="status" className="panel-note">{connectionWarning}</p>}
-    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor uiReads={uiReads} onBeginSourceWrite={onBeginSourceWrite} key={`${navigationSequence}:${currentReviewTarget?.sequence??0}`} submissionActive={submissionActive} navigationTarget={currentReviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onSubmissionLockChange={reportSubmissionLock} onEditSeo={onEditSeo?()=>{if(sourceActionCurrent())onEditSeo();}:undefined} onDirtyChange={value=>{
+    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor adminTools={adminTools} initialOptionId={initialOptionId} uiReads={uiReads} onBeginSourceWrite={onBeginSourceWrite} key={`${navigationSequence}:${currentReviewTarget?.sequence??0}`} submissionActive={submissionActive} navigationTarget={currentReviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onSubmissionLockChange={reportSubmissionLock} onEditSeo={onEditSeo?()=>{if(sourceActionCurrent())onEditSeo();}:undefined} onDirtyChange={value=>{
       if(!submissionCurrent.current.mounted||lockScope.current!==submissionScope)return;
       dirtyRef.current=value;
       if(value){profileRequest.current?.abort();activeRequest.current?.abort();setPreview(null);setMessage('');}
       setDirty(value);
     }} onReceiptSaved={onReceiptSaved} onSaved={()=>{if(!sourceActionCurrent())return;setPreview(null);onSaved?.();}}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}</div>
-    <details className="quotation-workbook-tools"><summary>Excel 견적서·첨부 자료</summary>
+    {adminTools && <div className="quotation-admin-panel-tools" hidden={adminTools!=='visible'}><details className="quotation-workbook-tools"><summary>Excel 견적서·첨부 자료</summary>
     <p>견적 입력을 저장한 뒤 견적 자료를 검토하고 전송을 준비하세요.</p>
     {selected&&!selected.template&&<div className="panel-note"><strong>전송할 공식 견적 양식 준비</strong><p>1~7단계 초안은 저장되어 있습니다. 전송 전에 현재 회사와 저장한 전체 카테고리 경로를 확인하고 공식 Excel을 연결합니다.</p><button type="button" className="btn primary" disabled={sourceLocked||busy||dirty||refreshingProfiles||!contextLoaded||!selected.hubSchema} onClick={()=>void prepareOfficialTemplate()}>공식 견적 양식 준비</button>{!selected.hubSchema&&<small>카테고리·양식 관리에서 Supplier Hub 상세 양식을 먼저 확인해주세요.</small>}</div>}
     {selected&&!selected.template&&(selected.hubSchema?.metadata.scopeType??selected.hubSchema?.metadata.scope)==='Retail_Categorized_Single'&&<div className="panel-note"><p>별도 Excel 상세 양식을 읽을 수 없다면 공식 파일의 열·선택값으로 연결할 수 있습니다. 현재 회사와 카테고리를 다시 확인하며, Excel JSON 미확인 상태와 기존 전송 검사는 유지됩니다.</p><button type="button" className="btn ghost" disabled={sourceLocked||busy||dirty||refreshingProfiles||!contextLoaded} onClick={()=>void prepareOfficialTemplate('workbook')}>공식 파일 기준으로 연결</button></div>}
@@ -227,5 +232,6 @@ function QuotationPanelContent({uiReads,onBeginSourceWrite,submissionActive=true
       onPrepareSubmission(overrideProfileId);
     }}>저장한 견적 전송 준비</button><small>현재 상품과 선택한 양식의 저장 자료를 검사합니다. 첨부 파일과 필수 동의를 확인한 뒤 등록 전송을 실행하세요.</small></div>}
     </details>
+    {adminExtras}</div>}
   </section>;
 }

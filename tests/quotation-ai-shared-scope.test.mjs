@@ -88,12 +88,12 @@ for(const outcome of ['running','uncertain','unknown'])test(`${outcome}: shared 
  }finally{h.close();}
 });
 
-test('common scope with OFF cannot infer a first option or all options and links to the existing option selector',async()=>{
+test('common scope with OFF can reveal AI but must select an exact option before any new request',async()=>{
  const h=await sharedFixture({optionId:null});try{
-  assert.equal(h.child.checkbox().props.checked,false);assert.equal(h.parent.button('AI 처리').props.disabled,true);
-  const context=h.parent.nodes().find(node=>node.type==='details'&&node.props.className==='quotation-fields-context'),opened={open:false,scrollIntoView(){}};
-  context.props.ref.current=opened;let focused=false;h.parent.nodes().find(node=>node.type==='select'&&node.props.ref).props.ref.current={focus(){focused=true;}};
-  h.parent.button('AI 작성할 옵션 선택').props.onClick();assert.equal(opened.open,true);assert.equal(focused,true);assert.equal(h.posts.length,0);
+  assert.equal(h.child.checkbox().props.checked,false);
+  await h.clickHeader();assert.equal(h.posts.length,0);
+  assert.equal(h.parent.nodes().find(node=>node.props?.className==='quotation-ai-tools').props.hidden,false);
+  assert.ok(h.parent.nodes().some(node=>node.props?.className?.includes('quotation-option-picker')));
   h.parent.select('blue');await h.sync();await h.clickHeader();assert.equal(h.posts[0].optionId,'blue');assert.equal(h.posts[0].applyToAllOptions,false);
  }finally{h.close();}
 });

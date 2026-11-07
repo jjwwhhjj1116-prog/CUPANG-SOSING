@@ -20,23 +20,25 @@ let source=parts.join('\n').replaceAll('import.meta.url',JSON.stringify(fixtureU
 for(const[before,after]of[
  ['renderer,attach}={}','renderer,attach,assess,resultFirst=true,active=true,disabled=false}={}'],
  ['JSON.stringify(slots[i].deps)!==JSON.stringify(deps)','deps===undefined||slots[i].deps===undefined||slots[i].deps.length!==deps.length||deps.some((dep,index)=>!Object.is(dep,slots[i].deps[index]))'],
- ['{exports,Error,AbortController','{exports,window:browserWindow,crypto:webcrypto,Error,AbortController'],
+ ['{exports,Error,AbortController','{exports,window:browserWindow,document:browserDocument,crypto:webcrypto,setTimeout,Error,AbortController'],
  ['URL:localURL,fetch:request','URL:Object.assign(class extends URL {},localURL),fetch:request'],
  ["if(name==='react')return react;","if(name==='@/app/product-label-result')return{readCurrentProductLabelResult:assess};if(name==='react')return react;"],
  ['version,profileId,refreshToken,onSaved()','version,profileId,refreshToken,resultFirst,active,disabled,onSaved()'],
  ['get saved(){return saved;}','setActive(value){active=value;render();},setDisabled(value){disabled=value;render();},get saved(){return saved;}'],
 ]){assert.ok(source.includes(before),before);source=source.replace(before,after);}
 let confirmed=true;const confirmations=[],browserWindow={confirm(message){confirmations.push(message);return confirmed;}};
-const{fixture,editor,nodes,text}=vm.runInNewContext(source+'\n({fixture,editor,nodes,text})',{
- assert,fs,vm,path,ts,createRequire,webcrypto,browserWindow,Response,Blob,JSON,URL,Date,AbortController,structuredClone,TextEncoder,setImmediate,setTimeout,clearTimeout,
+const downloads=[],browserDocument={createElement(tag){assert.equal(tag,'a');return{click(){downloads.push([this.href,this.download]);}};}};
+const{fixture,editor,nodes,text,definitions}=vm.runInNewContext(source+'\n({fixture,editor,nodes,text,definitions})',{
+ assert,fs,vm,path,ts,createRequire,webcrypto,browserWindow,browserDocument,Response,Blob,JSON,URL,Date,AbortController,structuredClone,TextEncoder,setImmediate,setTimeout,clearTimeout,
 });
 const plain=value=>JSON.parse(JSON.stringify(value)),hash=value=>createHash('sha256').update(value).digest('hex');
 const key=`owner/quotation-label-${'a'.repeat(64)}.png`;
 const writes=h=>h.calls.filter(call=>['PUT','POST','PATCH'].includes(call.init?.method));
 const resultImage=h=>nodes(h.render()).find(node=>node.type==='img'&&node.props['data-current-label-result']!==undefined);
 const child=h=>nodes(h.render()).find(node=>typeof node.type==='function'&&node.type.name==='ProductLabelReferenceEditor');
-function setup({current=false,reason,intercept,assess}={}){
+function setup({current=false,reason,intercept,assess,draft=false}={}){
  const f=fixture();if(current)f.view.imageKeys.push(key);const epoch=f.view.renderEpoch;
+ if(draft)f.view.structure=definitions.map(([id,label])=>({id,label,required:id==='productName'}));
  function reply(url,init){
   if(init?.method==='POST'){
    const body=JSON.parse(init.body);assert.equal(body.expectedRevision,f.view.revision);assert.equal(body.expectedInputFingerprint,f.view.inputFingerprint);
@@ -69,6 +71,29 @@ test('verified result has the selected option caption/download; cancelled rewrit
   assert.ok(nodes(h.render()).some(node=>node.type==='h4'&&text(node)==='한글 표시사항 정보'));assert.match(text(h.render()),/표시 정보 결과 \(red\)/);
   const download=nodes(h.render()).find(node=>node.type==='a'&&text(node)==='이미지 다운로드');assert.equal(download.props.href,'/api/files/'+key);
   confirmed=false;await h.click('재작성');assert.equal(confirmations.length,1);assert.equal(writes(h).length,0);assert.ok(resultImage(h));assert.equal(h.input('선택 옵션 제품명'),undefined);assert.deepEqual(plain(f.view),before);
+ }finally{h.close();}
+});
+
+test('a current structured label opens a nine-row read-only preview with edit and local download',async()=>{
+ const{f,h}=setup({draft:true});try{
+  await h.idle();const before=plain(f.view),tree=h.render();
+  const table=nodes(tree).find(node=>node.props?.['aria-label']==='선택 옵션 표시사항 미리보기');
+  assert.equal(h.input('선택 옵션 제품명'),undefined);
+  assert.ok(table);assert.equal(nodes(table).filter(node=>node.type==='tr').length,9);
+  assert.match(text(tree),/표시 정보 결과 \(red\)/);assert.ok(h.button('이미지 다운로드'));
+  assert.equal(resultImage(h),undefined);assert.equal(writes(h).length,0);
+  downloads.length=0;await h.click('이미지 다운로드');
+  assert.deepEqual(downloads,[[h.urls[0],'yoofam-product-label.png']]);
+  assert.equal(h.plans[0].rows.length,9);assert.equal(h.attachments.length,0);
+  await h.click('편집');assert.equal(h.input('선택 옵션 제품명').props.value,'검정 수정 제품명');
+  assert.deepEqual(plain(f.view),before);assert.equal(writes(h).length,0);
+ }finally{h.close();}
+});
+
+test('an unrelated PNG candidate does not hide the selected structured draft after receipt inspection',async()=>{
+ const{h}=setup({draft:true,current:true,reason:'missing'});try{
+  await h.idle();assert.equal(h.input('선택 옵션 제품명'),undefined);assert.ok(h.button('편집'));
+  assert.equal(resultImage(h),undefined);assert.equal(writes(h).length,0);
  }finally{h.close();}
 });
 

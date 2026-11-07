@@ -137,7 +137,7 @@ for(const company of companies)test(`Stage6 draft rejects stale/auth/provider fa
    f.setProvider(async()=>bad);const response=await f.generate(view);assert.ok([422,502,503].includes(response.status),await response.clone().text());assert.deepEqual(f.state(),before);
   }
   f.setProvider(async()=>{throw Error('private upstream token must not escape');});const failed=await f.generate(view);assert.ok([502,503].includes(failed.status));assert.doesNotMatch(await failed.text(),/private upstream token/);assert.deepEqual(f.state(),before);
-  f.setProvider(async()=>({response:JSON.stringify({...fields,material:''})}));const empty=await json(await f.generate(view));assert.equal(empty.values.material,'상세정보참조');assert.deepEqual(f.state(),before);
+  f.setProvider(async()=>({response:JSON.stringify({...fields,material:''})}));const empty=await json(await f.generate(view));assert.equal(empty.values.material,'실리콘');assert.deepEqual(f.state(),before);
   // A real concurrent manual save advances the label source while inference is
   // in flight. Only that explicit save may remain; the late AI response is stale.
   let concurrent;

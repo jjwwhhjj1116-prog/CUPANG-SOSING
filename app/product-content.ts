@@ -48,6 +48,8 @@ export type ProductContent = {
   explicitSeoQuotationDefaults?:import('@/app/explicit-seo-quotation-defaults').ExplicitSeoQuotationDefaults;
   /** Written at 1688 intake for the current native quotation workflow. */
   quotationWorkflow?: 'collected-native-v1';
+  /** Fresh collection opt-in. Older label receipts retain their original inputs. */
+  labelDefaults?: 'couplus-category-v1';
   /** Server-created intake guidance, consumed by any explicit keyword save.
    * Absence (including legacy documents) means manual keywords stay protected. */
   intakeKeywordSeed?: { value: string[]; updatedAt: string; sourceReference: string };

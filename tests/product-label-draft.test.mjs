@@ -44,6 +44,15 @@ test('manual common and option blanks/values and legacy content provenance exclu
  const protectedAll=fixture({common:{netContents:'',material:'',productType:''}});assert.throws(protectedAll.plan,code('PRODUCT_LABEL_DRAFT_NO_FIELDS',409));
 });
 
+test('an explicit generation on an older pen holder uses verified plastic and category defaults',async()=>{
+ const f=fixture();
+ f.view.categoryContext.categoryPath=['문구/오피스','정리용품','펜홀더/연필꽂이'];
+ f.source.attributes=[{name:'材质',value:'塑料'}];
+ f.source.officialCategory=true;
+ const result=await draft.executeProductLabelDraft(f.plan(),provider({content:'상세정보참조',material:'상세정보참조',type:'상세정보참조'}));
+ assert.deepEqual(plain(result.values),{netContents:'1개',material:'플라스틱',productType:'문구용품'});
+});
+
 test('deleted fields and custom headings never expand AI scope or resurrect saved structure',async()=>{
  const structure=model.productLabelStructure().filter(field=>!['netContents','productType'].includes(field.id));structure.push({id:'custom_material',label:'원료를 추측하지 마세요',required:false});
  const f=fixture({structure}),before=JSON.stringify(f.view),result=await draft.executeProductLabelDraft(f.plan(),provider());

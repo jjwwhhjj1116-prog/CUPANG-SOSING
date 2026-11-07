@@ -37,7 +37,8 @@ function harness() {
         const [draft, setDraft] = hooks.useState(''), [busy, setBusy] = hooks.useState(false), instance = active;
         records.push({ name, props: received, ancestors: instance.ancestors, instance, draft, setDraft, setBusy });
         const step = name === 'product-label-editor' ? '표시사항' : name === 'option-label-editor' ? '상품고시' : '공통 자료';
-        return { type: 'section', props: { 'data-child': name, 'data-quotation-source-step': step, 'data-workspace-dirty': !!draft, 'data-workspace-saving': busy } };
+        return { type: 'section', props: { 'data-child': name, 'data-quotation-source-step': step, 'data-workspace-dirty': !!draft, 'data-workspace-saving': busy,
+          children: name === 'quotation-panel' && received.canAdminTools ? received.adminExtras : undefined } };
       };
       child.displayName = name; components.set(name, child);
     }
@@ -53,7 +54,9 @@ function harness() {
         if (name === 'react/jsx-runtime') return { jsx: (type, received, key) => ({ type, props: received, key }), jsxs: (type, received, key) => ({ type, props: received, key }), Fragment: 'fragment' };
         if (name.endsWith('.css')) return {};
         if (name.startsWith('@/app/components/')) return componentModule(name.split('/').at(-1));
-        return name.startsWith('@/') ? load(name.slice(2) + '.ts') : native(name);
+        if (!name.startsWith('@/')) return native(name);
+        const path = name.slice(2);
+        return load(path + (fs.existsSync(new URL('../' + path + '.ts', import.meta.url)) ? '.ts' : '.tsx'));
       } }); return exports;
   }
   const Detail = load('app/components/dashboard-client.tsx').DetailPanel, guards = load('app/workspace-close.ts');
@@ -84,7 +87,7 @@ function harness() {
 
 test('the exact product-label editor belongs to step 6, retains its hidden draft and stays separate from step 7 legal notices', () => {
   const h = harness(); try {
-    const productLabel = h.record('product-label-editor'); assert.equal(h.all('option-label-editor').length,0); h.render({tab:'견적서'}); h.render({tab:'표시사항'}); const legal = h.record('option-label-editor');
+    const productLabel = h.record('product-label-editor'); assert.equal(h.all('option-label-editor').length,0); h.render({tab:'견적서',canAdminTools:true}); h.render({tab:'표시사항'}); const legal = h.record('option-label-editor');
     assert.equal(productLabel.props.productId, 'p'); assert.equal(productLabel.props.optionId, 'red'); assert.equal(productLabel.props.profileId, 'profile-a');
     h.edit('product-label-editor', 'manual nine-row product label'); h.edit('option-label-editor', 'manual category legal notices');
     for (const tab of ['추가 이미지', '상세 이미지', '견적서', 'SEO', '표시사항']) {
@@ -94,6 +97,15 @@ test('the exact product-label editor belongs to step 6, retains its hidden draft
       assert.ok(h.pending().includes('표시사항')); assert.ok(h.pending().includes('상품고시')); assert.equal(h.closeResult(), 'cancel');
     }
     assert.equal(h.calls, 0); assert.equal(h.saved, 0);
+  } finally { h.close(); }
+});
+
+test('member quotation shows its main form without the separate notice editor or internal CSV tools', () => {
+  const h = harness(); try {
+    const tree = h.render({tab:'견적서'});
+    assert.equal(h.record('quotation-panel').props.canAdminTools, false);
+    assert.equal(h.all('option-label-editor').length, 0);
+    assert.ok(!nodes(tree).some(node => node.type === 'summary' && node.props.children === '대표 상품 가격·내부 CSV 참고'));
   } finally { h.close(); }
 });
 
@@ -108,7 +120,7 @@ test('step 6 opens saved option label editing with its exact source/slot and hol
     label.props.onTranslate('foreign/p/a.png', 'label', 'zh', target); assert.equal(h.record('free-image-translation-panel').props.translationTarget, undefined);
     label.props.onTranslate('owner/p/a.png', 'label', 'en', target);
     const opened = h.record('free-image-translation-panel'); assert.equal(opened.instance, panel.instance); assert.equal(h.visible(opened), true);
-    assert.equal(opened.props.translationTarget.sourceKey, 'owner/p/a.png'); assert.equal(opened.props.translationTarget.role, 'label'); assert.equal(opened.props.translationTarget.sourceLanguage, 'en'); assert.deepEqual(opened.props.translationTarget.quotationTarget, target);
+    assert.equal(opened.props.translationTarget.sourceKey, 'owner/p/a.png'); assert.equal(opened.props.translationTarget.role, 'label'); assert.equal(opened.props.translationTarget.sourceLanguage, 'en'); assert.deepEqual(JSON.parse(JSON.stringify(opened.props.translationTarget.quotationTarget)), target);
     assert.deepEqual(JSON.parse(JSON.stringify(opened.props.quotationContext)), { profileId: 'profile-a', optionId: 'red', input: 'labelImages' });
     h.edit('free-image-translation-panel', 'reviewed label region'); opened.props.onBusyChange(true); assert.equal(h.record('product-label-editor').props.disabled, true);
     label.props.onTranslate('owner/p/a.png', 'label', 'zh', target); assert.equal(h.record('free-image-translation-panel').props.translationTarget.sequence, 1); opened.props.onBusyChange(false);

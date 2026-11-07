@@ -6,26 +6,52 @@ const load=quotationTitleLoader(),policy=load('app/quotation-field-notes.ts');
 const reminder='실제 상품·증빙과 일치하는지 확인해주세요.';
 const mutations=ui=>ui.calls.filter(call=>call.init?.method&&call.init.method!=='GET');
 
-test('quotation shows exactly one of five steps and preserves drafts without a write when navigating',async()=>{
+test('quotation shows all five ordered sections together and keeps the normal form free of admin tools',async()=>{
  const view=quotationPresentationFixture(),ui=quotationTitleUI({view});
  try{await ui.idle();
-  const stages=()=>ui.nodes().filter(node=>node.type==='fieldset'&&node.props['data-section']);
-  const assertStep=(id,index)=>{
-   assert.deepEqual(stages().filter(node=>!node.props.hidden).map(node=>node.props['data-section']),[id]);
-   assert.ok(stages().filter(node=>node.props.hidden).every(node=>node.props.disabled));
-   const nav=visibleNodes(ui.render()).find(node=>node.type==='nav'&&node.props['aria-label']==='견적서 단계');
-   const steps=titleNodes(nav).filter(node=>node.type==='button');
-   assert.equal(steps.length,5);assert.deepEqual(steps.flatMap((node,i)=>node.props['aria-current']==='step'?[i]:[]),[index]);
-   assert.equal(ui.button('이전').props.disabled,index===0);
-   assert.equal(ui.button('다음').props.disabled,index===4);
-  };
-  const move=label=>{ui.button(label).props.onClick();ui.render();};
-  assertStep('start',0);move('다음');assertStep('product',1);
+  const stages=ui.nodes().filter(node=>node.type==='fieldset'&&node.props['data-section']);
+  assert.deepEqual(stages.map(node=>node.props['data-section']),['start','product','image','legal','logistics']);
+  assert.ok(stages.every(node=>!node.props.hidden&&!node.props.disabled));
+  assert.equal(ui.nodes().some(node=>node.type==='nav'&&node.props['aria-label']==='견적서 단계'),false);
+  const actions=ui.nodes().find(node=>node.props?.className==='quotation-fields-actions');
+  assert.deepEqual(titleNodes(actions).filter(node=>node.type==='button').map(titleText),['저장']);
+  assert.doesNotMatch(visibleText(ui.render()),/입력 정보|저장본 불러오기|추가 견적 작업|견적 양식 확인 정보|견적 검토·전송|제안 상품명/);
   ui.field('model').props.onChange({target:{value:'작성 중 모델'}});ui.render();
-  const drafted=plain(ui.changes);
-  move('다음');assertStep('image',2);move('다음');assertStep('legal',3);move('다음');assertStep('logistics',4);
-  move('이전');assertStep('legal',3);move('이전');move('이전');assertStep('product',1);
-  assert.deepEqual(plain(ui.changes),drafted);assert.equal(ui.field('model').props.value,'작성 중 모델');assert.equal(mutations(ui).length,0);
+  assert.equal(ui.field('model').props.value,'작성 중 모델');assert.equal(mutations(ui).length,0);
+ }finally{ui.close();}
+});
+
+test('quotation panel exposes one initially closed admin mode only to the authorized role',()=>{
+ const slots=[];let cursor=0;
+ const react={
+  useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return[slots[index],value=>{slots[index]=typeof value==='function'?value(slots[index]):value;}];},
+  useRef:value=>({current:value}),useMemo:fn=>fn(),useCallback:fn=>fn,useEffect(){},useLayoutEffect(){},
+ };
+ const Panel=quotationTitleLoader({react})('app/components/quotation-panel.tsx').QuotationPanel;
+ const render=canAdminTools=>{cursor=0;const panel=Panel({productId:'p1',canAdminTools,adminExtras:'관리자 전용 이전 자료',onManageCategories(){}});return panel.type(panel.props);};
+ const adminButton=tree=>titleNodes(tree).find(node=>node.props?.className?.includes('quotation-admin-toggle'));
+ const extras=tree=>titleNodes(tree).find(node=>node.props?.className==='quotation-admin-panel-tools');
+ assert.equal(adminButton(render(false)),undefined);assert.equal(extras(render(false)),undefined);
+ let authorized=render(true);assert.equal(adminButton(authorized).props['aria-expanded'],false);assert.equal(extras(authorized),undefined);
+ adminButton(authorized).props.onClick();authorized=render(true);
+ assert.equal(adminButton(authorized).props['aria-expanded'],true);assert.match(titleText(extras(authorized)),/Excel 견적서·첨부 자료.*관리자 전용 이전 자료/s);
+ adminButton(authorized).props.onClick();assert.equal(extras(render(true)).props.hidden,true);
+ assert.equal(extras(render(false)),undefined,'revoking the role removes mounted admin tools');
+});
+
+test('a normal save with an unreadable acknowledgement offers readback before another write and keeps the draft',async()=>{
+ const view=quotationPresentationFixture();
+ const ui=quotationTitleUI({view,request:(_url,init)=>init?.method==='PUT'?new Response('<html>잠시 후</html>',{status:503}):Response.json(view)});
+ try{
+  await ui.idle();assert.equal(ui.button('저장 상태 확인'),undefined);
+  ui.field('model').props.onChange({target:{value:'작성 중 모델'}});ui.render();
+  ui.button('견적 입력 저장').props.onClick();await ui.idle();
+  assert.equal(ui.button('견적 입력 저장').props.disabled,true);
+  assert.equal(ui.field('model').props.value,'작성 중 모델');
+  const calls=ui.calls.length;ui.button('저장 상태 확인').props.onClick();await ui.idle();
+  assert.equal(ui.calls.length,calls+1);assert.equal(ui.calls.at(-1).init?.method,undefined);
+  assert.equal(mutations(ui).length,1);assert.equal(ui.field('model').props.value,'작성 중 모델');
+  assert.equal(ui.button('저장 상태 확인'),undefined);assert.equal(ui.button('견적 입력 저장').props.disabled,false);
  }finally{ui.close();}
 });
 
@@ -33,7 +59,7 @@ test('only exact repeated reminders collapse; unknown reviews, conditional appli
  const view=quotationPresentationFixture(),unknown='검증 기관의 실제 증빙을 확인해야 합니다.',chinese='수집 원문의 중국어 상품명이 남아 있습니다. 1단계에서 상품명을 확인하고 번역·수정해주세요.',mismatch='자동 계산 가격은 2단계 옵션의 판매 구성 수량 2개입 기준입니다. 견적 수량을 3로 직접 수정했습니다. 구성 수량과 가격을 함께 확인해주세요.',error='시험 필드의 실제 검증 오류입니다.';
  for(const data of [view.resolved,view.automatic])for(const row of data.rows){row.fields.brand.reviewMessages=[reminder,unknown,chinese,mismatch];row.fields.brand.validationIssues=[error];row.fields.brand.issues=[reminder,unknown,chinese,mismatch,error];}
  for(const data of [view.resolved,view.automatic]){const field=data.schema.fields.find(item=>item.id==='brand');field.workbookWire={sha256:'a'.repeat(64),sheetName:'견적',column:3,requirement:'conditional'};field.help='설치 대상일 때의 조건을 확인합니다.';}
- const ui=quotationTitleUI({view});try{await ui.idle();const field=fieldContainer(ui,'brand'),text=visibleText(field),diagnostic=titleNodes(field).find(node=>node.type==='details');
+ const ui=quotationTitleUI({view,props:{adminTools:'visible'}});try{await ui.idle();const field=fieldContainer(ui,'brand'),text=visibleText(field),diagnostic=titleNodes(field).find(node=>node.type==='details');
   assert.doesNotMatch(text,/실제 상품·증빙과 일치하는지/);for(const message of [unknown,chinese,mismatch,error,'해당 상품에 조건이 적용되는지'])assert.ok(text.includes(message),message);
   assert.equal(diagnostic.props.open,undefined);assert.ok(visibleText(field,new Set([diagnostic])).includes(reminder));assert.equal(mutations(ui).length,0);
   const partition=policy.quotationFieldIssueNotes([reminder,unknown],[reminder]);assert.deepEqual(plain(partition),{visible:[reminder,unknown],diagnostic:[]},'even a reminder-shaped validation error remains visible');
@@ -44,7 +70,7 @@ test('only exact repeated reminders collapse; unknown reviews, conditional appli
 test('native title and model descriptions remain visible with SEO/model helpers, multiline text and escaped schema markup',async()=>{
  const view=quotationPresentationFixture({native:true}),description='원본 설명 첫 줄\n<script>실행하지 않는 문자열</script> 둘째 줄';
  for(const data of [view.resolved,view.automatic])for(const id of ['title','model'])data.schema.fields.find(field=>field.id===id).help=description;
- const ui=quotationTitleUI({view,props:{onEditSeo(){}}});try{await ui.idle();
+ const ui=quotationTitleUI({view,props:{adminTools:'visible',onEditSeo(){}}});try{await ui.idle();
   for(const id of ['title','model']){const field=fieldContainer(ui,id),notes=visibleNodes(field).filter(node=>node.props?.className==='quotation-field-help quotation-schema-description');assert.equal(notes.length,1,id);assert.equal(titleText(notes[0]),description);assert.match(renderToStaticMarkup(notes[0]),/&lt;script&gt;/);assert.equal(titleNodes(notes[0]).some(node=>node.type==='script'),false);}
   assert.equal(ui.field('title').props.readOnly,true);assert.match(visibleText(fieldContainer(ui,'title')),/상품명은 SEO 설정에서 수정해주세요\./);
   assert.ok(ui.nodes().some(node=>node.type==='summary'&&titleText(node)==='모델명 제안 확인'),'model-specific helper does not replace the actual description');assert.equal(mutations(ui).length,0);
@@ -63,6 +89,7 @@ test('interleaved production Product Page fields form one ordered group each whi
   const product=data.schema.fields.filter(field=>field.section==='product'),byId=new Map(product.map(field=>[field.id,field]));
   const first=['model','brand','manufacturer','tradeType','taxType','importType','barcodeMode','barcode','native-barcode','color','quantity','size','native-supply','native-sale','native-msrp','searchTags','description','bullets'];
   const interleaved=[...first.map(id=>byId.get(id)),...product.filter(field=>!first.includes(field.id))];
+  data.schema.categoryId='103689';
   data.schema.fields=[...data.schema.fields.filter(field=>field.section!=='product'),...interleaved];
  }
  const before=JSON.stringify(view),original=prices.quotationPriceVisibleFields(view.resolved.schema.fields).filter(field=>field.section==='product');
@@ -76,6 +103,7 @@ test('interleaved production Product Page fields form one ordered group each whi
   const shown=controls.map(node=>node.props.id.slice(prefix.length)),priceIds=shown.filter(id=>grouping.quotationFieldGroup(original.find(field=>field.id===id),view.resolved.schema.fields)==='가격 정보');
   assert.deepEqual(priceIds,['native-supply','native-sale','barcodeMode','barcode','native-barcode','native-msrp','native-osrp']);
   assert.deepEqual(shown.filter(id=>['brand','manufacturer','tradeType','taxType','importType','searchTags','model'].includes(id)),['brand','manufacturer','tradeType','taxType','importType','searchTags','model']);
+  assert.equal(grouping.quotationSectionDisplayFields(view.resolved.schema.fields,'product','64455')[0].id,'model');
   assert.ok(shown.indexOf('searchTags')<shown.indexOf('description'));assert.ok(shown.indexOf('bullets')<shown.indexOf('native-supply'),'optional existing descriptions remain at the end of basic information');
   ui.field('native-osrp').props.onChange({target:{value:'6100'}});ui.render();assert.deepEqual(plain(ui.changes),[{fieldKey:'native-osrp',optionId:null,value:'6100'}]);assert.equal(ui.field('native-msrp').props.value,'5200','independent OSRP edits do not change MSRP');
   ui.field('description').props.onChange({target:{value:'그룹 정리 후 작성한 설명'}});ui.render();assert.deepEqual(plain(ui.changes),[{fieldKey:'native-osrp',optionId:null,value:'6100'},{fieldKey:'description',optionId:null,value:'그룹 정리 후 작성한 설명'}]);
@@ -151,7 +179,7 @@ test('named selects keep their original nullable choice control and unrelated na
 });
 
 test('expanded field diagnostics retain manual reset and selected-field copy as unsaved drafts with the same guards',async()=>{
- const view=quotationPresentationFixture({overrides:{common:{},options:{red:{model:'기존 수동 모델'}}}}),before=JSON.stringify(view),ui=quotationTitleUI({view});
+ const view=quotationPresentationFixture({overrides:{common:{},options:{red:{model:'기존 수동 모델'}}}}),before=JSON.stringify(view),ui=quotationTitleUI({view,props:{adminTools:'visible'}});
  try{await ui.idle();ui.select('red');let field=fieldContainer(ui,'model'),diagnostic=titleNodes(field).find(node=>node.type==='details'&&titleText(node.props.children).startsWith('자동값·입력 출처'));
   assert.ok(diagnostic);assert.doesNotMatch(visibleText(field),/수정 해제 · 자동값 복원/);const reset=visibleNodes(field,new Set([diagnostic])).find(node=>node.type==='button'&&titleText(node)==='수정 해제 · 자동값 복원');assert.ok(reset);reset.props.onClick();ui.render();assert.deepEqual(plain(ui.changes),[{fieldKey:'model',optionId:'red',value:null}]);
   ui.field('model').props.onChange({target:{value:'복사할 모델'}});ui.render();field=fieldContainer(ui,'model');diagnostic=titleNodes(field).find(node=>node.type==='details'&&titleText(node.props.children).startsWith('자동값·입력 출처'));
@@ -162,33 +190,54 @@ test('expanded field diagnostics retain manual reset and selected-field copy as 
 
 test('prominent AI action requests the mounted tool once and reveals review; stale draft/busy and retired actions stay blocked',async()=>{
  const view=quotationPresentationFixture(),ui=quotationTitleUI({view});
- try{await ui.idle();const tools=ui.nodes().find(node=>node.type==='details'&&node.props.className==='quotation-supplemental-tools'),anchor=ui.nodes().find(node=>node.props?.className==='quotation-ai-tools');let scrolls=0;const nativeDetails={open:false};tools.props.ref.current=nativeDetails;anchor.props.ref.current={scrollIntoView(){scrolls++;}};
-  const ai=ui.nodes().find(node=>typeof node.type==='function'&&node.type.name==='QuotationAiPanel');let requests=0;assert.equal(ui.button('AI 처리').props.disabled,true);
+ try{await ui.idle();const tools=()=>ui.nodes().find(node=>node.props?.className==='quotation-ai-tools');let scrolls=0;assert.equal(tools().props.hidden,true);tools().props.ref.current={scrollIntoView(){scrolls++;}};
+  const ai=ui.nodes().find(node=>typeof node.type==='function'&&node.type.name==='QuotationAiPanel');let requests=0;assert.equal(ui.button('AI 처리').props.disabled,false);
   const sourceKey=JSON.stringify([ai.props.productId,ai.props.profileId??null,view.productVersion,view.contentRevision,view.optionRevision,view.revision,view.inputFingerprint,ai.props.optionId]);
   const first={requestDraft(){requests++;ai.props.onBusyChange(true);},disabled:false,applyToAllOptions:false,sourceKey};ai.props.onRequestActionChange(first);ui.render();
-  const originalCalls=ui.calls.length,open=ui.button('AI 처리').props.onClick;assert.equal(ui.button('AI 처리').props.disabled,false);open();open();assert.equal(requests,1);assert.equal(nativeDetails.open,true);assert.equal(scrolls,1);assert.equal(ui.calls.length,originalCalls);assert.equal(ui.changes.length,0);assert.equal(mutations(ui).length,0);
+  const originalCalls=ui.calls.length,open=ui.button('AI 처리').props.onClick;assert.equal(ui.button('AI 처리').props.disabled,false);open();open();ui.render();assert.equal(requests,1);assert.equal(tools().props.hidden,false);assert.equal(scrolls,1);assert.equal(ui.calls.length,originalCalls);assert.equal(ui.changes.length,0);assert.equal(mutations(ui).length,0);
   ai.props.onBusyChange(false);ui.render();const next={requestDraft(){requests++;},disabled:false,applyToAllOptions:false,sourceKey};ai.props.onRequestActionChange(next);ai.props.onRequestActionChange(null,first);ui.render();assert.equal(ui.button('AI 처리').props.disabled,false);
-  nativeDetails.open=false;const retained=ui.button('AI 처리').props.onClick;ui.field('model').props.onChange({target:{value:'먼저 저장할 입력'}});retained();assert.equal(nativeDetails.open,false,'already captured action cannot request against a new same-tick draft');assert.equal(requests,1);ui.render();assert.equal(ui.button('AI 처리').props.disabled,true);
-  assert.equal(ui.nodes().filter(node=>typeof node.type==='function'&&node.type.name==='QuotationAiPanel').length,1,'native details does not unmount the tool');
+  ui.button('AI 작성 접기').props.onClick();ui.render();const retained=ui.button('AI 처리').props.onClick;ui.field('model').props.onChange({target:{value:'먼저 저장할 입력'}});retained();assert.equal(tools().props.hidden,true,'already captured action cannot request against a new same-tick draft');assert.equal(requests,1);ui.render();assert.equal(ui.button('AI 처리').props.disabled,true);
+  assert.equal(ui.nodes().filter(node=>typeof node.type==='function'&&node.type.name==='QuotationAiPanel').length,1,'closing does not unmount the tool');
  }finally{ui.close();}
- const busyUI=quotationTitleUI({view});try{await busyUI.idle();const tools=busyUI.nodes().find(node=>node.type==='details'&&node.props.className==='quotation-supplemental-tools'),nativeDetails={open:false};tools.props.ref.current=nativeDetails;
-  const action=busyUI.button('AI 처리').props.onClick,ai=busyUI.nodes().find(node=>typeof node.type==='function'&&node.type.name==='QuotationAiPanel');ai.props.onBusyChange(true);action();assert.equal(nativeDetails.open,false);busyUI.render();assert.equal(busyUI.button('AI 처리').props.disabled,true);assert.equal(mutations(busyUI).length,0);
+ const busyUI=quotationTitleUI({view});try{await busyUI.idle();
+  const action=busyUI.button('AI 처리').props.onClick,ai=busyUI.nodes().find(node=>typeof node.type==='function'&&node.type.name==='QuotationAiPanel');ai.props.onBusyChange(true);action();assert.equal(busyUI.nodes().find(node=>node.props?.className==='quotation-ai-tools').props.hidden,true);busyUI.render();assert.equal(busyUI.button('AI 처리').props.disabled,true);assert.equal(mutations(busyUI).length,0);
  }finally{busyUI.close();}
 });
 
-test('quotation primary actions include step navigation and accessible Save, with a separate submission entry',async()=>{
- const ui=quotationTitleUI({view:quotationPresentationFixture()});try{await ui.idle();const tree=ui.render(),heading=ui.nodes().find(node=>node.props?.className==='quotation-fields-heading'),context=ui.nodes().find(node=>node.props?.className==='quotation-fields-context');
-  assert.equal(titleNodes(heading).some(node=>node.type==='select'),false);assert.equal(titleNodes(context).filter(node=>node.type==='select').length,1);
-  const actions=ui.nodes().find(node=>node.props?.className==='quotation-fields-actions'),buttons=titleNodes(actions).filter(node=>node.type==='button');
-  assert.deepEqual(buttons.map(titleText),['이전','다음','저장']);assert.equal(buttons[2].props['aria-label'],'견적 입력 저장');
-  const review=ui.button('견적 검토·전송'),submission=ui.nodes().find(node=>node.props?.className==='quotation-submission-tools');assert.ok(review);assert.ok(submission);assert.equal(titleNodes(actions).includes(review),false);assert.equal(ui.nodes().filter(node=>node.type?.name==='SupplierHubSingleReview').length,1);assert.equal(mutations(ui).length,0);
-  assert.ok(visibleNodes(tree).some(node=>node===review));
+test('a clean reopened AI review can be revealed while its original execution is locked',async()=>{
+ const view=quotationPresentationFixture(),ui=quotationTitleUI({view,props:{initialOptionId:'red'}});
+ try{
+  await ui.idle();
+  const ai=ui.nodes().find(node=>node.type?.name==='QuotationAiPanel');
+  const sourceKey=JSON.stringify([ai.props.productId,ai.props.profileId??null,view.productVersion,view.contentRevision,view.optionRevision,view.revision,view.inputFingerprint,ai.props.optionId]);
+  ai.props.onRequestActionChange({disabled:true,scopeLocked:true,applyToAllOptions:false,sourceKey,requestDraft(){assert.fail('must not repeat AI request');}});
+  ui.render();
+  assert.equal(ui.button('AI 처리').props.disabled,false);
+  ui.button('AI 처리').props.onClick();ui.render();
+  assert.equal(ui.nodes().find(node=>node.props?.className==='quotation-ai-tools').props.hidden,false);
+  assert.equal(mutations(ui).length,0);
+ }finally{ui.close();}
+});
+
+test('focused option needs only the save and apply-all actions; submission details are admin-only',async()=>{
+ const view=quotationPresentationFixture(),ui=quotationTitleUI({view,props:{initialOptionId:'red'}});
+ try{await ui.idle();const actions=ui.nodes().find(node=>node.props?.className==='quotation-fields-actions');
+  assert.equal(ui.nodes().some(node=>node.props?.className?.includes('quotation-option-picker')),false);
+  assert.ok(titleNodes(actions).some(node=>node.props?.role==='switch'));
+  assert.equal(ui.button('견적 입력 저장').props['aria-label'],'견적 입력 저장');
+  assert.equal(ui.button('견적 검토·전송'),undefined);
+  ui.render({adminTools:'visible'});
+  assert.ok(ui.button('견적 검토·전송'));
+  assert.equal(ui.nodes().filter(node=>node.type?.name==='SupplierHubSingleReview').length,1);
+  assert.doesNotMatch(visibleText(ui.render({adminTools:'hidden'})),/견적 검토·전송/);
+  assert.equal(ui.nodes().filter(node=>node.type?.name==='SupplierHubSingleReview').length,1,'closing keeps in-flight admin operations mounted');
+  assert.equal(mutations(ui).length,0);
  }finally{ui.close();}
 });
 
 test('retained header AI requests cannot bypass split, submission, refresh or unmount guards',async()=>{
  for(const blocker of ['split','split-draft','submission','refresh','unmount']) {
-  const view=quotationPresentationFixture(),ui=quotationTitleUI({view});try{await ui.idle();const ai=ui.nodes().find(node=>node.type?.name==='QuotationAiPanel');let requested=0;
+  const view=quotationPresentationFixture(),ui=quotationTitleUI({view,props:{adminTools:'visible'}});try{await ui.idle();const ai=ui.nodes().find(node=>node.type?.name==='QuotationAiPanel');let requested=0;
    const sourceKey=JSON.stringify([ai.props.productId,ai.props.profileId??null,view.productVersion,view.contentRevision,view.optionRevision,view.revision,view.inputFingerprint,ai.props.optionId]);
    ai.props.onRequestActionChange({disabled:false,applyToAllOptions:true,sourceKey,requestDraft(){requested++;}});ui.render();const retained=ui.button('AI 처리').props.onClick;
    if(blocker==='split'||blocker==='split-draft'){const split=ui.nodes().find(node=>node.type?.name==='ProductOptionSplitPanel');split.props[blocker==='split'?'onBusyChange':'onDraftChange'](true);}
@@ -213,7 +262,7 @@ test('image raw keys and candidate editing are collapsed while final selected th
  const before=JSON.stringify(view),ui=quotationTitleUI({view});try{await ui.idle();const container=fieldContainer(ui,field.id),details=titleNodes(container).find(node=>node.props?.className==='quotation-image-tools'),visible=visibleNodes(container);
   assert.ok(details);assert.ok(!details.props.open);assert.ok(titleNodes(details).some(node=>node.props?.id==='seo-title-test-'+field.id));assert.equal(visible.some(node=>node.type==='textarea'),false);
   assert.equal(visible.filter(node=>node.type==='img').length,2);assert.equal(ui.render().props['data-field-tools'],false);
-  const toggle=ui.nodes().find(node=>node.props?.className==='quotation-field-tools-toggle');titleNodes(toggle).find(node=>node.type==='input').props.onChange({target:{checked:true}});assert.equal(ui.render().props['data-field-tools'],true);
+  assert.equal(ui.render({adminTools:'visible'}).props['data-field-tools'],true);
   const reorder=titleNodes(details).find(node=>node.props?.['aria-label']==='2번 이미지 앞으로');reorder.props.onClick();ui.render();assert.equal(ui.changes[0].value,'owner/second.png\nowner/first.png');assert.equal(JSON.stringify(view),before);assert.equal(mutations(ui).length,0);
  }finally{ui.close();}
 });

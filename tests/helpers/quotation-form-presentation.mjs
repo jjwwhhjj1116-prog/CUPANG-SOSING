@@ -22,6 +22,7 @@ export function quotationPresentationFixture({overrides,native=false}={}){
 export function visibleNodes(tree,opened=new Set()){
  if(Array.isArray(tree))return tree.flatMap(item=>visibleNodes(item,opened));
  if(!tree||typeof tree!=='object')return[];
+ if(tree.props?.hidden)return[];
  if(tree.type==='details'&&!tree.props.open&&!opened.has(tree))return[tree,...(Array.isArray(tree.props.children)?tree.props.children:[tree.props.children]).filter(item=>item?.type==='summary').flatMap(item=>visibleNodes(item,opened))];
  return[tree,...visibleNodes(tree.props?.children,opened)];
 }

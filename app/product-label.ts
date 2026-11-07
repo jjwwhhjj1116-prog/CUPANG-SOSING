@@ -1,4 +1,4 @@
-import {labelSuggestionBasis,labelSuggestionApplies,validateLabelSuggestions,currentSavedLabelNotices,normalizeCurrentLabelContent,currentLabelBundleQuantity,type LabelAutomaticSuggestions} from '@/app/product-label-current-rules';
+import {labelSuggestionBasis,labelSuggestionApplies,validateLabelSuggestions,currentSavedLabelNotices,normalizeCurrentLabelContent,currentLabelBundleQuantity,currentLabelHan,knownProductLabelMaterial,productLabelCategoryType,type LabelAutomaticSuggestions} from '@/app/product-label-current-rules';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
@@ -57,8 +57,7 @@ export function productLabelStructure(source?: { structure?: ProductLabelStructu
 /** Freeze the observed Couplus order only for a genuinely new product or an
  * explicit reviewed restore. An absent stored structure remains legacy. */
 export function couplusProductLabelStructure(): ProductLabelStructure {
-  const order: ProductLabelFixedKey[] = ['productName','importer','manufacturer','countryOfOrigin','netContents','material','productType','precautions','usageStandard'];
-  return order.map(key => { const field = productLabelFields.find(field => field.key === key)!; return { id: key, label: field.label, required: key === 'productName' }; });
+  return productLabelStructure();
 }
 export function productLabelDefinitions(source?: { structure?: ProductLabelStructure }) {
   return productLabelStructure(source).map(field => ({ key: field.id, label: field.label, required: field.required }));
@@ -131,10 +130,14 @@ export function resolveProductLabels(input: { productId: string; state: ProductL
   if (Object.hasOwn(input.state, 'renderEpoch') && validateProductLabelRenderEpoch(input.state.renderEpoch) === undefined) throw Error('표시사항 재작성 버전을 확인해주세요.');
   const definitions = productLabelDefinitions({ structure: input.state.structure === undefined ? undefined : validateProductLabelStructure(input.state.structure) });
   const label=prioritizedContentLabelFields(input.content);
+  const categoryDefaults = input.content.labelDefaults === 'couplus-category-v1';
+  const productType = categoryDefaults ? productLabelCategoryType(input.quotation.categoryContext.categoryPath) : undefined;
+  const commonCounts = new Set(input.options.rows.filter(option => option.included).map(option => currentLabelBundleQuantity(input.options,option.id)));
   const suggestions=validateLabelSuggestions(input.state.automaticSuggestions);
   const basis=labelSuggestionBasis({content:input.content,options:input.options,settings:input.settings as import('@/app/workspace-settings').WorkspaceSettings,categoryId:input.quotation.categoryContext.categoryId,categoryPath:input.quotation.categoryContext.categoryPath,overrides:input.quotation.overrides,schema:input.quotation.resolved.schema,settingsPayload:input.settingsPayload});
   return input.quotation.resolved.rows.map(row => {
-    if (row.optionId !== null && !input.options.rows.some(option => option.id === row.optionId)) throw Error('표시사항에 연결된 옵션이 삭제되었습니다.');
+    const option = input.options.rows.find(option => option.id === row.optionId);
+    if (row.optionId !== null && !option) throw Error('표시사항에 연결된 옵션이 삭제되었습니다.');
     const automatic = {} as ProductLabelValues, sources = {} as Record<ProductLabelKey, ProductLabelSource>;
     for (const { key } of definitions) {
       const field = keySet.has(key) ? label[key as ProductLabelFixedKey] : undefined, stored = field?.value ?? '';
@@ -147,6 +150,20 @@ export function resolveProductLabels(input: { productId: string; state: ProductL
       } else {
         const setting = key === 'manufacturer' ? input.settings.manufacturer : key === 'importer' ? input.settings.importer : key === 'precautions' ? input.settings.handlingPrecautions : undefined;
         automatic[key] = typeof setting === 'string' ? setting : ''; sources[key] = automatic[key] ? 'settings' : 'empty';
+      }
+    }
+    if (categoryDefaults) {
+      const count = option ? currentLabelBundleQuantity(input.options,option.id) : commonCounts.size === 1 ? [...commonCounts][0] : commonCounts.size ? undefined : 1;
+      const notice = currentSavedLabelNotices(input.quotation.resolved.schema, input.quotation.overrides, row.optionId, input.content, false);
+      const defaults = {
+        netContents: notice.netContents ?? (count && Number.isSafeInteger(count) && count > 0 ? `${count}개` : ''),
+        material: notice.material ?? knownProductLabelMaterial(label.material.value) ?? '상세정보참조',
+        productType: productType ?? '상세정보참조',
+      };
+      for (const key of ['netContents', 'material', 'productType'] as const) {
+        if (!Object.hasOwn(automatic, key) || label[key].provenance === 'manual' || !defaults[key]) continue;
+        if (automatic[key] && !(key !== 'netContents' && currentLabelHan(automatic[key]))) continue;
+        automatic[key] = defaults[key]; sources[key] = 'label-default';
       }
     }
     if(suggestions)for(const entry of suggestions.entries){

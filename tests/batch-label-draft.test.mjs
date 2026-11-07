@@ -147,7 +147,7 @@ for (const company of schemaCompanies) {
         options: h.sqlite.prepare('SELECT * FROM product_options').all(), labels: h.sqlite.prepare('SELECT * FROM product_labels').all(), quotation: h.sqlite.prepare('SELECT * FROM product_quotation_fields').all(),
         images: [...h.objects].map(([key, bytes]) => [key, Buffer.from(bytes).toString('hex')]) });
       const initial = await read(await h.route(base + '/product-labels')); assert.equal(initial.revision, 1); assert.equal(initial.updatedAt, product.created_at); assert.equal(initial.categoryContext.source, 'collection');
-      assert.deepEqual(initial.structure.map(field => field.id), ['productName','importer','manufacturer','countryOfOrigin','netContents','material','productType','precautions','usageStandard']);
+      assert.deepEqual(initial.structure.map(field => field.id), ['productName','manufacturer','importer','countryOfOrigin','netContents','material','productType','precautions','usageStandard']);
       const before = snapshot(), plan = await model.planBatchLabelDraft([{ id: product.id, title: product.title }], signal(), fetcher);
       assert.equal(plan.tasks.length, rows.length - 1, JSON.stringify(plan.messages)); assert.equal(plan.settings.translateImages, false);
       assert.ok(plan.tasks.every(task => task.profileId === null && task.categoryContext.profileId === 'cat' && task.optionId !== rows.at(-1).id));

@@ -1,4 +1,4 @@
-import {prioritizedContentLabelFields} from '@/app/product-fact-priority';
+import {canonicalProductMaterialLiteral,prioritizedContentLabelFields} from '@/app/product-fact-priority';
 import {currentLabelCountLiterals,currentLabelNoticeNames} from '@/app/current-label-attribute-literals';
 import type {ProductContent} from '@/app/product-content';
 import type {ProductOptions} from '@/app/product-options';
@@ -6,6 +6,26 @@ import type {WorkspaceSettings} from '@/app/workspace-settings';
 import type {QuotationOverrides,QuotationSchema} from '@/app/quotation-schema';
 export const CURRENT_LABEL_POLICY='couplus-current-label-suggestion-v1' as const;
 export const currentLabelHan=(value:string)=>/[㐀-䶿一-鿿]/u.test(value);
+const materialLiterals = new Map([
+ ['塑料', '플라스틱'], ['塑膠', '플라스틱'], ['塑胶', '플라스틱'], ['plastic', '플라스틱'],
+ ['硅胶', '실리콘'], ['矽膠', '실리콘'], ['不锈钢', '스테인리스'], ['不鏽鋼', '스테인리스'],
+ ['海绵', '스펀지'], ['海綿', '스펀지'],
+]);
+export function knownProductLabelMaterial(value: string): string | undefined {
+ const literal = value.trim();
+ return materialLiterals.get(literal.toLowerCase()) ?? canonicalProductMaterialLiteral(literal) ?? undefined;
+}
+export function productLabelCategoryType(path: readonly string[]): string | undefined {
+ const leaf = path.at(-1)?.trim() ?? '';
+ const names = leaf.replace(/\s+/gu, '').split('/');
+ if (path.some(part => part.trim() === '청소용품')
+  || names.some(name => /^(?:청소(?:용)?(?:솔|브러시|브러쉬|밀대)|바닥(?:청소)?(?:용)?밀대|대걸레|청소포)$/u.test(name))) return '청소용품';
+ if (names.some(name => name === '펜홀더' || name === '연필꽂이')) return '문구용품';
+ const generic = /^(?:기타(?:상품|용품|제품|분류)?|전체|미분류|분류없음|선택(?:한)?카테고리|카테고리(?:미선택)?|알수없음|상세정보참조|해당사항없음)$/u;
+ const candidate = generic.test(leaf.replace(/\s+/gu, '')) ? path.at(-2)?.trim() ?? '' : leaf;
+ if (path.length > 1 && candidate.length <= 80 && /^[가-힣a-zA-Z0-9 /·&+()_-]+$/u.test(candidate)
+  && /[가-힣]/u.test(candidate) && !generic.test(candidate.replace(/\s+/gu, ''))) return candidate;
+}
 export function contentForCurrentBundle(content:string,q:number):string{
  q=Number(q)||1;if(q<=1)return content;if(!content.trim()||content.trim()==='상세정보참조')return `${q}개`;
  const bundle=/(\d+)\s*(개입|개|쌍|매|장|세트|팩|입|P|p)?\s*묶음/u;

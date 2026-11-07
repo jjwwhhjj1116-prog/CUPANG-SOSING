@@ -45,7 +45,7 @@ type Row = QuotationFieldsView['resolved']['rows'][number];
 type Cell = Row['fields'][string];
 type Conflict = { key: string; change: QuotationEditorChange; before: string | null; saved: string | null; unavailable: boolean; schemaChanged?: boolean; packagingChanged?:boolean;linked?: string[] };
 type BulkPreview = { mode?: 'restore'; sourceOptionId?:string|null;base: string; changes: QuotationEditorChange[]; skipped?: string[]; rows: { optionId: string; optionLabel: string; fieldKey: string; label: string; before: string; after: string; beforeDisplay: string; afterDisplay: string; manualBefore: boolean }[] };
-type Props = { uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;navigationTarget?: QuotationNavigationTarget; productId: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onReceiptSaved?:()=>void; onDirtyChange?: (dirty: boolean) => void; onSubmissionLockChange?: (sourceLocked: boolean, closeLocked?: boolean) => void; submissionActive?: boolean; onEditSeo?: () => void };
+type Props = { uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;navigationTarget?: QuotationNavigationTarget; initialOptionId?: string; productId: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onReceiptSaved?:()=>void; onDirtyChange?: (dirty: boolean) => void; onSubmissionLockChange?: (sourceLocked: boolean, closeLocked?: boolean) => void; submissionActive?: boolean; onEditSeo?: () => void; adminTools?: 'visible' | 'hidden' };
 const sections = [
   { id: 'start', title: '시작 페이지', english: 'Start', description: '상품명과 선택한 카테고리를 확인합니다.' },
   { id: 'product', title: '상품 페이지', english: 'Product', description: '기본 정보, 판매 가격과 카테고리 속성을 편집합니다.' },
@@ -487,7 +487,7 @@ function verifyQuotationRegistrationDisplay(view: QuotationFieldsView) {
 }
 
 export function QuotationFieldsEditor(props: Props) { return <QuotationFieldsForm key={`${props.productId}:${props.profileId ?? ''}`} {...props} />; }
-function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, productId, profileId, refreshToken, onSaved, onReceiptSaved, onDirtyChange, onSubmissionLockChange, submissionActive = true, onEditSeo }: Props) {
+function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, initialOptionId, productId, profileId, refreshToken, onSaved, onReceiptSaved, onDirtyChange, onSubmissionLockChange, submissionActive = true, onEditSeo, adminTools }: Props) {
   const uiMutation=useRef<UiMutation|null>(null),splitUiMutation=useRef<UiMutation|null>(null);
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const [view, setView] = useState<QuotationFieldsView | null>(null);
@@ -496,7 +496,7 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
   const [loading, setLoading] = useState(true); const [operationBusy, setBusy] = useState(false);
   const [error, setError] = useState(''); const [message, setMessage] = useState('');
   const [active, setActive] = useState<(typeof sections)[number]['id']>('start');
-  const [selectedOption, setSelectedOption] = useState<string | null>(navigationTarget?.optionId ?? null);
+  const [selectedOption, setSelectedOption] = useState<string | null>(navigationTarget ? navigationTarget.optionId : initialOptionId ?? null);
   const [selectedFields, setSelectedFields] = useState<string[]>([]);
   const [includedOnly, setIncludedOnly] = useState(true);
   const [bulk, setBulk] = useState<BulkPreview | null>(null);
@@ -536,10 +536,11 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
   }, [view, selectedOption, busy, formBusy, loading, conflicts, changes, applyAll, submissionActive]);
   const labelBatchCache = useRef<LabelBatchCache>({ signature: null, uploaded: new Map() });
   const labelUploadCache = useRef<QuotationLabelUploadCache>({ signature: null, uploadedKey: null, rendered: null });
-  const supplementalTools = useRef<HTMLDetailsElement | null>(null), aiTools = useRef<HTMLDivElement | null>(null);
-  const contextTools = useRef<HTMLDetailsElement | null>(null), optionSelector = useRef<HTMLSelectElement | null>(null);
+  const aiTools = useRef<HTMLDivElement | null>(null);
   const [aiRequestAction, setAiRequestAction] = useState<QuotationAiRequestAction | null>(null);
-  const [fieldTools, setFieldTools] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [readbackNeeded, setReadbackNeeded] = useState(false);
+  const showAdminTools = adminTools === 'visible';
   const aiRequestOwner = useRef<QuotationAiRequestAction | null>(null), mounted = useRef(true);
   const aiRequestSource = view ? JSON.stringify([productId, profileId ?? null, view.productVersion, view.contentRevision, view.optionRevision, view.revision, view.inputFingerprint, selectedOption]) : null;
   const receiveAiRequest = useCallback((next: QuotationAiRequestAction | null, retired?: QuotationAiRequestAction) => {
@@ -547,6 +548,7 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
     aiRequestOwner.current = next; setAiRequestAction(next);
   }, []);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; aiRequestOwner.current = null; }; }, []);
+  useEffect(() => { if (aiOpen) aiTools.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, [aiOpen]);
   const submissionTools = useRef<HTMLDetailsElement | null>(null), submissionSummary = useRef<HTMLElement | null>(null);
   const quotationRoot = useRef<HTMLElement | null>(null);
   const invalidateRequests = useCallback(() => { requests.current++; activeWrite.current?.abort(); activeWrite.current=null; }, []);
@@ -597,6 +599,7 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
       if (id !== requests.current) return;
       const reconciled = view && !discard ? reconcileQuotationEditorDraft(view, saved, changes, conflicts,quotationPackagingDraftInputsForChanges(packagingDrafts.current,view.resolved.schema.fields,changes)) : { changes: [], conflicts: [] };
       observedRefresh.current = refreshToken; setView(saved); setChanges(reconciled.changes); setConflicts(reconciled.conflicts); setLabelRecovery('');
+      setReadbackNeeded(false);
       if (labelFailure) setError(labelFailure);
       if (!saved.resolved.rows.some(row => row.optionId === selectedOption)) setApplyAll(false);
       setMessage(labelFailure ? '현재 저장된 견적을 다시 불러왔습니다. 오류를 확인한 뒤 라벨 연결을 다시 실행해주세요.' : discard ? '현재 입력을 버리고 저장본을 불러왔습니다.' : reconciled.conflicts.length ? '저장값 또는 카테고리·항목 규격이 바뀌었습니다. 입력을 검토하고 사용할 값을 선택해주세요.' : '최신 상품·옵션·기본값을 반영했습니다. 직접 입력한 내용은 유지했습니다.');
@@ -659,10 +662,11 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
     onEditSeo?.();
   }
   function openAiTools() {
-    if (!titleActionCurrent() || changes.length || aiDraftApplied.current || !aiRequestAction || aiRequestAction.disabled
-      || aiRequestOwner.current !== aiRequestAction || aiRequestAction.sourceKey !== aiRequestSource || aiRequestAction.applyToAllOptions !== applyAll || aiRequestAction.scopeLocked) return;
-    if (supplementalTools.current) supplementalTools.current.open = true;
-    aiTools.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    if (!titleActionCurrent() || changes.length || aiDraftApplied.current) return;
+    if (aiOpen) aiTools.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    else setAiOpen(true);
+    if (!aiRequestAction || aiRequestAction.disabled || aiRequestOwner.current !== aiRequestAction
+      || aiRequestAction.sourceKey !== aiRequestSource || aiRequestAction.applyToAllOptions !== applyAll || aiRequestAction.scopeLocked) return;
     aiRequestAction.requestDraft();
   }
   function changeAllOptions(next: boolean) {
@@ -724,11 +728,12 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
     setChanges(resolved.changes); setConflicts(resolved.conflicts); setBulk(null);
   }
   async function save() {
-    if (!view || !changes.length || conflicts.length || busy || loading || activeWrite.current || !view.resolved.rows.some(row => row.optionId === selectedOption)) return;
+    if (!view || !changes.length || conflicts.length || busy || loading || readbackNeeded || activeWrite.current || !view.resolved.rows.some(row => row.optionId === selectedOption)) return;
     const current = modelActionState.current;
     if (current.view !== view || current.changes !== changes || current.selectedOption !== selectedOption || current.applyAll !== applyAll || current.busy || current.loading || current.conflicts.length) return;
     const controller = new AbortController(); activeWrite.current=controller;
     setBusy(true); setError(''); setMessage(''); setBulk(null);
+    let verifyStoredState = false;
     try {
       const plan = quotationSavePlan(view, changes, selectedOption, applyAll);
       assertQuotationSeoTitleDraft(view.resolved.schema.fields, plan.changes);
@@ -736,8 +741,10 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
       const drafted=validateQuotationPackagingDraftInputs(quotationPackagingDraftInputsForChanges(packagingDrafts.current,view.resolved.schema.fields,requested),view.resolved.schema.fields,view.optionPackQuantities??{},requested);
       const generatedSave = quotationGeneratedSave(requested, generatedDraft.current);
       uiMutation.current??=onBeginSourceWrite?.()??null;
+      verifyStoredState = true;
       const response = await fetch(endpoint, { method: 'PUT', signal: controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint, ...generatedSave,...(drafted.length?{packagingDrafts:drafted}:{}) }) });
-      const body = await response.json().catch(() => { throw new Error('저장 완료 여부를 확인하지 못했습니다. 중복 저장 전에 ‘입력 버리고 저장본 불러오기’로 저장본을 확인해주세요. 현재 입력은 유지했습니다.'); }) as QuotationFieldsView & { error?: string };
+      verifyStoredState = response.ok || response.status >= 500;
+      const body = await response.json().catch(() => { throw new Error('저장 완료 여부를 확인하지 못했습니다. 현재 입력은 유지했습니다.'); }) as QuotationFieldsView & { error?: string };
       if (controller.signal.aborted) return;
       if (!response.ok || !body.resolved || !body.automatic) {
         if (response.status === 409) { await refresh(false,true); if(controller.signal.aborted)return; setError(body.error || '저장 중 원본이 바뀌었습니다. 현재 입력을 보존했습니다. 최신 값을 검토한 뒤 다시 저장해주세요.'); return; }
@@ -749,7 +756,12 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
       const untouched = generatedDraft.current?.proposals.filter(proposal=>generatedSave.generatedAdoption?.targets.some(target=>target.optionId===proposal.optionId&&target.fieldKey===proposal.fieldKey)) ?? [];
       const confirmed = generatedSave.generatedAdoption ? confirmGeneratedQuotationSave(view,body,generatedSave.changes,untouched,generatedSave.generatedAdoption.jobId,readback,drafted) : confirmQuotationFieldsSave(view, body, requested, readback,drafted);
       uiMutation.current?.confirm();uiMutation.current=null;setView(confirmed); setChanges([]); setConflicts([]); setApplyAll(false); setMessage(`견적 입력 저장 완료${plan.propagated.length ? ` · 다른 옵션 ${new Set(plan.propagated.map(item => item.optionId)).size}개에도 적용했습니다.` : ' · 출력 미리보기에 반영됩니다.'}`); onSaved?.();
-    } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '견적 입력 저장 실패'); }
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        setReadbackNeeded(verifyStoredState);
+        setError(cause instanceof Error ? cause.message : '견적 입력 저장 실패');
+      }
+    }
     finally { if(activeWrite.current===controller)activeWrite.current=null; if(!controller.signal.aborted)setBusy(false); }
   }
   async function validateSaved(){
@@ -783,14 +795,12 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
     target?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     target?.focus({ preventScroll: true });
   }
-  const counts = view ? quotationSectionProgress(view, changes, selectedOption) : [];
-  const activeIndex = sections.findIndex(section => section.id === active);
-  const previousSection = sections[activeIndex - 1];
-  const nextSection = sections[activeIndex + 1];
-  const guidance = view && row ? quotationEditorGuidance(view, changes, selectedOption) : { missing: [], invalid: [], globalErrors: [], references: [] };
+  const guidance = adminTools && view && row ? quotationEditorGuidance(view, changes, selectedOption) : { missing: [], invalid: [], globalErrors: [], references: [] };
   const inputErrors = guidance.invalid.length + guidance.globalErrors.length;
   const optionCount = view?.resolved.rows.filter(item => item.optionId !== null).length ?? 0;
   const optionLimitIssue = view && schema ? quotationOptionLimitIssue(schema, view.resolved.rows.filter(item => item.optionId !== null && item.included).length) : null;
+  const globalErrors = view ? [...new Set(view.resolved.validationIssues ?? view.resolved.issues)].filter(issue => issue !== optionLimitIssue) : [];
+  const showOptionPicker = optionCount > 0 && (showAdminTools || !row || selectedOption === null || !initialTarget.current?.optionId && !initialOptionId);
   const packagingReconfirmation=view?quotationPackagingReconfirmationChanges(view,selectedOption):[];
   const savedValidation=view?currentSavedQuotationValidation(view,productId):null;
   const savedValidationStage=savedValidation?savedQuotationValidationStage(savedValidation):null;
@@ -798,22 +808,32 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
   let savePlan: ReturnType<typeof quotationSavePlan> = { changes: [], propagated: [] };
   if (view && changes.length) try { savePlan = quotationSavePlan(view, changes, selectedOption, applyAll); assertQuotationSeoTitleDraft(view.resolved.schema.fields, savePlan.changes); validateQuotationChanges(savePlan.changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides }); } catch (cause) { hasInvalidDraft = true; invalidDraftMessage = cause instanceof Error ? cause.message : '수정한 필드의 입력 오류를 확인해주세요.'; }
 
-  return <section ref={quotationRoot} className="quotation-fields" aria-busy={loading || operationBusy || splitBusy || submissionLocks.close} data-field-tools={fieldTools} data-workspace-dirty={dirty || splitDrafting} data-workspace-saving={operationBusy || splitBusy || submissionLocks.close} data-workspace-source-locked={submissionLocks.source}>
+  return <section ref={quotationRoot} className="quotation-fields" aria-busy={loading || operationBusy || splitBusy || submissionLocks.close} data-field-tools={showAdminTools} data-workspace-dirty={dirty || splitDrafting} data-workspace-saving={operationBusy || splitBusy || submissionLocks.close} data-workspace-source-locked={submissionLocks.source}>
     {optionLimitIssue && <p className="quotation-fields-notice" role="alert">{optionLimitIssue}</p>}
-    <div className="quotation-fields-heading"><h3>쿠팡 등록 정보</h3><button type="button" className="btn primary" aria-controls={`${prefix}-ai-tools`} title={applyAll ? '모든 포함 옵션의 AI 견적 초안 요청' : '선택 옵션의 AI 견적 초안 요청'} disabled={!view || dirty || busy || loading || conflicts.length > 0 || !aiRequestAction || aiRequestAction.disabled || aiRequestAction.scopeLocked || aiRequestAction.sourceKey !== aiRequestSource || aiRequestAction.applyToAllOptions !== applyAll} onClick={openAiTools}>AI 처리</button></div>
-    {view && selectedOption === null && !applyAll && <small>AI 작성 범위: 선택 옵션 · <button type="button" className="quotation-field-text-button" disabled={busy || loading} onClick={() => { if (!titleActionCurrent()) return; if (contextTools.current) { contextTools.current.open = true; contextTools.current.scrollIntoView({ block: 'start' }); } optionSelector.current?.focus(); }}>AI 작성할 옵션 선택</button></small>}
+    <div className="quotation-fields-heading"><h3>쿠팡 등록 정보</h3><button type="button" className="btn primary" aria-controls={`${prefix}-ai-tools`} aria-expanded={aiOpen} title={applyAll ? '모든 포함 옵션의 AI 견적 초안' : '선택 옵션의 AI 견적 초안'} disabled={!view || dirty || busy || loading || conflicts.length > 0} onClick={openAiTools}>AI 처리</button></div>
     {loading && <p role="status">최신 견적 입력을 확인하는 중입니다.</p>}
     {error && <p role="alert" className="collection-error">{error}</p>}
+    {(readbackNeeded || labelRecovery) && <button type="button" className="btn ghost quotation-recovery-action" disabled={explicitRefreshBlocked} onClick={refreshExplicitly}>저장 상태 확인</button>}
     {message && <p role="status" className="quotation-fields-notice">{message}</p>}
-    {view&&view.revision>0&&!dirty&&<div role="status" aria-label="저장본 입력 검사 상태" className="quotation-fields-notice">
-      <p>{savedValidationStage?`${savedValidationStage.state==='complete'?'견적서 작성 완료':'견적서 작성 대기'} · ${savedValidationStage.detail}`:'작성 검사 대기 · 현재 저장본의 필수값·형식 검사를 확인해주세요.'}</p>
-      {savedValidation&&selectedOption!==null&&<small>{savedQuotationValidationStage(savedValidation,selectedOption).detail}</small>}
-      <button type="button" className="btn ghost" disabled={busy||loading||conflicts.length>0||!submissionActive} onClick={()=>void validateSaved()}>저장본 입력 검사</button>
-    </div>}
+    {globalErrors.length > 0 && <ul className="quotation-fields-notice" role="alert">{globalErrors.map(issue => <li key={issue}>{issue}</li>)}</ul>}
     {view && <>
-      <QuotationExposedDuplicates resolved={view.resolved} numbers={view.optionRegistrationNumbers} disabled={busy || loading || conflicts.length > 0}
-        readValue={(optionId, fieldId) => resolveQuotationEditorCell(view, changes, optionId, fieldId).value}
-        onOpen={(optionId, fieldId) => { explicitRefreshAction.current = null; setSelectedOption(optionId); setApplyAll(false); openSection('product', fieldId, optionId !== selectedOption); setBulk(null); }}/>
+      <div id={`${prefix}-ai-tools`} ref={aiTools} className="quotation-ai-tools" hidden={!aiOpen}>
+        <button type="button" className="quotation-field-text-button" onClick={() => setAiOpen(false)}>AI 작성 접기</button>
+        <QuotationAiPanel productId={productId} profileId={profileId} view={view} optionId={selectedOption} applyToAllOptions={applyAll} onApplyToAllOptionsChange={changeAllOptions} disabled={dirty || busy || loading || conflicts.length > 0} onRequestActionChange={receiveAiRequest}
+          onBusyChange={next=>{if(next)explicitRefreshAction.current=null;modelActionState.current={...modelActionState.current,busy:next||Boolean(labelRecovery)};setBusy(next);}}
+          onApply={(proposals,_fingerprint,jobId)=>{
+            const current=modelActionState.current;
+            if(current.view!==view||current.selectedOption!==selectedOption||current.applyAll!==applyAll||titleActionEpoch.current!==titleActionTicket||current.busy||current.loading||current.conflicts.length||current.changes.length||changes.length||aiDraftApplied.current||activeWrite.current)return;
+            const requested=validateQuotationChanges(proposals,{schema:view.resolved.schema,optionIds:view.resolved.rows.flatMap(item=>item.optionId===null?[]:[item.optionId]),ownedImageKeys:view.imageKeys,overrides:view.overrides});
+            assertQuotationSeoTitleDraft(view.resolved.schema.fields, requested);
+            const nextDraft=requested.reduce((draft,change)=>updateQuotationEditorDraft(view.overrides,draft,change),[] as QuotationEditorChange[]);
+            aiDraftApplied.current=nextDraft.length>0;
+            setChanges(nextDraft);
+            generatedDraft.current={jobId,proposals};
+            setApplyAll(false);setBulk(null);setMessage('검토한 AI 초안을 입력란에 반영했습니다. 확인·수정한 뒤 견적 입력 저장을 눌러주세요.');
+          }}/>
+      </div>
+      {showOptionPicker && <div className="quotation-fields-toolbar quotation-option-picker"><label className="field"><span>편집할 옵션</span><select value={selectedOption ?? ''} disabled={loading || busy} onChange={event => { explicitRefreshAction.current = null; const next = event.target.value || null; brandInputEpoch.current++; modelActionState.current = { ...modelActionState.current, selectedOption: next }; setSelectedOption(next); setApplyAll(false); setBulk(null); }}>{!row && <option value={selectedOption ?? ''} disabled>선택한 옵션 없음 · 다시 선택해주세요</option>}{view.resolved.rows.map(item => <option key={item.optionId ?? 'common'} value={item.optionId ?? ''}>{item.optionId === null ? '상품 공통값' : `${optionRegistrationLabel(item.optionId,item.optionLabel,view.optionRegistrationNumbers)}${item.included ? '' : ' · 견적 제외'}`}</option>)}</select></label></div>}
       {!view.resolved.rows.some(item => item.included) && <p className="quotation-fields-notice" role="alert">견적에 포함된 옵션이 없습니다. 옵션 설정에서 상품 옵션을 추가하거나 포함을 선택해주세요. 공통 입력은 보존되지만 견적서 출력 대상은 아닙니다.</p>}
       {!row && <p role="alert" className="quotation-fields-notice">선택한 옵션이 현재 상품에 없습니다. 공통값으로 자동 전환하지 않았습니다. 편집할 옵션을 다시 선택해주세요. 미저장 입력은 유지됩니다.</p>}
       {packagingReconfirmation.length>0&&<div className="quotation-fields-notice"><p>직접 입력한 포장값의 판매 구성 수량이 바뀌었습니다. 현재 구성의 실제 포장 무게·치수를 확인한 뒤 저장해주세요. 입력값은 그대로 유지됩니다.</p><button type="button" className="btn ghost" disabled={busy||loading||dirty||conflicts.length>0} onClick={()=>{
@@ -821,10 +841,7 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
         setChanges(packagingReconfirmation.map(change=>({...change})));setApplyAll(false);setBulk(null);setMessage('현재 구성의 포장값을 확인했습니다. 견적 입력 저장을 눌러 확인 기준을 함께 저장해주세요.');
       }}>현재 구성 포장값 확인·저장</button></div>}
       {conflicts.length > 0 && <div className="quotation-fields-notice" role="alert"><strong>다시 검토할 항목 {conflicts.length}개</strong><ul className="quotation-fields-conflicts">{conflicts.map(conflict => <li key={conflict.key}><strong>{schema?.fields.find(field => field.id === conflict.change.fieldKey)?.label ?? conflict.change.fieldKey} · {view.resolved.rows.find(item => item.optionId === conflict.change.optionId)?.optionLabel ?? '삭제된 옵션'}</strong>{conflict.schemaChanged && <p>카테고리 또는 항목 규격이 변경되었습니다. 같은 값이라도 새 양식에 맞는지 확인해주세요.</p>}{conflict.packagingChanged && <p>판매 구성 수량이 변경되었습니다. 같은 값이라도 현재 구성의 포장 무게·치수를 확인해주세요.</p>}<p>{conflict.unavailable ? '현재 카테고리 또는 옵션에 없는 입력입니다.' : `현재 저장값: ${conflict.saved === null ? '자동값 사용' : conflict.saved || '(공란)'}`}</p><p>내 입력: {conflict.change.value === null ? '수동 수정 해제' : conflict.change.value || '(공란)'}</p>{(conflict.linked?.length ?? 0) > 1 && <p>연결된 항목에도 같은 선택을 적용합니다.</p>}<div className="quote-actions">{!conflict.unavailable && <button type="button" className="btn ghost" disabled={busy || loading} onClick={() => resolveConflict(conflict.key, 'draft')}>내 입력 유지</button>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => resolveConflict(conflict.key, 'saved')}>{conflict.unavailable ? '이 입력 제외' : '저장된 값 사용'}</button></div></li>)}</ul></div>}
-      <nav className="quotation-fields-section-nav" aria-label="견적서 단계">
-        {counts.map((section, index) => <button key={section.id} type="button" disabled={busy || loading} aria-current={active === section.id ? 'step' : undefined} aria-controls={`${prefix}-section-${section.id}`} onClick={() => openSection(section.id)}><b>{index + 1}</b><span>{section.title}</span><small>{section.complete}/{section.required} 필수 입력{section.invalid > 0 && ` · 확인 ${section.invalid}개`}</small></button>)}
-      </nav>
-      {row && sections.map((section, sectionIndex) => <fieldset key={section.id} id={`${prefix}-section-${section.id}`} data-section={section.id} className="quotation-fields-section" hidden={active !== section.id} disabled={active !== section.id || busy || loading} tabIndex={-1} style={{ padding: 0, margin: 0, minWidth: 0 }}><header><h4>{sectionIndex + 1}. {section.english} Page ({section.title})</h4><small>* 필수 입력</small></header><div className="quotation-fields-grid">{quotationSectionDisplayFields(schema?.fields ?? [],section.id).flatMap((field, fieldIndex, sectionFields) => {
+      {row && sections.map((section, sectionIndex) => <fieldset key={section.id} id={`${prefix}-section-${section.id}`} data-section={section.id} className="quotation-fields-section" disabled={busy || loading} tabIndex={-1} style={{ padding: 0, margin: 0, minWidth: 0 }}><header><h4>{sectionIndex + 1}. {section.english} Page ({section.title})</h4><small>* 필수 입력</small></header><div className="quotation-fields-grid">{quotationSectionDisplayFields(schema?.fields ?? [],section.id,schema?.categoryId).flatMap((field, fieldIndex, sectionFields) => {
         const cell = resolveQuotationEditorCell(view, changes, selectedOption, field.id);
         const automatic = view.automatic.rows.find(item => item.optionId === selectedOption)?.fields[field.id];
         const issues = quotationEditorIssues(field, cell, view.imageKeys);
@@ -869,13 +886,12 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
           }}/>
           : field.type === 'textarea' || field.type === 'images' || lengthInput?.role === 'searchTags' ? <textarea {...inputProps} rows={field.type === 'images' ? 2 : 3} placeholder={field.type === 'images' ? '아래에서 이 상품의 이미지 파일을 선택하세요.' : lengthInput?.role === 'searchTags' ? '검색 태그를 쉼표(,)로 구분하여 입력하세요' : '확인한 내용을 입력하세요.'} />
             : <input {...inputProps} type="text" inputMode={field.type === 'number' ? 'decimal' : 'text'} placeholder={!editable ? '' : hasCouplusEmptyAttributeDefault(field, cell) ? '해당사항없음' : '확인한 내용을 입력하세요.'} />;
-        const fieldCard = <div className={`quotation-field ${field.type === 'textarea' || field.type === 'images' || lengthInput?.role === 'searchTags' ? 'wide' : ''}`} key={field.id}>
+        const fieldCard = <div className={`quotation-field ${field.type === 'textarea' || field.type === 'images' || lengthInput?.role === 'searchTags' ? 'wide' : ''}`} data-quotation-field={field.id} key={field.id}>
           <div className="quotation-field-heading"><label htmlFor={id} className={namedPair ? 'quotation-value-label' : undefined}>{field.label}{field.unit ? ` (${field.unit})` : ''}{field.required && <b>*</b>}</label>{!namedPair && example}{field.workbookWire?.requirement==='conditional'&&<span className="quotation-field-badge">조건부 필수</span>}</div>
           {fieldHelp && <p id={`${id}-description`} className="quotation-field-help quotation-schema-description">{originalHelp}{originalHelp && quantityUnitHelp && <br/>}{quantityUnitHelp}</p>}
           {namedPair ? <div className="quotation-named-pair"><div className="quotation-named-pair-name"><input type="text" readOnly aria-label={`${field.label} 항목명`} value={field.hubWire!.name} tabIndex={-1}/>{field.required && <b aria-hidden="true">*</b>}{example}</div>{control}</div> : field.type !== 'images' ? control : null}
           {lengthInput && <div className="quotation-field-input-guidance"><small>{lengthInput.role === 'model' ? `모델번호는 최대 ${lengthInput.maxLength}자까지 입력 가능합니다.` : `쉼표(,)로 구분하여 입력하세요. 최대 ${lengthInput.maxLength}자`}</small><small id={`${id}-length`} className="quotation-field-length" data-quotation-length-role={lengthInput.role} data-quotation-length-state={lengthInput.state}>{lengthInput.length}/{lengthInput.maxLength}자</small></div>}
-          {seoTitle && onEditSeo && <button type="button" className="quotation-field-text-button" disabled={dirty || busy || loading || conflicts.length > 0} onClick={editSeo}>SEO 설정에서 상품명 수정</button>}
-          {modelSuggestion && <details className="quotation-field-diagnostics"><summary>모델명 제안 확인</summary><div className="quotation-field-auto">
+          {showAdminTools && modelSuggestion && <details className="quotation-field-diagnostics"><summary>모델명 제안 확인</summary><div className="quotation-field-auto">
             <small>출처: 현재 {selectedOption === null ? '공통' : '옵션'} 견적 상품명 · {sourceLabels[modelSuggestion.source] ?? modelSuggestion.source}</small>
             <p>상품명: {modelSuggestion.sourceTitle}</p><p>제안 모델명: {modelSuggestion.value}{modelSuggestion.shortened && ' · 앞 50자 이내'}</p>
             {modelSuggestion.peer && <p>공식 견적 {modelSuggestion.peer.label} · 현재 {modelSuggestion.peer.before || '(공란)'} ({sourceLabels[modelSuggestion.peer.source] ?? modelSuggestion.peer.source}) → {modelSuggestion.peer.changed ? `같은 제안값으로 함께 입력: ${modelSuggestion.value}` : '이미 같은 값 · 기존 입력 유지'}</p>}
@@ -892,8 +908,8 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
             }}>상품명으로 모델명 입력</button>
             <small>별도 모델명이 없는 상품일 때만 확인하고 적용하세요. 현재 편집 범위의 견적 초안에만 반영하며 다른 옵션 일괄 적용 선택은 해제합니다. 견적 입력 저장을 눌러 확정합니다.</small>
           </div></details>}
-          {modelState.reason && <p className="quotation-field-help">{modelState.reason}</p>}
-          {manualModelLink && <details className="quotation-field-diagnostics"><summary>공식 모델명 연결 확인</summary><div className="quotation-field-auto">
+          {showAdminTools && modelState.reason && <p className="quotation-field-help">{modelState.reason}</p>}
+          {showAdminTools && manualModelLink && <details className="quotation-field-diagnostics"><summary>공식 모델명 연결 확인</summary><div className="quotation-field-auto">
             <small>현재 {selectedOption === null ? '공통' : '옵션'} 모델명 · {sourceLabels[manualModelLink.source] ?? manualModelLink.source}</small>
             <p>입력한 모델명: {manualModelLink.value}</p>
             <p>공식 견적 {manualModelLink.peer.label} · 현재 {manualModelLink.peer.before || '(공란)'} ({sourceLabels[manualModelLink.peer.source] ?? manualModelLink.peer.source}) → {manualModelLink.value}</p>
@@ -911,24 +927,41 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
             }}>입력한 모델명을 공식 모델명/품번에 적용</button>
             <small>위 두 값이 같은 실제 모델인지 확인한 뒤 적용하세요. 현재 편집 범위의 견적 초안에만 반영하며 다른 옵션 일괄 적용 선택은 해제합니다. 견적 입력 저장을 눌러 확정합니다.</small>
           </div></details>}
-          {manualModelState.reason && <p className="quotation-field-help">{manualModelState.reason}</p>}
+          {showAdminTools && manualModelState.reason && <p className="quotation-field-help">{manualModelState.reason}</p>}
           {field.type === 'images' && <>{imageKeys.length > 0 && <div className="quotation-fields-image-final" aria-label={`${field.label} 선택 이미지`}>{imageKeys.map((key, index) => <div key={key}>
             {/* eslint-disable-next-line @next/next/no-img-element -- Existing selected owned quotation images; display only. */}
             <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`${field.label} ${index + 1}`} loading="lazy" /><span>{index + 1}</span></div>)}</div>}<details className="quotation-image-tools"><summary>이미지 선택·순서 편집</summary>{control}<div className="quotation-fields-image-list">{view.imageKeys.map((key, index) => <button className="quotation-fields-image-choice" key={key} type="button" disabled={!editable} aria-pressed={imageKeys.includes(key)} aria-label={`이미지 ${index + 1} ${imageKeys.includes(key) ? '연결 해제' : '연결'}`} onClick={() => edit(field.id, (imageKeys.includes(key) ? imageKeys.filter(item => item !== key) : field.maxItems === 1 ? [key] : [...imageKeys, key]).join('\n'))}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`업로드 이미지 ${index + 1}`} loading="lazy" /><span>이미지 {index + 1}</span>{imageKeys.includes(key) && <b>{imageKeys.indexOf(key) + 1}</b>}</button>)}</div>{imageKeys.length > 0 && <div className="quotation-fields-image-selected">{imageKeys.map((key, index) => <div key={key}><span>{index + 1}. {view.imageKeys.includes(key) ? `이미지 ${view.imageKeys.indexOf(key) + 1}` : `연결 확인: ${key}`}</span><button type="button" disabled={!editable || index === 0} aria-label={`${index + 1}번 이미지 앞으로`} onClick={() => { const next = [...imageKeys]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; edit(field.id, next.join('\n')); }}>↑</button><button type="button" disabled={!editable || index === imageKeys.length - 1} aria-label={`${index + 1}번 이미지 뒤로`} onClick={() => { const next = [...imageKeys]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; edit(field.id, next.join('\n')); }}>↓</button><button type="button" disabled={!editable} onClick={() => edit(field.id, imageKeys.filter(item => item !== key).join('\n'))}>제외</button></div>)}</div>}</details></>}
-          <div id={`${id}-notes`}>{seoTitle && <p className="quotation-field-help quotation-seo-guidance">상품명은 SEO 설정에서 수정해주세요.</p>}{priceMismatch.map(item => <p key={item.alias.id} className="quotation-field-issue">이전 요약 가격 {quotationFieldDisplay(item.alias, item.cell, '(공란)')}과 Supplier Hub 가격이 다릅니다. 저장값은 유지했습니다. 이 금액을 직접 입력하면 두 항목에 함께 반영합니다.</p>)}{issueNotes.visible.map(issue => <p key={issue} className="quotation-field-issue">{issue}</p>)}</div>
-          <details className="quotation-field-diagnostics"><summary>자동값·입력 출처</summary>
+          <div id={`${id}-notes`}>{seoTitle && <p className="quotation-field-help quotation-seo-guidance">{onEditSeo
+            ? <button type="button" className="quotation-field-text-button" aria-label="SEO 설정에서 상품명 수정" disabled={dirty || busy || loading || conflicts.length > 0} onClick={editSeo}>상품명은 SEO 설정에서 수정해주세요.</button>
+            : '상품명은 SEO 설정에서 수정해주세요.'}</p>}{priceMismatch.map(item => <p key={item.alias.id} className="quotation-field-issue">이전 요약 가격 {quotationFieldDisplay(item.alias, item.cell, '(공란)')}과 Supplier Hub 가격이 다릅니다. 저장값은 유지했습니다. 이 금액을 직접 입력하면 두 항목에 함께 반영합니다.</p>)}{issueNotes.visible.map(issue => <p key={issue} className="quotation-field-issue">{issue}</p>)}</div>
+          {showAdminTools && <details className="quotation-field-diagnostics"><summary>자동값·입력 출처</summary>
           <div className="quotation-field-badges"><span className={`quotation-field-badge ${cell.source.startsWith('manual-') ? 'manual' : ''}`}>{sourceLabels[cell.source] ?? cell.source}</span>{field.visibility === 'exposed' && <span className="quotation-field-badge">노출 속성</span>}{field.visibility === 'hidden' && <span className="quotation-field-badge">비노출 속성</span>}{cell.needsReview && <span className="quotation-field-badge review">검토 필요</span>}</div>
           {issueNotes.diagnostic.map(issue => <p key={issue} className="quotation-field-help">{issue}</p>)}
           {ownManual && <div className="quotation-field-auto">{restoredWeight ? `수정 해제 후 ${sourceLabels[restoredWeight.source]}: ${quotationFieldDisplay(field, restoredWeight, '(미입력)')}` : selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? `수정 해제 후 공통값: ${quotationFieldDisplay(field, {value:draftManual(view, changes, null, field.id)!,source:'manual-common'})}` : `자동값 (${sourceLabels[automatic?.source ?? 'empty'] ?? '저장 자료'}): ${quotationFieldDisplay(field, automatic ?? {value:'',source:'empty'}, '(미입력)')}`}</div>}
           <div className="quotation-field-footer"><div>{seoTitle && !field.readOnly && ownManual && <button type="button" className="quotation-field-text-button" disabled={busy || loading || conflicts.length > 0} onClick={() => restoreSeoTitle(field.id)}>{selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? '상품명 수정 해제 · 공통값 사용' : '상품명 수정 해제 · SEO 자동값 사용'}</button>}{editable && ownManual && <button type="button" className="quotation-field-text-button" onClick={() => edit(field.id, null)}>{restoredWeight ? restoredWeight.source.startsWith('manual-') ? '수정 해제 · 연결값 사용' : '수정 해제 · 자동값 복원' : selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? '수정 해제 · 공통값 사용' : '수정 해제 · 자동값 복원'}</button>}{linkedWeight ? <small>연결된 포장 무게의 {weightManual.source === 'manual-option' ? '옵션' : '공통'} 입력값을 따릅니다.</small> : inheritedManual && <small>{seoTitle ? '저장된 공통 상품명 수정값을 따릅니다.' : '공통값을 따릅니다. 여기서 입력하면 이 옵션만 바뀝니다.'}</small>}{field.minLength !== undefined && field.minLength > 0 && <small> 최소 {field.minLength}자</small>}{!lengthInput && field.maxLength !== undefined && <small> {quotationValueLength(field, cell.value)}/{field.maxLength}자</small>}</div>{editable && optionCount > 0 && <label className="quotation-field-select-copy"><input type="checkbox" checked={selectedFields.includes(field.id)} onChange={event => { setSelectedFields(previous => event.target.checked ? [...previous, field.id] : previous.filter(key => key !== field.id)); setBulk(null); }} />다른 옵션에 적용</label>}</div>
-          </details>
+          </details>}
         </div>;
         const foldedWeight = quotationPackagedWeightDisplayField(schema?.fields ?? [], field.id, key => resolveQuotationEditorCell(view, changes, selectedOption, key).value) !== field.id;
-        return [heading, foldedWeight ? <details key={`compat-${field.id}`} className="quotation-field-diagnostics" style={{gridColumn:'1 / -1'}}><summary>이전 포장 무게 입력 확인</summary><p>아래 원본 양식의 포장 무게와 연결된 값입니다. 기존 수정값을 개별 해제할 때 펼쳐 확인하세요.</p>{fieldCard}</details> : fieldCard];
+        return [heading, foldedWeight ? showAdminTools && <details key={`compat-${field.id}`} className="quotation-field-diagnostics" style={{gridColumn:'1 / -1'}}><summary>이전 포장 무게 입력 확인</summary><p>아래 원본 양식의 포장 무게와 연결된 값입니다. 기존 수정값을 개별 해제할 때 펼쳐 확인하세요.</p>{fieldCard}</details> : fieldCard];
       })}</div></fieldset>)}
-      {active === 'start' && row?.productNameProposal && <div className="quotation-fields-notice" aria-label="제안 상품명">
+      <div className="quotation-fields-actions">
+        {selectedOption !== null && row && optionCount > 1 && <label className="quotation-apply-all"><input type="checkbox" role="switch" checked={applyAll} disabled={busy || loading || Boolean(aiRequestAction?.sourceKey === aiRequestSource && aiRequestAction.scopeLocked)} onChange={event => changeAllOptions(event.target.checked)}/>모든 옵션에 적용</label>}
+        <button type="button" className="btn primary" aria-label="견적 입력 저장" title={dirty ? `${savePlan.changes.length || changes.length}개 입력 저장` : '견적 입력 저장'} disabled={busy || loading || !dirty || !row || conflicts.length > 0 || hasInvalidDraft || readbackNeeded} onClick={() => void save()}>{operationBusy ? '저장 중…' : '저장'}</button>
+      </div>
+      {applyAll && !showAdminTools && <p className="quotation-fields-notice" role="status">수정한 항목을 견적 제외 옵션까지 모든 옵션에 적용합니다. 대상 옵션의 같은 항목에 직접 입력한 값도 바뀝니다.</p>}
+      {hasInvalidDraft && <p className="quotation-field-issue" role="status">{invalidDraftMessage} 필수 항목의 공란은 작성 중 상태로 저장할 수 있습니다.</p>}
+      {adminTools && <div className="quotation-admin-editor-tools" hidden={!showAdminTools}>
+      {view.revision > 0 && !dirty && <div role="status" aria-label="저장본 입력 검사 상태" className="quotation-fields-notice">
+        <p>{savedValidationStage?`${savedValidationStage.state==='complete'?'견적서 작성 완료':'견적서 작성 대기'} · ${savedValidationStage.detail}`:'작성 검사 대기 · 현재 저장본의 필수값·형식 검사를 확인해주세요.'}</p>
+        {savedValidation&&selectedOption!==null&&<small>{savedQuotationValidationStage(savedValidation,selectedOption).detail}</small>}
+        <button type="button" className="btn ghost" disabled={busy||loading||conflicts.length>0||!submissionActive} onClick={()=>void validateSaved()}>저장본 입력 검사</button>
+      </div>}
+      <QuotationExposedDuplicates resolved={view.resolved} numbers={view.optionRegistrationNumbers} disabled={busy || loading || conflicts.length > 0}
+        readValue={(optionId, fieldId) => resolveQuotationEditorCell(view, changes, optionId, fieldId).value}
+        onOpen={(optionId, fieldId) => { explicitRefreshAction.current = null; setSelectedOption(optionId); setApplyAll(false); openSection('product', fieldId, optionId !== selectedOption); setBulk(null); }}/>
+      {row?.productNameProposal && <div className="quotation-fields-notice" aria-label="제안 상품명">
         <strong>제안 상품명</strong>
         <p>{row.productNameProposal.value || `확인 필요 · ${row.productNameProposal.missing.join(', ')}`}</p>
         {dirty && <small>저장하면 제안 상품명이 갱신됩니다.</small>}
@@ -939,26 +972,18 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
         {guidance.missing.length > 0 && <ul>{guidance.missing.map(({ field, issues }) => <li key={field.id}><button type="button" className="quotation-field-text-button" disabled={busy || loading} onClick={() => openSection(field.section, field.id)}>{field.label} 입력하기</button>: {issues.join(' ')}</li>)}</ul>}
         {inputErrors > 0 && <ul>{guidance.globalErrors.map((issue, index) => <li key={`global-${index}`}>{issue}</li>)}{guidance.invalid.map(({ field, issues }) => <li key={field.id}><button type="button" className="quotation-field-text-button" disabled={busy || loading} onClick={() => openSection(field.section, field.id)}>{field.label} 확인하기</button>: {issues.join(' ')}</li>)}</ul>}
       </details>}
-      <details className="quotation-fields-context" ref={contextTools}><summary>입력 정보</summary>{schema && schema.status !== 'observed' && <p className="quotation-fields-notice">이 카테고리의 세부 규격은 미확인입니다.</p>}
-        <div className="quotation-fields-toolbar"><label className="field"><span>편집할 옵션</span><select ref={optionSelector} value={selectedOption ?? ''} disabled={loading || busy} onChange={event => { explicitRefreshAction.current = null; const next = event.target.value || null; brandInputEpoch.current++; modelActionState.current = { ...modelActionState.current, selectedOption: next }; setSelectedOption(next); setApplyAll(false); setBulk(null); }}>{!row && <option value={selectedOption ?? ''} disabled>선택한 옵션 없음 · 다시 선택해주세요</option>}{view.resolved.rows.map(item => <option key={item.optionId ?? 'common'} value={item.optionId ?? ''}>{item.optionId === null ? '상품 공통값' : `${optionRegistrationLabel(item.optionId,item.optionLabel,view.optionRegistrationNumbers)}${item.included ? '' : ' · 견적 제외'}`}</option>)}</select></label></div>
-        <label className="quotation-field-tools-toggle"><input type="checkbox" checked={fieldTools} onChange={event => setFieldTools(event.target.checked)}/>입력 출처·추가 편집 표시</label>
+      <details className="quotation-fields-context"><summary>입력 정보</summary>{schema && schema.status !== 'observed' && <p className="quotation-fields-notice">이 카테고리의 세부 규격은 미확인입니다.</p>}
         <div className="quotation-fields-category"><strong>{schema?.categoryPath.join(' › ') || '카테고리 미연결'}{schema?.categoryId ? ` · ${schema.categoryId}` : ''}</strong></div>
         <p>{selectedOption === null ? '공통 수정은 별도로 수정하지 않은 옵션에도 적용됩니다. 옵션별 입력은 개별 값을 우선 사용합니다.' : '선택한 옵션만 수정합니다. 다른 옵션에도 같은 값을 넣으려면 항목을 선택한 뒤 적용 범위를 확인하세요.'}</p>
         <div className="quotation-fields-summary"><span>필수 미입력 <b>{guidance.missing.length}개</b></span><span>입력 오류 <b>{inputErrors}개</b></span><span>미저장 수정 <b>{changes.length}개</b></span></div>
         <small>입력 v{view.revision} · 수동 수정값은 기본값이 바뀌어도 유지됩니다.</small>
         <button type="button" className="btn ghost" disabled={explicitRefreshBlocked} onClick={refreshExplicitly}>기본값 다시 반영</button>
       </details>
-      <div className="quotation-fields-actions">{selectedOption !== null && row && optionCount > 1 && <label className="quotation-apply-all"><input type="checkbox" role="switch" checked={applyAll} disabled={busy || loading || Boolean(aiRequestAction?.sourceKey === aiRequestSource && aiRequestAction.scopeLocked)} onChange={event => changeAllOptions(event.target.checked)}/>모든 옵션에 적용</label>}<div>
-        <button type="button" className="btn ghost" disabled={!previousSection || !row || busy || loading} onClick={() => previousSection && openSection(previousSection.id)}>이전</button>
-        <button type="button" className="btn ghost" disabled={!nextSection || !row || busy || loading} onClick={() => nextSection && openSection(nextSection.id)}>다음</button>
-        <button type="button" className="btn primary" aria-label="견적 입력 저장" title={dirty ? `${savePlan.changes.length || changes.length}개 입력 저장` : '견적 입력 저장'} disabled={busy || loading || !dirty || !row || conflicts.length > 0 || hasInvalidDraft} onClick={() => void save()}>{operationBusy ? '저장 중…' : '저장'}</button>
-      </div></div>
       <details className="quotation-secondary-actions"><summary>저장본 불러오기</summary><div className="quote-actions"><button type="button" className="btn ghost" disabled={busy || loading || !dirty} onClick={() => void refresh(true)}>입력 버리고 저장본 불러오기</button></div></details>
       {applyAll && <div className="quotation-fields-bulk" role="status"><p>현재 옵션에서 수정한 항목을 견적 제외 옵션까지 모든 옵션에 적용합니다. 대상의 같은 항목에 직접 입력한 값이 있으면 바뀝니다. 수정하지 않은 항목과 옵션의 견적 포함 여부는 유지됩니다.</p><strong>다른 옵션 {new Set(savePlan.propagated.map(item => item.optionId)).size}개 · {savePlan.propagated.length}개 값 적용 예정</strong>{savePlan.propagated.length > 0 && <details><summary>함께 저장할 변경 내용</summary><div className="quotation-fields-bulk-table"><table><thead><tr><th>옵션 / 항목</th><th>현재 입력</th><th>저장할 값</th></tr></thead><tbody>{savePlan.propagated.map(item => <tr key={quotationEditorKey(item.optionId,item.fieldKey)}><td>{item.optionLabel}{!item.included && ' · 견적 제외'}<br/>{item.label}</td><td>{item.before}</td><td>{item.after}</td></tr>)}</tbody></table></div></details>}</div>}
       {row && optionCount > 0 && selectedFields.length > 0 && <div className="quotation-fields-bulk"><strong>선택한 {selectedFields.length}개 항목 · 옵션별 일괄 작업</strong><p>선택한 항목의 현재 값을 복사합니다. 미입력 항목은 제외하여 대상 옵션의 값과 자동 연동을 유지합니다. 적용 대상의 기존 수동값도 바뀌며, 복사한 값은 이후 기본값 변경을 자동으로 따르지 않습니다.</p><label className="quotation-field-select-copy"><input type="checkbox" checked={includedOnly} disabled={busy || loading} onChange={event => { setIncludedOnly(event.target.checked); setBulk(null); }} />견적에 포함된 옵션만 적용</label><div className="quote-actions"><button type="button" className="btn ghost" disabled={busy || loading} onClick={() => { setSelectedFields([]); setBulk(null); }}>항목 선택 해제</button><button type="button" className="btn ghost" disabled={busy || loading || conflicts.length > 0} onClick={() => { try { setBulk(previewQuotationEditorBulk(view, changes, selectedOption, selectedFields, includedOnly)); setError(''); } catch (cause) { setError(cause instanceof Error ? cause.message : '적용 범위 확인 실패'); } }}>적용 범위 미리보기</button><button type="button" className="btn ghost" disabled={busy || loading || conflicts.length > 0} onClick={() => { try { setBulk(previewQuotationEditorRestore(view, changes, selectedFields, includedOnly)); setError(''); } catch (cause) { setError(cause instanceof Error ? cause.message : '복원 범위 확인 실패'); } }}>공통·자동 연동 복원 미리보기</button></div><p>연동 복원은 현재 옵션을 포함한 대상 옵션의 선택 항목에서 수동 수정만 해제합니다. 공통 수정값이 있으면 공통값을, 없으면 저장 자료의 자동값을 따릅니다. 선택하지 않은 항목과 공통 수정값은 유지됩니다.</p>{bulk && <>{bulk.skipped && bulk.skipped.length > 0 && <ul>{bulk.skipped.map(item => <li key={item}>{item}</li>)}</ul>}{bulk.mode === 'restore' && <p role="status">수동 수정 해제 예정입니다. 값이 같아도 이후 공통·자동값 변경을 따라가게 됩니다. 직접 비워둔 값도 복원 대상에 포함됩니다.</p>}<strong>{new Set(bulk.rows.map(item => item.optionId)).size}개 옵션 · {bulk.rows.length}개 값 변경 예정</strong><div className="quotation-fields-bulk-table"><table><thead><tr><th>옵션 / 항목</th><th>현재 값</th><th>적용할 값</th></tr></thead><tbody>{bulk.rows.map(item => <tr key={quotationEditorKey(item.optionId, item.fieldKey)}><td>{item.optionLabel}<br />{item.label}</td><td>{item.beforeDisplay}{item.manualBefore ? '\n직접 수정한 값' : '\n자동값 사용 중'}</td><td>{item.afterDisplay}</td></tr>)}</tbody></table></div>{!bulk.rows.length && <p>현재 선택에서 바뀌는 옵션이 없습니다.</p>}<div className="quote-actions"><button type="button" className="btn ghost" onClick={() => setBulk(null)}>취소</button><button type="button" className="btn primary" disabled={!bulk.rows.length || busy || loading} onClick={() => { try { const copied=applyQuotationEditorBulkWithPackagingDrafts(view,changes,bulk,packagingDrafts.current); packagingDrafts.current=copied.drafts; setChanges(copied.changes); setBulk(null); setMessage('옵션별 입력에 반영했습니다. 저장 버튼을 눌러 확정하세요.'); } catch (cause) { setError(cause instanceof Error ? cause.message : '미리보기를 다시 확인해주세요.'); } }}>확인한 범위에 적용</button></div></>}</div>}
       {guidance.references.length > 0 && <details className="quotation-fields-notice"><summary>검토·참고 안내 {guidance.references.length}건</summary><ul>{guidance.references.map(({ field, issue }, index) => <li key={`${field?.id ?? 'global'}-${index}`}>{field && <><button type="button" className="quotation-field-text-button" disabled={busy || loading} onClick={() => openSection(field.section, field.id)}>{field.label}</button>: </>}{issue}</li>)}</ul></details>}
-      {hasInvalidDraft && <p className="quotation-field-issue" role="status">{invalidDraftMessage} 필수 항목의 공란은 작성 중 상태로 저장할 수 있습니다.</p>}
-      <details className="quotation-supplemental-tools" ref={supplementalTools}><summary>추가 견적 작업</summary>
+      <details className="quotation-supplemental-tools"><summary>추가 견적 작업</summary>
       {row && <QuotationPackagingDraftPanel productId={productId} profileId={profileId} view={view} optionId={selectedOption} disabled={dirty||busy||loading||conflicts.length>0||submissionLocks.source}
         disabledReason={dirty?'수정 중인 견적 입력을 먼저 저장해주세요.':submissionLocks.source?'원래 전송 요청의 저장 결과를 확인하는 동안 포장 규격 편집을 잠갔습니다.':conflicts.length>0?'저장 충돌을 확인한 뒤 포장 규격을 편집해주세요.':undefined}
         onBusyChange={next=>{if(next)explicitRefreshAction.current=null;modelActionState.current={...modelActionState.current,busy:next||Boolean(labelRecovery)};setBusy(next);}}
@@ -970,21 +995,6 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
       <QuotationOptionOverview view={view} changes={changes} disabled={busy || loading} onOpen={(optionId, section, fieldId) => { explicitRefreshAction.current = null; setSelectedOption(optionId); setApplyAll(false); openSection(section, fieldId, optionId !== selectedOption); setBulk(null); }}/>
       <ProductOptionSplitPanel productId={productId} profileId={profileId} view={view} disabled={dirty || operationBusy || Boolean(labelRecovery) || loading || conflicts.length > 0 || submissionLocks.source}
         onBusyChange={next => { if (next) { explicitRefreshAction.current = null; titleActionEpoch.current++; } setSplitBusy(next); }} onDraftChange={next => { if (next) { uiReads?.retire();splitUiMutation.current??=onBeginSourceWrite?.()??null;explicitRefreshAction.current = null; titleActionEpoch.current++; } setSplitDrafting(next); }} onCommitted={() => { splitUiMutation.current?.confirm();splitUiMutation.current=null;onSaved?.(); void refresh(); }} />
-      <div id={`${prefix}-ai-tools`} ref={aiTools} className="quotation-ai-tools"><p>필요한 항목을 선택해 AI 초안을 요청하고, 검토 후 입력에 적용하세요.</p>
-      <QuotationAiPanel productId={productId} profileId={profileId} view={view} optionId={selectedOption} applyToAllOptions={applyAll} onApplyToAllOptionsChange={changeAllOptions} disabled={dirty || busy || loading || conflicts.length > 0} onRequestActionChange={receiveAiRequest}
-        onBusyChange={next=>{if(next)explicitRefreshAction.current=null;modelActionState.current={...modelActionState.current,busy:next||Boolean(labelRecovery)};setBusy(next);}}
-        onApply={(proposals,_fingerprint,jobId)=>{
-          const current=modelActionState.current;
-          if(current.view!==view||current.selectedOption!==selectedOption||current.applyAll!==applyAll||titleActionEpoch.current!==titleActionTicket||current.busy||current.loading||current.conflicts.length||current.changes.length||changes.length||aiDraftApplied.current||activeWrite.current)return;
-          const requested=validateQuotationChanges(proposals,{schema:view.resolved.schema,optionIds:view.resolved.rows.flatMap(item=>item.optionId===null?[]:[item.optionId]),ownedImageKeys:view.imageKeys,overrides:view.overrides});
-          assertQuotationSeoTitleDraft(view.resolved.schema.fields, requested);
-          const nextDraft=requested.reduce((draft,change)=>updateQuotationEditorDraft(view.overrides,draft,change),[] as QuotationEditorChange[]);
-          aiDraftApplied.current=nextDraft.length>0;
-          setChanges(nextDraft);
-          generatedDraft.current={jobId,proposals};
-          setApplyAll(false);setBulk(null);setMessage('검토한 AI 초안을 입력란에 반영했습니다. 확인·수정한 뒤 견적 입력 저장을 눌러주세요.');
-        }}/>
-      </div>
       <QuotationWorkbookReview key={`workbook:${JSON.stringify([view.revision, view.inputFingerprint, changes])}`} view={view} changes={changes} disabled={busy || loading || conflicts.length > 0} onApply={(selections, basis) => {
         const current = modelActionState.current;
         if (current.view !== view || current.changes !== changes || current.busy || current.loading || current.conflicts.length || activeWrite.current) return false;
@@ -1009,6 +1019,7 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, prod
       <details className="quotation-submission-tools" id={`${prefix}-submission-tools`} ref={submissionTools}><summary ref={submissionSummary}>저장한 견적 검토·전송</summary><p>견적 입력을 저장한 뒤 자료를 검토하고 전송을 준비하세요.</p>
       <SupplierHubSingleReview autoRead={false} productId={productId} profileId={profileId} view={view} disabled={!submissionActive || dirty || formBusy || loading || conflicts.length > 0} onInspect={inspectNativeIssue} onLockChange={changeSubmissionLock} onReceiptSaved={onReceiptSaved} onSourceChanged={message=>{const current=modelActionState.current;if(current.view!==view||current.changes.length||current.formBusy||current.loading||current.conflicts.length||!current.submissionActive)return;onSaved?.();void refresh(false,false,message);}} primaryProduct={true}/>
       </details>
+      </div>}
     </>}
   </section>;
 }

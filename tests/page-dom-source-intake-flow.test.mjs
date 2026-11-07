@@ -96,7 +96,7 @@ for(const company of companies)test(`${company.code}: two-colour DOM capture bec
   assert.ok(seo.content.assets.main.value.length);assert.ok(seo.content.assets.detail.value.length);
   const labels=await h.load('db/product-labels.ts').readProductLabels('owner',linked.product_id);
   assert.equal(labels.revision,1);assert.deepEqual(plain(labels.overrides),{common:{},options:{}});
-  assert.deepEqual(Array.from(labels.structure,field=>field.id),['productName','importer','manufacturer','countryOfOrigin','netContents','material','productType','precautions','usageStandard']);
+  assert.deepEqual(Array.from(labels.structure,field=>field.id),['productName','manufacturer','importer','countryOfOrigin','netContents','material','productType','precautions','usageStandard']);
   const product=h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(linked.product_id);assert.equal(labels.updatedAt,product.created_at);
   const quote=await json(await h.route(base+'/quotation-fields'));assert.equal(quote.categoryContext.profileId,category.id);
   assert.equal(quote.resolved.schema.categoryId,snapshot.categoryId);

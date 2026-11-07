@@ -1,4 +1,4 @@
-import {CURRENT_LABEL_POLICY,normalizeCurrentLabelContent,currentLabelHan,type LabelSuggestionKey} from '@/app/product-label-current-rules';
+import {CURRENT_LABEL_POLICY,normalizeCurrentLabelContent,currentLabelHan,knownProductLabelMaterial,productLabelCategoryType,type LabelSuggestionKey} from '@/app/product-label-current-rules';
 import { productLabelDefinitions, verifyProductLabelsView, type ProductLabelKey, type ProductLabelsView } from '@/app/product-label';
 import { strictJson, QUOTATION_AI_MODEL } from '@/app/quotation-ai';
 import { quotationAiProviderResponse } from '@/app/quotation-ai-provider';
@@ -32,7 +32,7 @@ export type ProductLabelDraftResult = {
 };
 export type ProductLabelDraftSource = {
   originalTitle: string; productName: string; description: string; attributes: { name: string; value: string }[];
-  manualKeys: readonly ProductLabelKey[];bundleQuantity?:number;savedNotices?:{material?:string;netContents?:string};
+  manualKeys: readonly ProductLabelKey[];bundleQuantity?:number;savedNotices?:{material?:string;netContents?:string};officialCategory?:boolean;
   option: { optionId: string; originalName: string; translatedName: string; unitsPerPack: number } | null;
 };
 export type ProductLabelDraftPlan = {
@@ -41,7 +41,7 @@ export type ProductLabelDraftPlan = {
   fields: { key: ProductLabelDraftKey; label: string; currentValue: string }[];
   facts: { productName: string; originalTitle: string; description: string; attributes: { name: string; value: string }[];
     preferredAttributes?: {name:string;value:string;provenance?:string;sourceName?:string}[];
-    bundleQuantity?:number;savedNotices?:{material?:string;netContents?:string};category: { id: string; path: string[] }; option: ProductLabelDraftSource['option'] };
+    bundleQuantity?:number;savedNotices?:{material?:string;netContents?:string};category: { id: string; path: string[]; official?:true; type?:string }; option: ProductLabelDraftSource['option'] };
   warnings: string[];
 };
 export function parseProductLabelDraftRequest(input: unknown): ProductLabelDraftRequest {
@@ -70,11 +70,12 @@ export function buildProductLabelDraftPlan(view: ProductLabelsView, optionId: st
   const warnings = ['AI가 제안한 검토용 초안입니다. 상품 원문과 실제 제품을 확인한 뒤 직접 저장해주세요.',
     '원문에 명시되지 않은 내용량·재질·성능과 자료 부족 항목은 자동으로 적용하지 않습니다.'];
   const excerpt = (value: string, maximum: number, name: string) => { if (value.length > maximum) warnings.push(`${name}은 앞 ${maximum}자만 AI 참고자료에 포함했습니다.`); return value.slice(0, maximum); };
+  const categoryType=source.officialCategory===true?productLabelCategoryType(view.categoryContext.categoryPath):undefined;
   const plan: ProductLabelDraftPlan = { format: 'yoofam-product-label-draft-plan-v1', resultPolicy:CURRENT_LABEL_POLICY,productId: view.productId, optionId,
     profileId: view.categoryContext.profileId, productVersion: view.productVersion, labelRevision: view.revision, inputFingerprint: view.inputFingerprint, fields,
     facts: { productName: excerpt(source.productName, 2000, '상품명'), originalTitle: excerpt(source.originalTitle, 2000, '원문 상품명'),
       description: excerpt(source.description, 6000, '상품 설명'), attributes: structuredClone(source.attributes),
-      bundleQuantity:source.bundleQuantity??1,savedNotices:source.savedNotices??{},category: { id: view.categoryContext.categoryId!, path: [...view.categoryContext.categoryPath] }, option: structuredClone(source.option) }, warnings };
+      bundleQuantity:source.bundleQuantity??1,savedNotices:source.savedNotices??{},category: { id: view.categoryContext.categoryId!, path: [...view.categoryContext.categoryPath],...(source.officialCategory===true?{official:true}:{}),...(categoryType?{type:categoryType}:{}) }, option: structuredClone(source.option) }, warnings };
   const preferred=prioritizedProductAttributes(source.description,source.attributes);
   if(preferred.some(pair=>pair.provenance?.startsWith('detail-')))plan.facts.preferredAttributes=preferred;
   if (size(plan) > INPUT_LIMIT) return fail('PRODUCT_LABEL_DRAFT_LIMIT', '표시사항 AI 참고자료가 처리 한도를 초과했습니다.', 413);
@@ -167,6 +168,7 @@ export function verifyProductLabelDraftResult(view: ProductLabelsView, optionId:
 /** The same bounded evidence/default pipeline runs again on automatic-processing saves. */
 export function processCurrentLabelCandidates(plan:ProductLabelDraftPlan,response:Record<string,string>){
  const values:ProductLabelDraftResult['values']={},classifications:Partial<Record<LabelSuggestionKey,'suggestion'|'default'>>={},warnings=[...plan.warnings];
+ const categoryType=plan.facts.category.type;
  for(const field of plan.fields){
   const raw=response[outputs[field.key]]??'',issue=labelEvidenceIssue(raw,field.key,plan);let value=issue?'상세정보참조':raw.trim();
   let normalizedMaterial=false;
@@ -174,13 +176,15 @@ export function processCurrentLabelCandidates(plan:ProductLabelDraftPlan,respons
   if(plan.resultPolicy){
    if(field.key==='netContents')value=normalizeCurrentLabelContent(value,plan.facts.bundleQuantity??1);
    if(currentLabelHan(value)){value='상세정보참조';classification='default';}
+   if(field.key==='productType'&&value==='상세정보참조')value=categoryType??value;
    if(field.key==='material'&&value==='상세정보참조'){
     const candidate=plan.facts.attributes.find(pair=>pair.name==='재질')?.value.trim();
     if(candidate&&candidate!=='기타'&&!currentLabelHan(candidate)&&!productFactPriorityIssue(candidate,'material',plan.facts.description,plan.facts.preferredAttributes)){value=candidate;classification='suggestion';}
     else if(!plan.facts.savedNotices?.material){
      const original=plan.facts.attributes.filter(pair=>productFactKey(pair.name)==='material');
      const detail=plan.facts.preferredAttributes?.filter(pair=>pair.provenance?.startsWith('detail-')&&productFactKey(pair.name)==='material')??[];
-     const materials=[...original,...detail].map(pair=>canonicalProductMaterialLiteral(pair.value));
+     const normalizeMaterial=plan.facts.category.official?knownProductLabelMaterial:canonicalProductMaterialLiteral;
+     const materials=[...original,...detail].map(pair=>normalizeMaterial(pair.value));
      const canonical=materials[0];
      if(original.length&&canonical&&materials.every(material=>material===canonical)&&!labelEvidenceIssue(canonical,'material',plan)){
       value=canonical;classification='suggestion';normalizedMaterial=true;

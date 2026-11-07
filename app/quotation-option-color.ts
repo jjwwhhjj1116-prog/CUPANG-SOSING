@@ -3,7 +3,7 @@ import { seoCurrentLiterals } from '@/app/seo-current-literals';
 const { Ke: translatedColors, oe: standardColors } = seoCurrentLiterals.modules['7d6a'];
 const sourceColors = new Map([
   ...Object.entries(translatedColors).map(([name, color]) => [name + '色', color] as const),
-  ['纯白', '화이트'], ['純白', '화이트'], ['玫瑰金色', '로즈골드'], ['玫瑰金', '로즈골드'],
+  ['纯白', '화이트'], ['純白', '화이트'], ['玫瑰金色', '로즈골드'], ['玫瑰金', '로즈골드'], ['咖色', '커피'],
 ]);
 const colorAliases = new Map([
   ...Object.values(translatedColors).map(color => [color, color] as const),

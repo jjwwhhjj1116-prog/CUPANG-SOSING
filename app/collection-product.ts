@@ -38,7 +38,10 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   for(const row of rows)calculatePrice(row.unitCostCny,policy,row.unitsPerPack);
   const options={...emptyProductOptions(id),revision:1,updatedAt:now,rows:rows.map((row,index)=>({...row,...(result.options[index].packaging?{packagingUnitsPerPack:1}:{}),updatedAt:now,provenance:Object.fromEntries(Object.keys(optionFieldNames).map(key=>[key,['originalName','unitCostCny'].includes(key)||key==='minimumOrderQuantity'&&row.minimumOrderQuantity!==null||key==='supplierSku'&&row.supplierSku!==''||key==='stock'&&row.stock!==null||key==='color'&&row.color||key==='size'&&row.size||['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'].includes(key)&&row[key as keyof typeof row]!=null?'collected':['unitsPerPack','included'].includes(key)?'manual':'unverified']))} as ProductOption))};
   const content=newProductContent(id);content.revision=1;content.updatedAt=now;
-  if (category.hubSchema?.nativeSerializationPolicy === 'supplier-hub-native-required-form-v1') content.quotationWorkflow = 'collected-native-v1';
+  if (category.hubSchema?.nativeSerializationPolicy === 'supplier-hub-native-required-form-v1') {
+    content.quotationWorkflow = 'collected-native-v1';
+    content.labelDefaults = 'couplus-category-v1';
+  }
   content.seo.title={value:result.title,provenance:'collected',updatedAt:now};content.seo.description={value:result.description,provenance:'collected',updatedAt:now};
   content.detailDescriptionLinked = true;
   const keywords=collectionKeywords(job.context.keywords);

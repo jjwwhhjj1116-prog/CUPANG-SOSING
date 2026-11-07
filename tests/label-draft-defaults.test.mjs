@@ -7,12 +7,15 @@ const plain=value=>JSON.parse(JSON.stringify(value));
 const json=async(response,status=200)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};
 const defaults={countryOfOrigin:'중국',precautions:'용도 외에 사용금지. 파손및화기주의',usageStandard:'14세이상'};
 const named=(name,value)=>({contains:{type:'object',properties:{name:{type:'string',enum:[name]},value}}});
-async function fixture(company,{attributes=[],restrictedCaution=false}={}){
+async function fixture(company,{attributes=[],restrictedCaution=false,native=false,categoryPath=schemaPath,bundlePricing=false}={}){
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
   const sourceUrl='https://detail.1688.com/offer/629000000001.html',snapshot={...hubSchemaSnapshot(company),draftInitialization:'couplus-required-v1',inputBindings:'couplus-paths-v1'},raw=JSON.parse(snapshot.schemaString);
   raw.properties.legalPage.properties.notices.allOf.push(named('제조국',{type:'string'}),named('취급시 주의사항',{type:'string',...(restrictedCaution?{enum:['해당사항없음','직접 확인한 전용 주의사항']}:{})}));snapshot.schemaString=JSON.stringify(raw);
-  const profile=(await json(await h.load('app/api/category-profiles/route.ts').POST(new Request('https://app.test/api/category-profiles',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'시험 최종분류',categoryId:snapshot.categoryId,categoryPath:schemaPath,hubSchema:snapshot,template:null,mappings:[]})})),201)).profile;
-  h.context.category=profile;h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context),'job');
+  snapshot.categoryPath=[...categoryPath];if(native)snapshot.nativeSerializationPolicy='supplier-hub-native-required-form-v1';
+  const profile=(await json(await h.load('app/api/category-profiles/route.ts').POST(new Request('https://app.test/api/category-profiles',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'시험 최종분류',categoryId:snapshot.categoryId,categoryPath,hubSchema:snapshot,template:null,mappings:[]})})),201)).profile;
+  h.context.category=profile;
+  if(bundlePricing)Object.assign(h.context.settings,{bundleEnabled:true,bundleCriterion:'supplyMargin',bundleMinimumSupplyMargin:3000,bundleMinimumCoupangMargin:3000});
+  h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context),'job');
   h.sqlite.prepare('UPDATE collection_jobs SET offer_id=?,source_url=? WHERE id=?').run('629000000001',sourceUrl,'job');
   await json(await h.route('/api/collection-jobs/job/result',{method:'POST',body:{schemaVersion:1,sourceUrl,provider:'synthetic-label-defaults',collectedAt:new Date().toISOString(),title:'새 원문 상품',description:'새 원문 설명',attributes,options:[{sku:'629-first',name:'첫 옵션',unitPriceCny:2,minimumOrder:1,stock:3},{sku:'629-second',name:'다른 옵션',unitPriceCny:3,minimumOrder:1,stock:0}],images:[]}}));
   await h.intake();const product=h.sqlite.prepare('SELECT * FROM products WHERE source_url=?').get(sourceUrl);assert.ok(product);const base='/api/products/'+product.id;
@@ -21,6 +24,63 @@ async function fixture(company,{attributes=[],restrictedCaution=false}={}){
  }catch(error){h.close();throw error;}
 }
 const notice=(view,label)=>view.resolved.schema.fields.find(field=>field.section==='legal'&&field.label===label);
+test('fresh native collection derives label quantity, verified material and category type before label generation',async()=>{
+ const f=await fixture(schemaCompanies[0],{native:true,categoryPath:['문구/오피스','정리용품','펜홀더/연필꽂이'],attributes:[{name:'材质',value:'塑料'}]});
+ try{
+  const {h,read,base}=f,source=f.retained(),view=await read('product-labels'),row=view.rows.find(row=>row.included);
+  assert.equal(row.values.netContents,'1개');
+  assert.equal(row.values.material,'플라스틱');
+  assert.equal(row.values.productType,'문구용품');
+  assert.equal((await read('content')).content.label.material.value,'塑料');
+  assert.deepEqual(h.load('app/product-label.ts').productLabelPlan(view,row.optionId).rows.slice(4,7).map(pair=>pair[1]),['1개','플라스틱','문구용품']);
+  assert.deepEqual(h.network,[]);
+  await json(await h.route(base+'/product-labels',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{optionId:row.optionId,fieldKey:'material',value:''}]}}));
+  const saved=await read('product-labels'),changed=saved.rows.find(option=>option.optionId===row.optionId);
+  assert.equal(changed.values.material,'');assert.equal(changed.sources.material,'manual-option');
+  assert.equal(changed.values.productType,'문구용품');assert.equal(f.retained(),source);
+ }finally{f.h.close();}
+});
+test('fresh cleaning-tool labels use the cleaning category and keep unknown material reviewable',async()=>{
+ const f=await fixture(schemaCompanies[0],{native:true,categoryPath:['생활용품','청소용품','청소솔']});
+ try{
+  const view=await f.read('product-labels'),row=view.rows.find(row=>row.included);
+  assert.equal(row.values.productType,'청소용품');
+  assert.equal(row.values.material,'상세정보참조');
+  assert.equal(row.values.netContents,'1개');
+ }finally{f.h.close();}
+});
+test('baking rolling pins do not inherit cleaning labels from the shared word 밀대',async()=>{
+ const f=await fixture(schemaCompanies[0],{native:true,categoryPath:['주방용품','베이킹용품','반죽 밀대']});
+ try{
+  const view=await f.read('product-labels'),row=view.rows.find(row=>row.included);
+  assert.equal(row.values.productType,'반죽 밀대');
+  const categoryType=f.h.load('app/product-label-current-rules.ts').productLabelCategoryType;
+  assert.equal(categoryType(['생활용품','청소용품','청소솔/스틱']),'청소용품');
+  assert.equal(categoryType(['생활용품','바닥 밀대']),'청소용품');
+  assert.equal(categoryType(['문구/오피스','펜홀더/연필꽂이']),'문구용품');
+  assert.equal(categoryType(['부품','펜홀더 교체부품']),'펜홀더 교체부품');
+  assert.equal(categoryType(['가구/홈데코','수납가구','서랍장']),'서랍장');
+  assert.equal(categoryType(['가구/홈데코','수납가구','기타']),'수납가구');
+  assert.equal(categoryType(['미분류','기타']),undefined);
+ }finally{f.h.close();}
+});
+test('label count defaults use confirmed bundle lineage and never a price suggestion',async()=>{
+ const f=await fixture(schemaCompanies[0],{native:true,bundlePricing:true});
+ try{
+  const {h,read,product}=f,db=h.load('db/product-options.ts');
+  const options=await db.readProductOptions('owner',product.id),source=options.rows[0];
+  assert.ok(source.unitsPerPack>1,'the initial pricing calculator suggested a bundle');
+  const before=await read('product-labels');
+  assert.equal(before.rows.find(row=>row.optionId===source.id).values.netContents,'1개');
+  const version=new Date(Date.parse(before.productVersion)+1).toISOString(),optionId='confirmed-bundle';
+  const next=h.load('app/option-bundles.ts').applyBundleAddRows(options,[{sourceOptionId:source.id,optionId}],4,version);
+  assert.ok(await db.saveProductOptions('owner',next,options.revision,before.productVersion));
+  const after=await read('product-labels');
+  assert.equal(after.rows.find(row=>row.optionId===optionId).values.netContents,'4개');
+  assert.equal(after.rows.find(row=>row.optionId===source.id).values.netContents,'1개');
+  assert.equal(after.rows.find(row=>row.optionId===null).values.netContents,'');
+ }finally{f.h.close();}
+});
 for(const company of schemaCompanies){
  test(`a fresh captured category prepares Couplus's reviewable nine-row defaults outside 80719 (${company.code})`,async()=>{
   const f=await fixture(company,{attributes:[{name:'原产地',value:'台州'},{name:'产地',value:'台州'}]});try{const {h,read,product}=f,source=f.retained(),view=await read('product-labels'),row=view.rows.find(row=>row.included),plan=h.load('app/product-label.ts').productLabelPlan(view,row.optionId);
