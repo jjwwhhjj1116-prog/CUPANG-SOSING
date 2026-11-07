@@ -206,7 +206,15 @@ export function quotationSavedSourceChanges(state: QuotationAiView, view: Quotat
 }
 export function quotationReviewedProposalChanges(state: QuotationAiView, view: QuotationFieldsView, productId: string, job: QuotationAiJobView | null, optionId: string | null, all: boolean) {
   if (!quotationAiViewCurrent(state, view, productId)) throw Error('현재 견적 자료를 다시 확인해주세요.');
-  return job ? quotationAiScopedProposalChanges(view, job, state.fingerprint, optionId, all) : [];
+  if (!job) return [];
+  const changes = quotationAiScopedProposalChanges(view, job, state.fingerprint, optionId, all);
+  const currentRows = new Map(view.resolved.rows.map(row => [row.optionId, row.fields] as const));
+  // The completed job retains its raw receipt. Existing N/A defaults need no adoption.
+  return changes.filter(change => {
+    const cell = currentRows.get(change.optionId)?.[change.fieldKey];
+    return !(cell && (cell.source === 'couplus-default' || cell.source === 'schema')
+      && cell.value === change.value && isCouplusNotApplicableValue(change.value));
+  });
 }
 export function quotationAiViewCurrent(value: QuotationAiView, view: QuotationFieldsView, productId: string) {
   return value.productId === productId && /^[a-f0-9]{64}$/.test(value.fingerprint)

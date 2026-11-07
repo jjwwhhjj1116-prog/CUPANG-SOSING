@@ -859,6 +859,17 @@ test('batch quotation submits only exact AI adoption identities, never live know
  assert.equal(JSON.stringify({view:h.view,content:h.content,options:h.savedOptions,labels:h.savedLabels}),before);assert.equal(h.calls.filter(call=>call.adapter==='packaging').length,1);
 });
 
+test('selected quotation skips the adoption PUT for an equal default and saves only substantive proposals',async()=>{
+ for(const mixed of [false,true]){
+  const h=knownQuotationFixture(),unchanged={optionId:'b',fieldKey:'notice3',value:'해당사항없음'};
+  h.job.result.changes=mixed?[...h.job.result.changes,unchanged]:[unchanged];
+  const outcome=await h.run(['quotation']);assert.equal(outcome.stages[0].status,'draft',outcome.stages[0].message);
+  assert.deepEqual(h.writes.map(write=>write.generatedAdoption.targets),mixed?[[{optionId:'a',fieldKey:'notice3'}]]:[]);
+  assert.equal(h.calls.some(call=>call.method==='POST'),false);
+  assert.equal(h.calls.find(call=>call.adapter==='packaging').revision,mixed?2:1);
+ }
+});
+
 test('malformed, excluded or manual-blank server source targets cannot enter combined quotation save or packaging',async()=>{
  for(const mutate of [changes=>changes.push(plain(changes[0])),changes=>{changes[0].optionId='excluded';},changes=>{changes[0].optionId='b';changes[0].fieldKey='notice0';},changes=>{changes[0].fieldKey='unknown';},changes=>{changes[0].value='해당사항없음';}]){
   const h=extendedKnownQuotationFixture(),changes=plain(providedOptionModule('app/quotation-known-notice-proposals.ts').quotationKnownNoticeProposals('product',h.view,h.content,{optionId:null,applyToAllOptions:true},h.savedOptions,h.savedLabels));

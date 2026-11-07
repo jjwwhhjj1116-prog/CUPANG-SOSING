@@ -4,8 +4,10 @@ import {aiModule,aiFixture,mockProvider,companies} from './helpers/quotation-ai.
 import {providedOptionModule} from './helpers/provided-option-quotation.mjs';
 import {quotationAiUI,nodes} from './helpers/quotation-ai-ui.mjs';
 const client=providedOptionModule('app/quotation-ai-client.ts'),schema=providedOptionModule('app/quotation-schema.ts');
-async function fixture(company=companies[0]){
-  const f=aiFixture({company}),plan=aiModule().buildQuotationAiPlan(f.saved,f.scope),result=await aiModule().executeQuotationAi(plan,mockProvider());
+async function fixture(company=companies[0],textColor=false){
+  const f=aiFixture({company});
+  if(textColor){delete f.raw.properties.productPage.properties.commonAttributes.properties.exposedAttributes.allOf[0].contains.properties.attributeValue.enum;f.syncSchema();}
+  const plan=aiModule().buildQuotationAiPlan(f.saved,f.scope),result=await aiModule().executeQuotationAi(plan,mockProvider());
   const resolved=schema.resolveQuotationFields({...f.saved,categoryId:f.snapshot.categoryId,categoryPath:f.snapshot.categoryPath,hubSchema:f.snapshot,overrides:f.state.overrides});
   const view={revision:0,inputFingerprint:'a'.repeat(64),overrides:f.state.overrides,resolved,automatic:resolved,categoryContext:f.saved.categoryContext,productVersion:f.product.updated_at,contentRevision:f.content.revision,optionRevision:f.options.revision,imageKeys:[],submissionReady:false};
   const job={id:'synthetic-job',status:'completed',fingerprint:'b'.repeat(64),quotationRevision:0,profileId:f.profile.id,scope:f.scope,result,error:null};
@@ -160,6 +162,32 @@ test('scope selection prefers an exact individual job, rejects stale/profiles, a
   assert.throws(()=>client.quotationAiScopedProposalChanges(x.view,individual,x.state.fingerprint,optionId,true));
   assert.throws(()=>client.quotationAiScopedProposalChanges(x.view,x.job,x.state.fingerprint,null,false));
   assert.equal(client.quotationAiJobForScope({...x.state,quotationRevision:1},x.view,x.f.product.id,optionId,true),null);
+});
+
+test('repeated color and size defaults are not review changes; exact validation and substantive proposals are retained',async()=>{
+ const x=await fixture(companies[0],true),row=x.view.resolved.rows.find(value=>value.included),optionId=row.optionId;
+ const field=name=>x.view.resolved.schema.fields.find(value=>value.hubWire?.name===name).id;
+ const color=field('색상'),size=field('사이즈'),numeric=field('문자 선택'),nullable=field('null 선택'),na='해당사항없음';
+ for(const id of [color,size])assert.deepEqual([row.fields[id].value,row.fields[id].source],[na,'couplus-default']);
+ const change=(fieldKey,value)=>({optionId,fieldKey,value}),same=[change(color,na),change(size,na)];
+ const job={...x.job,scope:{optionId,applyToAllOptions:false},result:{...x.job.result,changes:same}};
+ const review=(candidate=job,view=x.view)=>JSON.parse(JSON.stringify(client.quotationReviewedProposalChanges(x.state,view,x.f.product.id,candidate,optionId,false)));
+ assert.deepEqual(JSON.parse(JSON.stringify(client.quotationAiProposalChanges(x.view,job,x.state.fingerprint))),same,'raw job validation retains the completed receipt');
+ assert.deepEqual(review(),[],'an unchanged default cannot become an adoption target');
+ x.state.jobs=[job];
+ const ui=quotationAiUI({productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId,applyToAllOptions:false,disabled:false,onApply:()=>assert.fail('No identical defaults to apply')},async()=>Response.json(x.state));
+ try{await ui.idle();ui.flush();assert.equal(ui.button('검토한 초안 입력란에 적용').props.disabled,true);assert.deepEqual(ui.calls.map(call=>call.method),['GET']);}finally{ui.unmount();}
+ const valid=change(size,'10cm'),asJob=changes=>({...job,result:{...job.result,changes}});
+ assert.deepEqual(review(asJob([same[0],valid])),[valid]);
+ assert.throws(()=>review(asJob([...same,same[0]])));
+ assert.throws(()=>review({...job,quotationRevision:job.quotationRevision+1}));
+ const effective=structuredClone(x.view);effective.automatic=structuredClone(x.view.automatic);
+ const cells=effective.resolved.rows.find(value=>value.optionId===optionId).fields;
+ Object.assign(cells[size],{source:'generated',value:'기존 생성 사이즈'});
+ Object.assign(cells[numeric],{source:'schema',value:'0'});
+ assert.deepEqual(review(asJob([...same,change(numeric,'0'),change(nullable,'')]),effective),[same[1],change(numeric,'0'),change(nullable,'')]);
+ Object.assign(cells[color],{source:'manual-option',value:na});
+ assert.throws(()=>review(job,effective));
 });
 
 test('a current-profile unresolved request remains visible across source edits and option scopes and cannot be bypassed by changing scope',async()=>{
