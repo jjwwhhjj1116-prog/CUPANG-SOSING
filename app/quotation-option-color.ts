@@ -9,7 +9,7 @@ const sourceColors = new Map([
 const colorAliases = new Map([
   ...Object.values(translatedColors).map(color => [color, color] as const),
   ...standardColors.flatMap(({ words }) => words.map(word => [word, words[0]] as const)),
-  ['순백색', '화이트'], ['백색', '화이트'], ['하얀색', '화이트'], ['검은색', '블랙'],
+  ['순백색', '화이트'], ['백색', '화이트'], ['하얀색', '화이트'], ['검은색', '블랙'], ['회색', '그레이'],
 ]);
 const alternatives = (names: Iterable<string>) => [...names].sort((a, b) => b.length - a.length)
   .map(name => name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('|');
@@ -28,20 +28,31 @@ function colorChoice(color: string, choices: readonly ColorChoice[]) {
   if (matching.size === 1) return [...matching][0];
 }
 
-/** A separately captured color uses a whole value or explicit bracketed token. */
-export function translateCollectedOptionColor(value: string) {
+const lengthQualifier = /^(?:不?可伸[缩縮]|길이\s*조절\s*(?:불가|가능))$/u;
+
+/** Null marks an observed non-color qualifier without one exact color prefix. */
+function readCollectedOptionColor(value: string): string | null | undefined {
   const text = value.trim().normalize('NFKC');
   const exact = sourceColors.get(text) ?? bareSourceColors.get(text);
   if (exact || mixedColor.test(text)) return exact;
   const bracket = /(?:【([^【】]+)】|\[([^\[\]]+)\]|\(([^()]+)\))$/u.exec(text);
-  if (bracket && ![...text.slice(0, bracket.index).matchAll(chineseColor)].length) {
-    const token = (bracket[1] ?? bracket[2] ?? bracket[3]).trim();
+  if (!bracket) return;
+  const prefix = text.slice(0, bracket.index).trim();
+  const token = (bracket[1] ?? bracket[2] ?? bracket[3]).trim();
+  if (lengthQualifier.test(token)) return sourceColors.get(prefix) ?? bareSourceColors.get(prefix) ?? colorAliases.get(prefix) ?? null;
+  if (![...prefix.matchAll(chineseColor)].length) {
     return sourceColors.get(token) ?? bareSourceColors.get(token);
   }
 }
 
+export function translateCollectedOptionColor(value: string) {
+  return readCollectedOptionColor(value) ?? undefined;
+}
+
 export function quotationStructuredOptionColor(value: string, choices?: readonly ColorChoice[]) {
-  const text = translateCollectedOptionColor(value) ?? value.trim();
+  const known = readCollectedOptionColor(value);
+  if (known === null) return;
+  const text = known ?? value.trim();
   if (!text || mixedColor.test(text) || /\p{Script=Han}/u.test(text)) return;
   if (!choices) return text;
   const exact = new Set(choices.filter(choice => choice.label === text || choice.value === text).map(choice => choice.value));

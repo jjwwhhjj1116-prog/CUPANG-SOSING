@@ -54,6 +54,29 @@ test('confirmed native collection keeps raw facts, translates exact structured c
   assert.deepEqual(plain(confirmedCollectionOrigin([{name:'原产国',value:'日本'}])),{value:'일본',provenance:'translated'});
  }finally{f.h.close();}
 });
+test('native structured color separates the observed length qualifier from exposure and proposals',async()=>{
+ const f=await fixture(schemaCompanies[0],{native:true,optionColors:['粉色【不可伸缩】','灰色【可伸缩】']});
+ try{
+  const {h,read,product}=f,options=await h.load('db/product-options.ts').readProductOptions('owner',product.id);
+  assert.deepEqual(plain(options.rows.map(row=>[row.color,row.provenance.color])),[['핑크','translated'],['그레이','translated']]);
+  const quote=await read('quotation-fields'),color=quote.resolved.schema.fields.find(field=>field.visibility==='exposed'&&field.label==='색상');
+  for(const [index,expected] of ['핑크','그레이'].entries()){
+   const row=quote.resolved.rows.find(row=>row.optionId===options.rows[index].id);
+   assert.equal(row.fields[color.id].value,expected);
+   assert.ok(row.fields.title.value);
+   assert.equal(row.productNameProposal.value,row.fields.title.value+' '+expected);
+  }
+  const {quotationStructuredOptionColor}=h.load('app/quotation-option-color.ts');
+  const choices=['핑크','그레이'].map(value=>({label:value,value}));
+  for(const [value,expected] of [['분홍색(길이 조절 불가)','핑크'],['회색(길이 조절 가능)','그레이']]){
+   assert.equal(quotationStructuredOptionColor(value),expected);
+   assert.equal(quotationStructuredOptionColor(value,choices),expected);
+  }
+  for(const value of ['粉色灰色【可伸缩】','분홍색 회색(길이 조절 가능)','혼합색(길이 조절 가능)']){
+   assert.equal(quotationStructuredOptionColor(value),undefined);
+  }
+ }finally{f.h.close();}
+});
 test('only a sole collected SKU inherits the exact product color without guessing variants',async()=>{
  const attributes=[{name:'颜色',value:'绿色'},{name:'原产国/地区',value:'中国'}];
  for(const singleOption of [true,false]){
