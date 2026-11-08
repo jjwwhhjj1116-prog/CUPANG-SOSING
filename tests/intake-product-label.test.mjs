@@ -27,6 +27,23 @@ function fixture(config = {}) {
   const fixtureImageUrls = ['https://cbu01.alicdn.com/local-label-main.png', 'https://cbu01.alicdn.com/local-label-additional.png', 'https://cbu01.alicdn.com/local-label-detail.png'];
   const h = mobileIntakeHarness({ ...config, document, fixtureImageUrls });
   const company = h.context.company;
+  const { WORKERS_QWEN_MODEL } = h.load('app/automation/translation.ts');
+  h.bindings.SOURCEFLOW_TEXT_MODEL = WORKERS_QWEN_MODEL;
+  h.bindings.AI.run = async (model, input) => {
+    assert.equal(model, WORKERS_QWEN_MODEL);
+    const prompt = input.messages[1].content;
+    const source = JSON.parse(prompt.split('\n\nPRODUCT_SOURCE_JSON:\n')[1].slice(0, -'\n/no_think'.length));
+    h.aiSources.push(source);
+    const names = { '상품속성: 材质': '재질', '상품속성: 原产国/地区': '제조국', '상품속성: 产地': '생산지' };
+    const translated = { PP: '플라스틱', '中国': '중국', '浙江台州': '저장성 타이저우', '绿色': '초록색', '白色': '흰색' };
+    const attributes = source.attributes.map(({ sourceIndex, name, outputName, value }) => {
+      const label = outputName ?? names[name];
+      assert.ok(label, name);
+      return { sourceIndex, name: label, value: translated[value] ?? value };
+    });
+    const draft = { title: '창문 방충망 청소솔', description: '', keywords: ['청소솔'], warnings: [], attributes };
+    return { choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify(draft) } }] };
+  };
   const schema = hubSchemaSnapshot(company, '64455'), raw = JSON.parse(schema.schemaString);
   raw.properties.imagePage = { type: 'object', properties: { images: { type: 'object', properties: {
     labelImages: { type: 'array', allOf: [{ contains: { type: 'object', properties: {
@@ -44,8 +61,8 @@ function fixture(config = {}) {
   async function seed() {
     await json(await h.route('/api/collection-jobs/job/result', { method: 'POST', body: {
       schemaVersion: 1, sourceUrl: h.sourceUrl, provider: 'synthetic-native-intake-label',
-      collectedAt: new Date().toISOString(), title: '청소솔', description: '',
-      attributes: config.attributes ?? [{ name: '原产国/地区', value: '中国' }, { name: '材质', value: '塑料' }],
+      collectedAt: new Date().toISOString(), title: '长柄纱窗清洁刷', description: '',
+      attributes: config.attributes ?? [{ name: '原产国/地区', value: '中国' }, { name: '材质', value: 'PP' }],
       options: [
         { sku: 'first', name: '첫 옵션', color: '绿色', unitPriceCny: 3.49, minimumOrder: 1, stock: 1, imageIndex: 0 },
         { sku: 'second', name: '다른 옵션', color: '白色', unitPriceCny: 3.49, minimumOrder: 1, stock: 1, imageIndex: 1 },
@@ -87,10 +104,15 @@ for (const company of [
   const { h } = f;
   try {
     const message = await f.intake();
+    assert.ok(h.aiSources.some(source => source.attributes.some(attribute => attribute.name === '상품속성: 材质' && attribute.value === 'PP')), 'Qwen receives the real source material');
+    const material = JSON.parse(content(h)).label.material;
+    assert.equal(material.value, '플라스틱', message);
+    assert.equal(material.provenance, 'translated', message);
     assert.match(message, /표시사항.*PNG.*견적/);
     assert.equal(f.drawn.length, 2);
-    assert.ok(f.drawn[0].some(text => text.includes('우드 패턴 다리 선글라스')));
+    assert.ok(f.drawn[0].some(text => text.includes('창문 방충망 청소솔')));
     assert.ok(f.drawn[0].includes(company.companyName));
+    assert.ok(f.drawn[0].includes('플라스틱'));
     const product = ownProduct(h), base = '/api/products/' + product.id, keys = labelKeys(h);
     assert.equal(keys.length, 2);
     assert.ok(keys.every(key => Buffer.from(h.objects.get(key)).equals(png)));
@@ -262,4 +284,25 @@ test('explicitly saving an edited option replaces its own stale automatic PNG an
     const current = await proof({ productId, endpoint, quotationEndpoint, optionId: first.optionId }, (path, init) => h.route(path, { method: init?.method }));
     assert.equal(current.result?.key, saved.key);
   } finally { h.close(); }
+});
+
+test('a genuine material edit before canonical adoption remains manual and blocks automatic PNG', async () => {
+  let manualMaterial;
+  const f = fixture({ async response(h, { path, method }, response) {
+    if (manualMaterial || !path.endsWith('/product') || method !== 'POST' || !response.ok) return;
+    const { productId } = await response.clone().json();
+    const current = JSON.parse(content(h));
+    await json(await h.route('/api/products/' + productId + '/content', { method: 'PATCH', body: {
+      expectedRevision: current.revision, patch: { label: { material: '직접 확인한 폴리프로필렌' } },
+    } }));
+    manualMaterial = JSON.parse(content(h)).label.material;
+  } });
+  try {
+    const message = await f.intake();
+    assert.equal(manualMaterial?.provenance, 'manual');
+    assert.deepEqual(JSON.parse(content(f.h)).label.material, manualMaterial);
+    assert.match(message, /기존 표시사항 입력 또는 이미지 선택을 유지/);
+    assert.equal(f.drawn.length, 0);
+    assert.deepEqual(f.labelWrites(), []);
+  } finally { f.h.close(); }
 });

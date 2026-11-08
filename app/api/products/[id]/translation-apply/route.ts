@@ -7,7 +7,7 @@ import { readProductOptions } from '@/db/product-options';
 import { getTranslationJob, findIntakeTranslation, findIntakeOptionsTranslation, listTranslationJobs,readSeoRetrySource } from '@/db/translation-jobs';
 import { saveIntegratedTranslation } from '@/db/translation-adoption';
 import { integratedTranslationPlan, applyIntegratedOptions } from '@/app/translation-integrated-adoption';
-import { applyContentPatch } from '@/app/product-content';
+import { applyContentPatch, type LabelField } from '@/app/product-content';
 import { applySeoDocumentTitlePolicy } from '@/app/seo-title-document';
 import {applyExplicitSeoQuotationDefaults} from '@/app/explicit-seo-quotation-defaults';
 import { fingerprint } from '@/app/automation/model';
@@ -244,6 +244,13 @@ export async function POST(request: Request, context: Context) {
     if((canonicalIntake||qwenDraft)&&!seoComposition&&scope==='all'&&job.status==='completed'&&job.result&&job.result.model===job.review.model){
       const provenance=job.review.model===GOOGLE_TEXT_MODEL?'translated':[WORKERS_TEXT_MODEL,WORKERS_QWEN_MODEL].includes(job.review.model)?'generated':null;
       if(provenance)for(const key of ['title','keywords','description'] as const)if(plan.patch?.seo?.[key]!==undefined&&(key==='description'||!initialGuidanceFields.includes(key)))nextContent.seo[key].provenance=provenance;
+      if (provenance && canonicalIntake && content.quotationWorkflow === 'collected-native-v1'
+        && content.revision === 1 && job.contentRevision === content.revision && job.review.instructionsVersion === 'sourceflow-translation-v6') {
+        for (const key of Object.keys(plan.patch?.label ?? {}) as LabelField[]) {
+          const field = nextContent.label[key];
+          if (content.label[key].provenance !== 'manual' && field.provenance === 'manual' && field.updatedAt === now) field.provenance = 'translated';
+        }
+      }
     }
     // Reviewed stage-one composition and the exact source-bound first intake
     // share the SEO writer. Other translation and unchanged SEO keep their basis.
