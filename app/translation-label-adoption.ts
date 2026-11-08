@@ -4,6 +4,7 @@ import { collectionLabelField } from '@/app/collection-label-attributes';
 import { translationLabelSourceScope } from '@/app/translation-label-source-scope';
 import { translationAttributeIssue } from '@/app/translation-attribute-evidence';
 import { assertContentTranslationScope } from '@/app/translation-adoption';
+import { knownProductLabelMaterial } from '@/app/product-label-current-rules';
 
 export type TranslationLabelMapping = { sourceIndex: number; field: LabelField };
 // Explicit equivalent headings only. Do not collapse component materials, product
@@ -76,8 +77,13 @@ export function translationLabelAdoption(content: ProductContent, job: Translati
     if(job.review.instructionsVersion==='sourceflow-translation-v6'&&translationAttributeIssue(source,matches[0]))throw Error('중국어 원문 복사 또는 다른 항목의 숫자가 포함된 번역값은 반영하지 않습니다. 같은 원문의 번역값을 확인해주세요.');
     const current = content.label[mapping.field];
     if (current?.provenance === 'manual') throw Error(`${labelFields[mapping.field]}: 직접 수정한 값은 보존합니다. 표시사항 편집에서 수정해주세요.`);
-    label[mapping.field] = matches[0].value;
-    preview.push({ field: mapping.field, name: labelFields[mapping.field], source: source.name, before: current?.value ?? '', after: matches[0].value });
+    const originalMaterial = mapping.field === 'material' && content.collectedFacts === 'confirmed-origin-color-v1'
+      && current.provenance === 'collected' && current.value === source.value.trim()
+      && collectionLabelField(source.name.slice('상품속성: '.length)) === 'material'
+      ? knownProductLabelMaterial(current.value) : undefined;
+    const value = originalMaterial ?? matches[0].value;
+    label[mapping.field] = value;
+    preview.push({ field: mapping.field, name: labelFields[mapping.field], source: source.name, before: current?.value ?? '', after: value });
   }
   // Current revision CAS protects edits made after this explicit before/after review.
   const input = validateContentInput({ expectedRevision: content.revision, patch: { label } }, [], '');

@@ -16,13 +16,13 @@ const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.st
 const changed = () => Error('표시사항을 준비하는 동안 상품·옵션 또는 저장값이 변경되었습니다. 최신 저장본을 확인해주세요.');
 
 /** Called only for the product confirmed freshly promoted by this SEO+가격 run. */
-export async function prepareIntakeProductLabel(productId: string, job: CollectionJob, controls: { fetcher: typeof fetch; signal: AbortSignal }) {
+export async function prepareIntakeProductLabel(productId: string, job: CollectionJob, { fetcher, signal }: { fetcher: typeof fetch; signal: AbortSignal }) {
   const base = '/api/products/' + encodeURIComponent(productId);
   const scope = { productId, endpoint: base + '/product-labels', quotationEndpoint: base + '/quotation-fields', optionId: null };
-  const assertCurrent = () => controls.signal.throwIfAborted();
+  const assertCurrent = () => signal.throwIfAborted();
   const request: typeof fetch = async (url, init) => {
     assertCurrent();
-    const response = await controls.fetcher(url, { ...init, credentials: 'same-origin', redirect: 'error', signal: controls.signal });
+    const response = await fetcher(url, { ...init, credentials: 'same-origin', redirect: 'error', signal });
     assertCurrent();
     return response;
   };
@@ -93,7 +93,7 @@ export async function prepareIntakeProductLabel(productId: string, job: Collecti
     }
     return '표시사항 PNG를 저장하고 ' + confirmed + '개 포함 옵션의 견적에 연결했습니다. 6단계에서 내용을 검토해주세요.';
   } catch (error) {
-    if (controls.signal.aborted) return '';
+    if (signal.aborted) return '';
     const count = total ? ' ' + confirmed + '/' + total + '개 옵션 연결 확인.' : '';
     return '표시사항 PNG 연결 미완료.' + count + ' ' + (error instanceof Error ? error.message : '6단계에서 저장 결과를 확인해주세요.');
   }

@@ -11,6 +11,16 @@ const labels = h => h.sqlite.prepare('SELECT payload FROM product_labels').get()
 const json = async response => { assert.equal(response.status, 200, await response.clone().text()); return response.json(); };
 const labelKeys = h => [...h.objects.keys()].filter(key => /^owner\/quotation-label-[a-f0-9]{64}\.png$/.test(key));
 
+test('native automatic label uses the exact known source material over a provider mistranslation', async () => {
+  const f = fixture({ attributes: [{ name: '原产国/地区', value: '中国' }, { name: '材质', value: '不锈钢' }] });
+  try {
+    await f.intake();
+    assert.equal(JSON.parse(content(f.h)).label.material.value, '스테인리스');
+    assert.equal(f.drawn.length, 2);
+    assert.ok(f.drawn.every(option => option.includes('스테인리스')));
+  } finally { f.h.close(); }
+});
+
 function fixture(config = {}) {
   const drawn = [], calls = [];
   const document = {
@@ -35,7 +45,7 @@ function fixture(config = {}) {
     const source = JSON.parse(prompt.split('\n\nPRODUCT_SOURCE_JSON:\n')[1].slice(0, -'\n/no_think'.length));
     h.aiSources.push(source);
     const names = { '상품속성: 材质': '재질', '상품속성: 原产国/地区': '제조국', '상품속성: 产地': '생산지' };
-    const translated = { PP: '플라스틱', '中国': '중국', '浙江台州': '저장성 타이저우', '绿色': '초록색', '白色': '흰색' };
+    const translated = { PP: '플라스틱', '不锈钢': '불소강', '中国': '중국', '浙江台州': '저장성 타이저우', '绿色': '초록색', '白色': '흰색' };
     const attributes = source.attributes.map(({ sourceIndex, name, outputName, value }) => {
       const label = outputName ?? names[name];
       assert.ok(label, name);
@@ -72,7 +82,9 @@ function fixture(config = {}) {
   }
   let seeded = false;
   let afterRoles;
-  const request = async (path, init = {}) => {
+  async function request(path, init = {}) {
+    // Window.fetch allows a bare call but rejects a foreign receiver.
+    if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
     const call = { path, method: init.method ?? 'GET', body: init.body };
     calls.push(call);
     const response = await h.route(path, call);
@@ -81,7 +93,7 @@ function fixture(config = {}) {
       afterRoles = { content: content(h), options: options(h), labels: labels(h), pool: JSON.parse(ownProduct(h).image_keys) };
     }
     return await config.response?.(h, call, response) ?? response;
-  };
+  }
   const intake = async () => {
     if (!seeded) { await seed(); seeded = true; }
     return h.intake('job', { initializeImageRoles: true, fetcher: request });
