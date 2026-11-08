@@ -6,7 +6,7 @@ import { PACKAGING_DRAFT_MODEL, PACKAGING_DRAFT_MAX_OPTIONS, quotationPackagingD
 import { confirmQuotationFieldsSave } from '@/app/quotation-fields-confirmation';
 import { readCategoryJsonResponse } from '@/app/load-category-profiles';
 
-type Controls = { view: QuotationFieldsView; signal: AbortSignal; fetcher: typeof fetch; assertCurrent: () => void | Promise<void>; profileId?: string | null; onProgress?: (message: string) => void };
+type Controls = { view: QuotationFieldsView; signal: AbortSignal; fetcher: typeof fetch; assertCurrent: () => void | Promise<void>; profileId?: string | null; onProgress?: (message: string, progress?: {completed:number;total:number}) => void };
 export type SelectedPackagingWorkResult = { view: QuotationFieldsView; status: 'draft' | 'unchanged' | 'incomplete'; changed: number;
   estimated: number; fallback: number; remaining: number; recovered: boolean; message: string };
 const invalid = () => Error('포장 초안의 상품·옵션·카테고리 저장 범위를 확인하지 못했습니다. 기존 값을 유지했습니다.');
@@ -60,10 +60,11 @@ export async function runSelectedPackagingWork(productId: string, controls: Cont
   // Freeze the finite original worklist. An abstention stays missing, but must
   // never re-enter a later batch or replace another option's source context.
   const eligible = [...new Set(missing(before).filter(item => item.draftable).map(item => item.optionId!))];
-  let view = before;
+  const total = Math.ceil(eligible.length / PACKAGING_DRAFT_MAX_OPTIONS);
+  let view = before, completed = 0;
   for (let start = 0; start < eligible.length; start += PACKAGING_DRAFT_MAX_OPTIONS) {
-    const batch = Math.floor(start / PACKAGING_DRAFT_MAX_OPTIONS) + 1, total = Math.ceil(eligible.length / PACKAGING_DRAFT_MAX_OPTIONS);
-    controls.onProgress?.(`포장 규격 초안 ${batch}/${total}묶음 준비 중`);
+    const batch = Math.floor(start / PACKAGING_DRAFT_MAX_OPTIONS) + 1;
+    controls.onProgress?.(`포장 규격 초안 ${batch}/${total}묶음 준비 중`, { completed, total });
     const fresh = await request<QuotationFieldsView>(endpoint, 'GET');
     if (JSON.stringify(fresh) !== JSON.stringify(view)) throw invalid();
     const scope: PackagingDraftScope = { optionId: null, applyToAllOptions: true, batchOptionIds: eligible.slice(start, start + PACKAGING_DRAFT_MAX_OPTIONS) };
@@ -97,7 +98,9 @@ export async function runSelectedPackagingWork(productId: string, controls: Cont
     changed += result.proposals.length;
     estimated += result.proposals.filter(item => item.origin === 'ai-estimate').length;
     fallback += result.proposals.filter(item => item.origin === 'couplus-fallback').length;
-    await current(); controls.onProgress?.(`포장 규격 초안 ${batch}/${total}묶음 저장 확인 · 누적 ${changed}개`);
+    await current();
+    completed++;
+    controls.onProgress?.(`포장 규격 초안 ${batch}/${total}묶음 저장 확인 · 누적 ${changed}개`, { completed, total });
   }
   await current(); return outcome(view);
 }

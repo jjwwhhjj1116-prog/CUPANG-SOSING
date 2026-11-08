@@ -3,6 +3,7 @@ import { assertContentTranslationScope, translationSeoFields } from '@/app/trans
 import { suggestTranslationLabels, translationLabelAdoption } from '@/app/translation-label-adoption';
 import {WORKERS_QWEN_MODEL,validateQwenTranslationDraft,type TranslationJob} from '@/app/automation/translation';
 import { collectionKeywords } from '@/app/sourcing';
+import { registrationBrandChoices } from '@/app/quotation-brand-choices';
 
 const names = { title: '상품명', keywords: '검색어', description: '상품 설명' };
 const display = (value: string | string[]) => Array.isArray(value) ? value.join(', ') : value;
@@ -47,10 +48,11 @@ export function translationBatchAdoption(content: ProductContent, job: Translati
   const preview: { name: string; before: string; after: string }[] = [];
   const skipped: string[] = [];
   const seoOnly=job.review.typedSeoPromptRevision==='couplus-typed-seo-v4';
+  const brand=job.review.seoComposition ? registrationBrandChoices(job.review.seoComposition.memo.brand)[0] ?? '' : intakeBrand;
   for (const field of seoOnly?translationSeoFields.filter(field=>field!=='description'):translationSeoFields) {
     const current = content.seo[field];
     if (current.provenance === 'manual' && !(field === 'keywords' && untouchedIntakeKeywords(content, job))) { skipped.push(`${names[field]}: 직접 수정한 값을 유지합니다.`); continue; }
-    const next = field === 'title' ? brandedIntakeTitle(job.result.draft.title, job.review.seoComposition?.memo.brand.split(',')[0].trim()??intakeBrand,job.review.model===WORKERS_QWEN_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery')) : job.result.draft[field];
+    const next = field === 'title' ? brandedIntakeTitle(job.result.draft.title, brand,job.review.model===WORKERS_QWEN_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'&&!Object.hasOwn(job.review,'workersRecovery')) : job.result.draft[field];
     if ((!display(next).trim() && !(field==='keywords'&&job.review.seoKeywordPolicy==='couplus-generated-v1')) || JSON.stringify(current.value) === JSON.stringify(next)) continue;
     const validated = validateContentInput({ expectedRevision: content.revision, patch: { seo: { [field]: next, ...(field==='keywords'&&job.review.seoKeywordPolicy==='couplus-generated-v1'?{keywordPolicy:'couplus-generated-v1'}:{}) } } }, [], '');
     patch.seo = { ...patch.seo, ...validated.patch.seo };

@@ -4,6 +4,7 @@ import {translationNumbers} from '@/app/translation-attribute-evidence';
 import type {SeoCompositionContext} from '@/app/seo-composition-context';
 import {seoCurrentLiterals} from '@/app/seo-current-literals';
 import type {TranslationSource,TranslationDraft} from '@/app/automation/translation';
+import {registrationBrandChoices} from '@/app/quotation-brand-choices';
 export class SeoFactEmptyError extends Error{code='SEO_FACT_EMPTY';}
 export const SEO_COMPOSITION_VERSION='couplus-current-composition-v1';
 const RELATED_SEO_COMPOSITION_VERSION='couplus-current-composition-v2';
@@ -11,7 +12,7 @@ export const CURRENT_SEO_COMPOSITION_VERSION='couplus-current-composition-v3';
 export const SEO_KEYWORD_CAPABILITY='couplus-consumer-keywords-v1';
 /** Generated acceptance only: replay identity checks must still reach closure. */
 export function assertGeneratedSeoTitle(title:string,brand:string){
- const prefix=brand.split(',')[0].replace(/[^가-힣A-Za-z0-9]/gu,'').toLowerCase();let product=title.replace(/[^가-힣A-Za-z0-9]/gu,' ').toLowerCase();
+ const prefix=(registrationBrandChoices(brand)[0]??'').replace(/[^가-힣A-Za-z0-9]/gu,'').toLowerCase();let product=title.replace(/[^가-힣A-Za-z0-9]/gu,' ').toLowerCase();
  const withoutBrand=(value:string)=>prefix?value.replace(new RegExp(prefix.split('').join('\\s*'),'gu'),''):value;
  const measurements='밀리미터|센티미터|킬로미터|미터|밀리그램|킬로그램|그램|밀리리터|리터|mm|cm|km|kg|mg|ml|g|m|l';
  const counters=seoCurrentLiterals.modules['7d6a'].V.map(group=>group.re).join('|')+'|쌍|켤레|묶음|롤|봉지|봉|병|통|박스|캔';

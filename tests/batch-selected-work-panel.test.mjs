@@ -10,6 +10,10 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
 const defer=()=>{let resolve;return{promise:new Promise(done=>{resolve=done;}),resolve:value=>resolve(value)};};
 const stages=['seo','pricing','mainImage','additionalImages','detailImage','sizeChart','koreanLabel','quotation'];
 const product=id=>({id,title:'상품 '+id,updated_at:'2026-10-23T00:00:00.000Z'});
+test('the running stage displays measured units and clears its gauge on review',async()=>{
+ const gate=defer(),h=harness(async(id,options)=>{options.onStage({id:'detailImage',status:'running',message:'이미지 저장 중',progress:{completed:1,total:3}});await gate.promise;return{productId:id,stages:[{id:'detailImage',status:'draft',message:'검토 필요'}]};},{selected:['detailImage'],products:[product('a')]});
+ try{h.render();await tick();const progress=nodes(h.render()).find(node=>node.type==='progress');assert.ok(progress);assert.equal(progress.props.value,1);assert.equal(progress.props.max,3);gate.resolve();await tick();assert.equal(nodes(h.render()).some(node=>node.type==='progress'),false);}finally{h.close();}
+});
 test('a confirmed image failure opens its exact target while detailed review takes precedence and pending inference stays fenced',async()=>{
  for(const mode of ['target','detailed','pending']){const reviewTarget={source:{sourceKey:'owner/fifth.png',quotationTarget:{optionId:'collected-5',slotIndex:1}}},review={requestId:'completed-review'},keys=new Map(),request={id:'failure-'+mode,ownerId:'owner',stages:['additionalImages'],keys};
  const h=harness(async id=>({productId:id,stages:[{id:'additionalImages',status:'blocked',message:'판독 실패',reviewTarget,...(mode==='detailed'?{review}:{})}]}),{products:[product('a')],runRequest:request});

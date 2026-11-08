@@ -7,6 +7,7 @@ import { translationAttributeFactText, translationNumbers } from '@/app/translat
 import { guardCurrentSeoDraft, normalizeSeoQuantityNumbers, SeoFactEmptyError } from '@/app/seo-current-policy';
 import { unsupportedProductMaterial } from '@/app/product-material-evidence';
 import { unsupportedTranslatedProductClaim } from '@/app/product-translation-quality';
+import { registrationBrandChoices } from '@/app/quotation-brand-choices';
 
 /** Explicit owner-written SEO, separate from the provider's translated facts. */
 export type SeoGuidanceComposition = { brand: string; features: string; keywords: string; title: string; replaceTitle?: boolean; replaceKeywords?: boolean };
@@ -43,7 +44,7 @@ export function seoGuidanceTitle(draft: Pick<TranslationDraft,'title'>, memo: Pi
   // A long specification/prompt is not a product name. The owner chooses a
   // short phrasing while the original translation remains available separately.
   if (featureInput.length > 100 || /[\r\n]/u.test(featureInput)) return '';
-  const brand=memo.brand.split(',')[0].trim();
+  const brand=registrationBrandChoices(memo.brand)[0]??'';
   const withoutBrand=(value:string)=>{
     while(brand&&(value===brand||value.startsWith(brand+' ')))value=value.slice(brand.length).trimStart();
     return value;

@@ -14,6 +14,9 @@ test('source identity includes captured brand, feature and target defaults witho
  for(const field of ['brand','features','keywords'])assert.notEqual(api.seoGuidanceSessionSourceKey('supplier-source',{...defaults,[field]:'새 원문 기준'}),key);
  assert.notEqual(api.seoGuidanceSessionSourceKey('different-supplier-source',defaults),key);
 });
+test('SEO editor starts with the first named member brand',()=>{
+ assert.equal(api.initialSeoGuidanceMemo({...defaults,brand:' , 첫 브랜드, 둘째 브랜드'},null).brand.trim(),'첫 브랜드');
+});
 test('a field blur commits only its own raw value and preserves explicit feature/target blanks',()=>{
  const token=open();assert.equal(api.commitSeoGuidanceSession(token,'features',''),true);assert.deepEqual(plain(api.readSeoGuidanceSession(token)),{features:''});
  assert.equal(api.commitSeoGuidanceSession(token,'keywords',''),true);assert.deepEqual(plain(api.readSeoGuidanceSession(token)),{features:'',keywords:''});

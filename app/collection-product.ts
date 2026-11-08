@@ -16,6 +16,7 @@ import type { ProductRecord } from '@/db/queries';
 import { capturedCollectionCompany } from '@/app/collection-company';
 import { createInitialLegalNotices } from '@/app/initial-legal-notices';
 import { getQuotationSchema } from '@/app/quotation-schema';
+import { registrationBrandChoices } from '@/app/quotation-brand-choices';
 
 export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:CollectionResult,id:string,now:string){
   if(!job.context?.category?.id)throw new Error('요청 당시 카테고리와 기본설정이 필요합니다.');
@@ -70,10 +71,15 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   }
   const origin = native && confirmedCollectionOrigin(result.attributes);
   if (origin) content.label.countryOfOrigin = { ...origin, updatedAt: now };
-  // These are the owner's captured registration inputs, not supplier facts or
-  // translated claims. Explicit blanks must survive later workspace changes.
+  // Native drafts use the captured brand for missing company label defaults.
+  // Captured text and future explicit product edits keep their own provenance.
+  const brand = native ? registrationBrandChoices(settings.brand)[0] : undefined;
   for (const [field, setting] of [['manufacturer','manufacturer'],['importer','importer'],['contact','serviceContact']] as const) {
-    if (Object.hasOwn(job.context.settings, setting)) content.label[field] = { value: settings[setting], provenance: 'manual', updatedAt: now };
+    if (brand && field !== 'contact' && !settings[setting].trim()) {
+      content.label[field] = { value: field === 'manufacturer' ? `${brand} 협력사` : brand, provenance: 'generated', updatedAt: now };
+    } else if (Object.hasOwn(job.context.settings, setting)) {
+      content.label[field] = { value: settings[setting], provenance: 'manual', updatedAt: now };
+    }
   }
   // Prepare a reviewable stage-six label without replacing the independent
   // initial legal-notice values in the selected quotation form.

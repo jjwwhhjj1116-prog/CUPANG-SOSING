@@ -28,11 +28,11 @@ function harness(overrides={}){
   save:()=>render().props.onSubmit({preventDefault(){}})};
 }
 
-test('four settings cards keep registration and pricing first while the same controls preserve explicit saved values',async()=>{
+test('settings cards keep registration and pricing first while the controls preserve explicit saved values',async()=>{
  for(const action of ['cancel','save']){
  const h=harness({brand:'직접 입력 브랜드',manufacturer:'제조사 확인값',boxSkuQuantity:7,roundingMode:'up',topImageEnabled:true,topImageKey:'owner/selected-banner.png',washingMethod:'손세탁'}),before=JSON.stringify(h.initial);
  const sections=h.render().props.children.filter(node=>node?.type==='section');
- assert.deepEqual(Array.from(sections,node=>text(nodes(node).find(child=>child.type==='h3'))),['기본 등록 정보','가격설정 방법','이미지 작업 설정','AI 설정']);
+ assert.deepEqual(Array.from(sections,node=>text(nodes(node).find(child=>child.type==='h3'))),['기본 등록 정보','가격설정 방법','이미지 작업 설정','로켓 소싱 마진 기준','AI 설정']);
  const details=nodes(h.render()).filter(node=>node.type==='details');
  assert.ok(details.some(node=>text(node.props.children[0]).startsWith('추가 설정')&&!node.props.open));
  assert.ok(details.some(node=>text(node.props.children[0]).includes('세부 미리보기')&&!node.props.open));

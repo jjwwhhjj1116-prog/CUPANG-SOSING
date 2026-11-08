@@ -7,8 +7,13 @@ const entries = (value, ancestors = []) => Array.isArray(value) ? value.flatMap(
 const visible = entry => !entry.ancestors.some(node => node.props?.hidden || node.type === 'details' && !node.props.open) && !entry.node.props?.hidden;
 const entryFor = (h, label) => entries(h.render()).find(({ node }) => node.props?.['aria-label'] === label || node.type === 'button' && text(node) === label);
 const editor = h => nodes(h.render()).find(node => node.type?.name === 'FreeImageTranslationPanel');
+const replacementMenu = (h, index) => nodes(nodes(h.render()).filter(node => node.type === 'figure')[index - 1])
+  .find(node => node.type === 'details' && node.props.className === 'detail-workspace-photo-replace');
+function toggleReplacement(h, index, open = true) {
+  replacementMenu(h, index).props.onToggle({ currentTarget: { open, isConnected: true } }); h.render();
+}
 
-test('primary photos keep protected banners clean and body actions visible while secondary controls stay mounted inside disclosures', async () => {
+test('primary photos mount only the open replacement menu without issuing requests', async () => {
   const f = await fixture(), before = JSON.stringify(f.view), h = panel(f); h.set({ primaryDetailTools: true });
   try {
     await h.idle(); const figures = nodes(h.render()).filter(node => node.type === 'figure'); assert.equal(figures.length, 4);
@@ -19,21 +24,41 @@ test('primary photos keep protected banners clean and body actions visible while
     for (const index of [0, 3]) assert.equal(nodes(figures[index]).some(node => ['button', 'select', 'input'].includes(node.type)), false, 'protected banners contain no disabled body controls');
     for (const index of [2, 3]) {
       for (const action of ['중국어를 한국어로 번역', '영어를 한국어로 번역', '위로', '아래로', '제거']) { const entry = entryFor(h, `작업 사진 ${index} ${action}`); assert.ok(entry, action); assert.equal(visible(entry), true); }
-      assert.equal(visible(entryFor(h, `작업 사진 ${index} 편집`)), false, 'manual original editing remains inside replacement controls');
+      assert.equal(entryFor(h, `작업 사진 ${index} 편집`), undefined, 'collapsed replacement controls have no DOM nodes');
+      assert.equal(h.control(`작업 사진 ${index} 교체`), undefined);
     }
-    for (const label of ['작업 사진 2 교체', '작업 사진 추가 선택', '편집 HTML 사진 간격 (px)', '편집용 생성 HTML', '작업 사진을 선택 옵션 초안으로', '현재 구성 닫기']) {
+    for (const label of ['작업 사진 추가 선택', '편집 HTML 사진 간격 (px)', '편집용 생성 HTML', '작업 사진을 선택 옵션 초안으로', '현재 구성 닫기']) {
       const entry = entryFor(h, label); assert.ok(entry, label); assert.equal(visible(entry), false, label);
     }
     const rebase = entries(h.render()).find(({ node }) => node.type?.name === 'DetailWorkspaceRebasePanel'); assert.ok(rebase); assert.equal(visible(rebase), false);
     assert.equal(visible(entryFor(h, '상세 구성 저장')), false,'independent composition storage stays named and accessible in advanced settings, separate from final toolbar Save'); assert.equal(h.button('상세 구성 저장').props.disabled, false);
     assert.equal(h.button('편집 구성 보관'), undefined); assert.equal(text(h.render()).includes('owner/'), false, 'raw storage keys are not option labels or captions');
+    toggleReplacement(h, 2);
+    assert.equal(visible(entryFor(h, '작업 사진 2 편집')), true);
+    assert.equal(h.control('작업 사진 3 교체'), undefined);
     const add = h.control('작업 사진 추가 선택'), replace = h.control('작업 사진 2 교체');
     for (const control of [add, replace]) for (const option of nodes(control).filter(node => node.type === 'option' && node.props.value)) {
       assert.match(text(option), /^이미지 [1-9]\d*$/u); assert.ok(f.view.imageKeys.includes(option.props.value));
       assert.equal(text(option), `이미지 ${f.view.imageKeys.indexOf(option.props.value) + 1}`);
     }
-    for (const disclosure of nodes(h.render()).filter(node => node.type === 'details')) assert.equal(disclosure.props.onToggle, undefined, 'native disclosure opening is presentation only');
+    const detachedToggle = replacementMenu(h, 2).props.onToggle;
+    toggleReplacement(h, 2, false);
+    detachedToggle({ currentTarget: { open: true, isConnected: false } });
+    assert.equal(h.control('작업 사진 2 교체'), undefined);
     assert.equal(f.calls.length, 1); assert.ok(f.calls.every(call => call.method === 'GET')); assert.equal(f.workspace, null); assert.equal(f.storage.size, 0); assert.equal(JSON.stringify(f.view), before);
+  } finally { h.close(); }
+});
+
+test('opening and closing a photo menu does not serialize the unchanged quotation view', async () => {
+  const f = await fixture(), h = panel(f);
+  let serialized = 0;
+  const observedView = { ...f.view, toJSON() { serialized++; return f.view; } };
+  h.set({ primaryDetailTools: true, view: observedView });
+  try {
+    await h.idle();
+    serialized = 0;
+    toggleReplacement(h, 2); toggleReplacement(h, 2, false);
+    assert.equal(serialized, 0);
   } finally { h.close(); }
 });
 
@@ -63,7 +88,7 @@ for (const guard of ['unsaved', 'dirty', 'inactive', 'disabled', 'stale', 'savin
     if (guard === 'disabled') h.set({ disabled: true });
     if (guard === 'stale') h.set({ view: { ...plain(f.view), revision: f.view.revision + 1 } });
     if (guard === 'closed') h.button('현재 구성 닫기').props.onClick();
-    if (guard === 'edited') { h.control('작업 사진 2 교체').props.onChange({ target: { value: f.keys[4] } }); await h.click('상세 구성 저장'); }
+    if (guard === 'edited') { toggleReplacement(h, 2); h.control('작업 사진 2 교체').props.onChange({ target: { value: f.keys[4] } }); await h.click('상세 구성 저장'); }
     const count = f.calls.length; action.props.onClick(); h.render(); assert.equal(editor(h), undefined); assert.equal(f.calls.length, count); assert.equal(h.adopted.length, 0);
     if (guard === 'saving') { gate.resolve(); await h.idle(); }
   } finally { h.close(); }
@@ -72,7 +97,7 @@ for (const guard of ['unsaved', 'dirty', 'inactive', 'disabled', 'stale', 'savin
 test('primary edited photos and batch review keep manual intent while original translation controls remain source-only', async () => {
   const f = await fixture(), h = panel(f); h.set({ primaryDetailTools: true });
   try {
-    await h.idle(); await h.click('상세 구성 저장'); h.control('작업 사진 2 교체').props.onChange({ target: { value: f.keys[4] } }); await h.click('상세 구성 저장');
+    await h.idle(); await h.click('상세 구성 저장'); toggleReplacement(h, 2); h.control('작업 사진 2 교체').props.onChange({ target: { value: f.keys[4] } }); await h.click('상세 구성 저장');
     assert.equal(h.button('작업 사진 2 중국어를 한국어로 번역'), undefined); assert.equal(visible(entryFor(h, '작업 사진 2 편집')), true); await h.click('작업 사진 2 편집');
     let child = editor(h); assert.equal(child.props.translationTarget.sourceKey, f.keys[4]); assert.equal(child.props.translationTarget.intent, 'manual');
     child.props.onCloseGuard(() => true); await h.click('작업 사진 편집 닫기');
@@ -85,7 +110,7 @@ test('friendly labels retain exact photo keys and all explicit save, replacement
   const f = await fixture(), before = JSON.stringify(f.view), h = panel(f); h.set({ primaryDetailTools: true });
   try {
     await h.idle(); await h.click('상세 구성 저장'); const original = plain(f.workspace.document.photos);
-    const replacement = h.control('작업 사진 2 교체'); assert.equal(replacement.props.disabled, false);
+    toggleReplacement(h, 2); const replacement = h.control('작업 사진 2 교체'); assert.equal(replacement.props.disabled, false);
     const chosen = nodes(replacement).find(node => node.type === 'option' && text(node) === '이미지 5'); assert.equal(chosen.props.value, f.keys[4]);
     replacement.props.onChange({ target: { value: chosen.props.value } }); h.render();
     const changed=nodes(h.render()).filter(node=>node.type==='figure')[1];assert.equal(changed.props['data-photo-state'],'edited');assert.equal(text(nodes(changed).find(node=>node.props?.className==='option-detail-image-badge')),'편집된 이미지');

@@ -2,8 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {createRequire} from 'node:module';
+import {fileURLToPath} from 'node:url';
 import ts from 'typescript';
-function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,require:name=>load(name.slice(2)+'.ts')});return exports;}
+const native=createRequire(import.meta.url);
+function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,require:name=>!name.startsWith('@/')?native(name):name.endsWith('.mjs')?native(fileURLToPath(new URL('../'+name.slice(2),import.meta.url))):load(name.slice(2)+'.ts')});return exports;}
 const model=load('app/option-translation.ts');const optionsModel=load('app/product-options.ts');
 function fixture(){
  const options=optionsModel.applyOptionRows(optionsModel.emptyProductOptions('p'),[{...optionsModel.emptyOptionInput('a'),originalName:'白色',supplierSku:'sku-a',unitCostCny:4,unitsPerPack:2,included:true},{...optionsModel.emptyOptionInput('b'),originalName:'黑色',translatedName:'직접 수정 검정',unitCostCny:5,included:true}],'v');
@@ -145,4 +148,50 @@ test('direct v6 option adoption leaves copied Chinese values pending while codes
  const before=JSON.stringify(options),result=model.adoptOptionTranslations(options,job,'v');
  assert.equal(result.changed,1);assert.equal(result.rows[0].translatedName,'');assert.equal(result.rows[0].color,'黑色 검토');assert.equal(result.rows[0].size,'XL');
  assert.deepEqual(JSON.parse(JSON.stringify(result.reviewed)),[{optionId:'a',field:'size'}]);assert.equal(JSON.stringify(options),before);
+});
+
+function mixedNameFixture(){
+ const {options,job}=fixture(),row=options.rows[0];
+ row.originalName='高档纱窗刷 [白色] XJ-23';
+ row.translatedName='고급방충망刷 [흰색] XJ-23';
+ row.provenance.translatedName='translated';
+ job.review.instructionsVersion='sourceflow-translation-v6';
+ job.review.source.attributes=[{name:'option:a',value:row.originalName}];
+ job.result.draft.attributes=[{sourceIndex:0,name:'옵션명',value:'고급 방충망 청소솔 [흰색] XJ-23'}];
+ const prior=JSON.parse(JSON.stringify(job));
+ prior.result.draft.attributes[0].value=row.translatedName;
+ return {options,job,prior,row};
+}
+
+test('a proven mixed-language saved option name is retried from its exact original',()=>{
+ const {options,job,prior,row}=mixedNameFixture(),before=JSON.stringify(options);
+ assert.deepEqual(JSON.parse(JSON.stringify(model.optionTranslationBatch(options,50,[prior]).attributes)),[{name:'option:a',value:row.originalName}]);
+ const result=model.adoptOptionTranslations(options,job,'v',false,[prior]);
+ assert.equal(result.changed,1);
+ assert.equal(result.rows[0].translatedName,'고급 방충망 청소솔 [흰색] XJ-23');
+ assert.equal(result.rows[0].supplierSku,row.supplierSku);
+ assert.equal(result.rows[0].unitCostCny,row.unitCostCny);
+ assert.equal(JSON.stringify(options),before);
+ row.translatedName=result.rows[0].translatedName;
+ assert.equal(model.optionTranslationBatch(options,50,[prior]).total,0);
+});
+
+test('mixed-language retry preserves manual names, exact history scope and a model code',()=>{
+ const {options,job,prior,row}=mixedNameFixture(),pending=(history=[])=>model.optionTranslationBatch(options,50,history).total;
+ assert.equal(pending(),0);
+ assert.equal(pending([{...prior,productId:'different'}]),0);
+ for(const value of ['고급 방충망刷 [흰색] XJ-23','고급 방충망 청소솔 [흰색]']){
+  job.result.draft.attributes[0].value=value;
+  assert.equal(model.adoptOptionTranslations(options,job,'v',true,[prior]).changed,0);
+ }
+ assert.equal(model.adoptOptionTranslations(options,prior,'v',true,[prior]).changed,0);
+ for(const value of [row.translatedName,'']){
+  row.provenance.translatedName='manual';row.translatedName=value;
+  assert.equal(pending([prior]),0);
+  assert.equal(model.adoptOptionTranslations(options,job,'v',true,[prior]).changed,0);
+ }
+ row.provenance.translatedName='translated';row.translatedName=prior.result.draft.attributes[0].value;
+ row.originalName='다른 모델 A-10';
+ assert.equal(pending([prior]),0);
+ assert.throws(()=>model.adoptOptionTranslations(options,job,'v',true,[prior]),/원문이나 연결/);
 });

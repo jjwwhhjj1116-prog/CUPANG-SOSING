@@ -8,6 +8,23 @@ const plain = value => JSON.parse(JSON.stringify(value)), sha = value => createH
 const withoutWorkspace = f => { const { product_detail_workspaces: omitted, ...tables } = f.tables(); assert.ok(omitted); return tables; };
 const objects = f => [...f.api.objects].map(([key, bytes]) => [key, sha(bytes)]);
 
+test('opening a saved workspace resolves its quotation twice, while a save retains its separate checks', async () => {
+  const f = await detailWorkspaceFixture(companies[0]);
+  try {
+    const quotation = f.api.load('app/quotation-fields-snapshot.ts'), stable = quotation.stableQuotationFieldsView;
+    let quotationReads = 0;
+    quotation.stableQuotationFieldsView = (...args) => { quotationReads++; return stable(...args); };
+    const saved = await json(await f.put(await f.body()));
+    quotationReads = 0;
+    assert.deepEqual(await json(await f.read()), saved);
+    assert.equal(quotationReads, 2);
+    quotationReads = 0;
+    const body = await f.body(f.document(saved.workspace.document.photos, 5), saved);
+    assert.equal((await json(await f.put(body))).workspace.revision, 2);
+    assert.ok(quotationReads > 2, 'mutations retain their intermediate and post-write checks');
+  } finally { f.api.close(); }
+});
+
 for (const company of companies) test(`editor-only save/reload/replacement/reorder/deletion retains final product and quotation byte-for-byte (${company.companyCode})`, async () => {
   const f = await detailWorkspaceFixture(company, { wire: true, excluded: true });
   try {

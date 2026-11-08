@@ -49,7 +49,7 @@ export function advanceSelectedImageStageCheckpoint(state:SelectedImageStageStat
  }catch{return false;}
 }
 export type SelectedImageStageResult={status:'completed'|'partial'|'skipped'|'uncertain';applied:number;failed:number;skipped:number;verifiedUnchanged?:number;messages:string[];productVersion?:string;recoveryBatch?:DetailImageBatch;state:SelectedImageStageState;recovered?:boolean;sourceChanged?:true;inferencePending?:true;review?:SelectedImageReview;reviewTarget?:SelectedImageReviewTarget};
-export type SelectedImageStageOptions={ownerId:string;signal:AbortSignal;fetcher:typeof fetch;isCurrent?:()=>boolean;onProgress?:(message:string)=>void;expectedProductVersion?:string;state?:SelectedImageStageState;reworkCurrentSelection?:boolean};
+export type SelectedImageStageOptions={ownerId:string;signal:AbortSignal;fetcher:typeof fetch;isCurrent?:()=>boolean;onProgress?:(message:string,progress?:{completed:number;total:number})=>void;expectedProductVersion?:string;state?:SelectedImageStageState;reworkCurrentSelection?:boolean};
 type Dependencies={plan?:typeof planBatchImageWork;refresh?:typeof refreshBatchImageTask;readSource?:typeof readFreeImageSource;recognize?:typeof recognizeFreeImage;translate?:typeof translateFreeImageRegions;render?:typeof renderFreeImageTranslation;apply?:typeof applyDetailBatchResult;recover?:typeof recoverDetailBatchResult;observe?:typeof observeFreeImageVisionStatus;reconcileDetail?:typeof reconcileSelectedDetailWorkspace};
 const label={main:'대표 이미지',additional:'추가 이미지',detail:'상세 이미지'};
 export const SELECTED_IMAGE_SLOT_TIMEOUT_MS=240000;
@@ -183,6 +183,11 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
  if(recoveryTarget&&!tasks.some(task=>task.optionId===recoveryTarget.optionId
    &&state.batches[task.optionId]?.items.some(item=>item.slotIndex===recoveryTarget.slotIndex&&item.sourceKey===recoveryTarget.attempt.source.sourceKey)))throw changed();
  if(!tasks.length){result.failed=1;result.messages.push(...(plan.messages.length?plan.messages.map(row=>row.message):['처리할 저장 이미지 연결이 없습니다. 이미지 설정을 확인해주세요.']));return result;}
+ const total=tasks.reduce((sum,task)=>sum+task.imageCount,0);
+ let completed=0;
+ const report=(message:string)=>options.onProgress?.(message,{completed,total});
+ const confirmSlots=(count=1)=>{completed+=count;report(`${label[stage]} ${completed}/${total}칸 확인`);};
+ report(`${label[stage]} 작업 준비 중`);
  let latest=state.view;
  for(const task of tasks){
   active();
@@ -212,7 +217,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
    originals=new Set(originalImageLibraryKeys(productId,view,optionsBody.imageLibrary,plan.scope.company));
   }catch{active();/* Missing current source proof never grants permission to edit a manual asset. */}
   const preserve=(key:string)=>manualSelection&&!savedEditKey(key)&&!originals.has(key);
-  if(manualSelection&&selected.keys.every(preserve)){result.skipped+=selected.keys.length||1;result.messages.push(`${task.optionLabel} · 직접 저장한 ${manualOption?'옵션 대표 이미지':label[stage]} 선택을 유지했습니다.`);latest=view;continue;}
+  if(manualSelection&&selected.keys.every(preserve)){result.skipped+=selected.keys.length||1;result.messages.push(`${task.optionLabel} · 직접 저장한 ${manualOption?'옵션 대표 이미지':label[stage]} 선택을 유지했습니다.`);confirmSlots(selected.slots.length);latest=view;continue;}
   let batch:DetailImageBatch=retained?{...retained,view}:{productId,optionId:task.optionId,profileId:task.profileId,stage,language:'zh',view,
    items:selected.keys.map((sourceKey,slotIndex)=>({slotIndex,sourceKey,status:selected.protectedSlots.includes(slotIndex)||preserve(sourceKey)?'skipped':'pending',message:'',texts:[]}))};
   const remember=(next:DetailImageBatch)=>{batch=next;state.batches[task.optionId]=next;state.view=next.view;};remember(batch);
@@ -229,15 +234,16 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
    if(entry.status==='applied'){
     result.applied++;
     if(entry.translationReview?.status==='partial'){result.failed++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${entry.translationReview.message} 저장된 이미지를 수동 편집에서 열어 확인해주세요. 자동 재요청하지 않았습니다.`);break;}
+    confirmSlots();
     continue;
    }
-   if(entry.status==='skipped'){result.skipped++;continue;}
+   if(entry.status==='skipped'){result.skipped++;confirmSlots();continue;}
    const savedEdit=savedEditKey(entry.sourceKey);
    const controller=new AbortController(),abort=()=>controller.abort(signal.reason);signal.addEventListener('abort',abort,{once:true});
    const timer=setTimeout(()=>controller.abort(Error('이 이미지의 처리 시간이 4분을 초과했습니다. 서버 번역 작업과 원본을 보존했습니다.')),SELECTED_IMAGE_SLOT_TIMEOUT_MS);
    let image:FreeImageLoaded|undefined;
    const check=()=>{active();controller.signal.throwIfAborted();};
-   const progress=(message:string)=>{check();options.onProgress?.(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}/${selected.keys.length}: ${message}`);};
+   const progress=(message:string)=>{check();report(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}/${selected.keys.length}: ${message}`);};
    try{
     if(savedEdit){
      // Fresh sessions must read the persisted editor issue marker before
@@ -260,7 +266,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
       result.failed++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${message}`);break;
      }
      remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'skipped',translationReview:undefined}:item)});
-     result.skipped++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: 저장된 편집 결과를 유지했습니다.`);continue;
+     result.skipped++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: 저장된 편집 결과를 유지했습니다.`);confirmSlots();continue;
     }
     if(!(entry.status==='ready'&&entry.rendered)){
     progress('원문 확인·문구 인식 중');const target=detailBatchSelection(batch.view,task.optionId,task.profileId,stage);
@@ -349,6 +355,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
     remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,rendered:undefined,attempt:undefined}:item)});check();
     const partial=batch.items.find(item=>item.slotIndex===slotIndex)?.translationReview;
     if(partial?.status==='partial'){result.failed++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${partial.message} 저장된 이미지를 수동 편집에서 열어 확인해주세요.`);break;}
+    confirmSlots();
    }catch(cause){
     if(state.detailWorkspacePending){result.status=state.detailWorkspacePending.save?.attempt.pending?'uncertain':'partial';result.failed++;result.messages.push(note(cause)+' 확인된 상세 번역을 보존하고 사진 구성 연결을 확인하기 전에는 다음 이미지로 진행하지 않습니다.');return result;}
     const unsent=cause instanceof FreeImageVisionError&&cause.code==='IMAGE_VISION_NOT_ADMITTED'&&!cause.uncertain&&image
@@ -391,7 +398,7 @@ export async function processSelectedImageStage(productId:string,stage:SelectedI
      const message=verified?'서버가 현재 원본의 보존 검사 결과를 확인했습니다. 실물 인쇄를 포함한 원본을 유지하며 추가 추론·이미지 저장 없이 완료했습니다.':`문구 인식을 완료했으며 자동 ${action}할 중국어·영어 문구를 찾지 못해 원본을 유지했습니다. 문구 없음의 서버 검증은 없어 완료로 처리하지 않았습니다.`;
      if(verified){(state.verifiedOriginals??={})[`${task.optionId}/${slotIndex}`]=entry.sourceKey;result.verifiedUnchanged=(result.verifiedUnchanged??0)+1;}
      else{unverifiedOriginal=true;(state.unverifiedOriginals??={})[`${task.optionId}/${slotIndex}`]=entry.sourceKey;}
-     result.skipped++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${message}`);remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'skipped',message,rendered:undefined}:item)});}
+     result.skipped++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${message}`);remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'skipped',message,rendered:undefined}:item)});if(verified)confirmSlots();}
     else{if(image&&!result.review&&!state.inferencePending&&!controller.signal.aborted)result.reviewTarget=createSelectedImageReviewTarget(plan.scope,batch.view,image.source)??undefined;
      result.failed++;result.messages.push(`${task.optionLabel} · ${label[stage]} ${slotIndex+1}: ${controller.signal.aborted?note(controller.signal.reason):note(cause)}`);remember({...batch,items:batch.items.map(item=>item.slotIndex===slotIndex?{...item,status:'failed',message:note(cause),rendered:undefined}:item)});}
    }finally{clearTimeout(timer);signal.removeEventListener('abort',abort);release(image);}

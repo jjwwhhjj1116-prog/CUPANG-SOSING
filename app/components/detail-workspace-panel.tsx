@@ -1,6 +1,6 @@
 'use client';
 import type {UiMutation} from '@/app/registration-ui-reads';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { generateDetailWorkspaceHtml, type DetailWorkspaceDocument, type DetailWorkspacePhoto, type DetailWorkspaceView } from '@/app/detail-workspace';
 import { initialDetailWorkspaceDocument } from '@/app/detail-workspace-seed';
@@ -22,7 +22,7 @@ type Work = { selection: DetailWorkspaceSelection; reply: DetailWorkspaceView; d
 type Pending = { input: DetailWorkspaceSaveInput; attempt: DetailWorkspaceAttempt };
 type PhotoEditor = { context: DetailWorkspaceEditorContext; target: FreeImageTranslationTarget; imageKeys: string[]; generation: object };
 type Attachment = { selection: DetailWorkspaceSelection; saved: DetailWorkspaceView; attempt: DetailWorkspaceAttachmentAttempt };
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const same = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
 const imageUrl = (key: string) => `/api/files/${key.split('/').map(encodeURIComponent).join('/')}`;
 const issue = (cause: unknown) => cause instanceof Error ? cause.message : '상세 편집 구성을 확인하지 못했습니다.';
 const documentFrom = (photos: DetailWorkspacePhoto[], margin = 0): DetailWorkspaceDocument => ({ format: 'detail-workspace-v1', photos, imageMargin: margin, generatedHtml: generateDetailWorkspaceHtml(photos, margin) });
@@ -52,8 +52,9 @@ export function DetailWorkspaceForm({ onBeginSourceWrite,productId, optionId, pr
   const liveEditor = useRef<PhotoEditor | null>(null), editorStatus = useRef({ busy: false, dirty: false }), attachment = useRef<Attachment | null>(null), editorSequence = useRef(0);
   const editorCloseGuard = useRef<(() => boolean) | null>(null);
   const [error, setError] = useState(''), [message, setMessage] = useState(''), [candidate, setCandidate] = useState('');
+  const [replacementPhotos, setReplacementPhotos] = useState(() => new Set<string>());
   const mounted = useRef(true), operation = useRef<AbortController | null>(null), pending = useRef<Pending | null>(null), liveWork = useRef(work), autoOpened = useRef<object | null>(null);
-  const source = JSON.stringify([productId, optionId, profileId ?? null, view, disabled, stageActive]);
+  const source = useMemo(() => JSON.stringify([productId, optionId, profileId ?? null, view, disabled, stageActive]), [productId, optionId, profileId, view, disabled, stageActive]);
   const [clock, setClock] = useState({ source, token: {} }); if (clock.source !== source) setClock({ source, token: {} });
   const generation = clock.source === source ? clock.token : null, epoch = useRef(generation);
   const controls = useRef({ disabled, stageActive, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested, onCompositeSaved });
@@ -85,6 +86,8 @@ export function DetailWorkspaceForm({ onBeginSourceWrite,productId, optionId, pr
   const locked = !ready || busy || uncertain || attaching || editor !== null || compositeBusy || bannerBusy || batchBusy || disabled || !stageActive || stale;
   const outside = work?.document.photos.some(photo => !view.imageKeys.includes(photo.key)) ?? false;
   const imageLabels = new Map([...new Set([...view.imageKeys, ...(work?.document.photos.map(photo => photo.key) ?? [])])].map((key, index) => [key, `이미지 ${index + 1}`]));
+  const savedPhotoIds = new Set(work?.reply.workspace?.document.photos.map(photo => photo.id));
+  const photoDimensions = new Map(primaryDetailTools ? work?.reply.workspace?.files.map(file => [file.key, file]) : undefined);
   const toolbarRecord = work?.reply.workspace ?? null;
   const receiveCompositeToolbar = useCallback((next: DetailWorkspaceCompositeToolbarActions | null, retired?: DetailWorkspaceCompositeToolbarActions) => {
     if (!mounted.current || next === null && compositeToolbar.current?.actions !== retired) return;
@@ -158,6 +161,7 @@ export function DetailWorkspaceForm({ onBeginSourceWrite,productId, optionId, pr
   function openWork(selection: DetailWorkspaceSelection, reply: DetailWorkspaceView) {
     const document = initialDetailWorkspaceDocument(reply, optionId);
     adoptWork({ selection, reply, document, ...(!reply.workspace ? { seedDocument: structuredClone(document) } : {}) }); setCandidate('');
+    setReplacementPhotos(current => current.size ? new Set() : current);
   }
   async function open() {
     const token = generation, controller = begin(token); if (!controller || uncertain) { if (controller) finish(controller); return; }
@@ -361,10 +365,29 @@ export function DetailWorkspaceForm({ onBeginSourceWrite,productId, optionId, pr
       <div className={primaryDetailTools ? 'detail-workspace-photo-stack' : undefined} style={primaryDetailTools ? undefined : { maxHeight: 600, overflow: 'auto' }} aria-label="상세 작업 사진 순서">{work.document.photos.map((photo, index) => <figure key={photo.id} className={primaryDetailTools?'detail-workspace-photo':undefined} data-photo-role={photo.role} data-photo-state={photo.role!=='body'?'setting':photo.key===photo.originKey?'original':'edited'} style={primaryDetailTools ? undefined : { border: '1px solid #ddd', padding: 12 }}>
         <figcaption>{primaryDetailTools ? <span className="option-detail-image-badge">{photo.role === 'top' ? '상단 이미지' : photo.role === 'bottom' ? '하단 이미지' : photo.key===photo.originKey?'원본 이미지':'편집된 이미지'}</span> : <>사진 {index + 1} · 원본 {photo.originKey}</>}</figcaption>
         {/* eslint-disable-next-line @next/next/no-img-element -- Existing authenticated owned-image endpoint. */}
-        <img src={imageUrl(photo.key)} alt={`상세 작업 사진 ${index + 1}`} loading="lazy" style={primaryDetailTools ? { marginBottom: work.document.imageMargin } : { maxWidth: '100%', maxHeight: 220, objectFit: 'contain' }} />
+        <img src={imageUrl(photo.key)} alt={`상세 작업 사진 ${index + 1}`} loading="lazy" decoding="async" width={photoDimensions.get(photo.key)?.width} height={photoDimensions.get(photo.key)?.height} style={primaryDetailTools ? { marginBottom: work.document.imageMargin } : { maxWidth: '100%', maxHeight: 220, objectFit: 'contain' }} />
         {!primaryDetailTools && <p>{photo.role === 'top' ? '상단 사진' : photo.role === 'bottom' ? '하단 사진' : '본문 사진'}</p>}
-        {(!primaryDetailTools || photo.role === 'body') && <div className={primaryDetailTools?'detail-workspace-photo-overlay':undefined}><div className={primaryDetailTools?'detail-workspace-photo-actions':undefined}>{primaryDetailTools && photo.key === photo.originKey ? (['zh', 'en'] as const).map(language => <button key={language} type="button" className="btn ghost detail-workspace-photo-translate" data-source-language={language} aria-label={`작업 사진 ${index + 1} ${language === 'zh' ? '중국어' : '영어'}를 한국어로 번역`} disabled={locked || dirty || !work.reply.workspace?.document.photos.some(item => item.id === photo.id)} onClick={() => editPhoto(photo.id, language, 'translate')}>{language === 'zh' ? '중국어' : '영어'}→한국어 번역</button>) : <button type="button" className="btn ghost" aria-label={`작업 사진 ${index + 1} 편집`} disabled={locked || dirty || photo.role !== 'body' || !work.reply.workspace?.document.photos.some(item => item.id === photo.id)} onClick={() => editPhoto(photo.id)}>{primaryDetailTools?'편집하기':'현재 사진 편집'}</button>}</div>
-        <details className={primaryDetailTools?'detail-workspace-photo-replace':undefined} open={!primaryDetailTools ? true : undefined}><summary hidden={!primaryDetailTools}>사진 교체</summary>{primaryDetailTools && photo.key === photo.originKey && <button type="button" className="btn ghost" aria-label={`작업 사진 ${index + 1} 편집`} disabled={locked || dirty || !work.reply.workspace?.document.photos.some(item => item.id === photo.id)} onClick={() => editPhoto(photo.id)}>직접 편집</button>}<label>사진 교체<select aria-label={`작업 사진 ${index + 1} 교체`} value={photo.key} disabled={locked || photo.role !== 'body' || !work.reply.workspace?.document.photos.some(item => item.id === photo.id)} onChange={event => { const key = event.target.value; if (!work.reply.workspace?.document.photos.some(item => item.id === photo.id) || !work.selection.view.imageKeys.includes(key) || key !== photo.key && key.split('/').at(-1)?.startsWith('free-image-workspace-') || work.reply.roles.top.includes(key) || work.reply.roles.bottom.includes(key)) return; amend(generation, photos => photos.map(item => item.id === photo.id && item.role === 'body' ? { ...item, key } : item)); }}>{[...new Set([...work.selection.view.imageKeys, photo.key])].filter(key => key === photo.key || !key.split('/').at(-1)?.startsWith('free-image-workspace-') && !work.reply.roles.top.includes(key) && !work.reply.roles.bottom.includes(key)).map(key => <option key={key} value={key}>{primaryDetailTools ? imageLabels.get(key) : key}</option>)}</select>{photo.role === 'body' && !work.reply.workspace?.document.photos.some(item => item.id === photo.id) && <small>{primaryDetailTools ? '사진 편집 전 구성을 저장해주세요.' : '원본 연결을 먼저 보관한 뒤 사진을 교체할 수 있습니다.'}</small>}</label></details>
+        {(!primaryDetailTools || photo.role === 'body') && <div className={primaryDetailTools?'detail-workspace-photo-overlay':undefined}><div className={primaryDetailTools?'detail-workspace-photo-actions':undefined}>{primaryDetailTools && photo.key === photo.originKey ? (['zh', 'en'] as const).map(language => <button key={language} type="button" className="btn ghost detail-workspace-photo-translate" data-source-language={language} aria-label={`작업 사진 ${index + 1} ${language === 'zh' ? '중국어' : '영어'}를 한국어로 번역`} disabled={locked || dirty || !savedPhotoIds.has(photo.id)} onClick={() => editPhoto(photo.id, language, 'translate')}>{language === 'zh' ? '중국어' : '영어'}→한국어 번역</button>) : <button type="button" className="btn ghost" aria-label={`작업 사진 ${index + 1} 편집`} disabled={locked || dirty || photo.role !== 'body' || !savedPhotoIds.has(photo.id)} onClick={() => editPhoto(photo.id)}>{primaryDetailTools?'편집하기':'현재 사진 편집'}</button>}</div>
+        <details className={primaryDetailTools ? 'detail-workspace-photo-replace' : undefined} open={!primaryDetailTools || replacementPhotos.has(photo.id)} onToggle={primaryDetailTools ? event => {
+          const { open, isConnected } = event.currentTarget;
+          if (!isConnected || !mounted.current || !generation || generation !== epoch.current || liveWork.current !== work) return;
+          setReplacementPhotos(current => {
+            if (current.has(photo.id) === open) return current;
+            const next = new Set(current);
+            if (open) next.add(photo.id); else next.delete(photo.id);
+            return next;
+          });
+        } : undefined}>
+          <summary hidden={!primaryDetailTools}>사진 교체</summary>
+          {(!primaryDetailTools || replacementPhotos.has(photo.id)) && <>
+            {primaryDetailTools && photo.key === photo.originKey && <button type="button" className="btn ghost" aria-label={`작업 사진 ${index + 1} 편집`} disabled={locked || dirty || !savedPhotoIds.has(photo.id)} onClick={() => editPhoto(photo.id)}>직접 편집</button>}
+            <label>사진 교체<select aria-label={`작업 사진 ${index + 1} 교체`} value={photo.key} disabled={locked || photo.role !== 'body' || !savedPhotoIds.has(photo.id)} onChange={event => {
+              const key = event.target.value;
+              if (!savedPhotoIds.has(photo.id) || !work.selection.view.imageKeys.includes(key) || key !== photo.key && key.split('/').at(-1)?.startsWith('free-image-workspace-') || work.reply.roles.top.includes(key) || work.reply.roles.bottom.includes(key)) return;
+              amend(generation, photos => photos.map(item => item.id === photo.id && item.role === 'body' ? { ...item, key } : item));
+            }}>{[...new Set([...work.selection.view.imageKeys, photo.key])].filter(key => key === photo.key || !key.split('/').at(-1)?.startsWith('free-image-workspace-') && !work.reply.roles.top.includes(key) && !work.reply.roles.bottom.includes(key)).map(key => <option key={key} value={key}>{primaryDetailTools ? imageLabels.get(key) : key}</option>)}</select>{photo.role === 'body' && !savedPhotoIds.has(photo.id) && <small>{primaryDetailTools ? '사진 편집 전 구성을 저장해주세요.' : '원본 연결을 먼저 보관한 뒤 사진을 교체할 수 있습니다.'}</small>}</label>
+          </>}
+        </details>
         <div className={primaryDetailTools?'button-row detail-workspace-photo-order':'button-row'}><button type="button" disabled={locked || photo.role !== 'body' || index === 0 || work.document.photos[index - 1]?.role !== 'body'} aria-label={`작업 사진 ${index + 1} 위로`} onClick={() => amend(generation, photos => { if (photos[index]?.role === 'body' && photos[index - 1]?.role === 'body') [photos[index - 1], photos[index]] = [photos[index], photos[index - 1]]; return photos; })}>↑</button>
           <button type="button" disabled={locked || photo.role !== 'body' || work.document.photos[index + 1]?.role !== 'body'} aria-label={`작업 사진 ${index + 1} 아래로`} onClick={() => amend(generation, photos => { if (photos[index]?.role === 'body' && photos[index + 1]?.role === 'body') [photos[index], photos[index + 1]] = [photos[index + 1], photos[index]]; return photos; })}>↓</button>
           <button type="button" disabled={locked || photo.role !== 'body'} aria-label={`작업 사진 ${index + 1} 제거`} onClick={() => amend(generation, photos => photos.filter(item => item.id !== photo.id || item.role !== 'body'))}>{primaryDetailTools ? <svg aria-hidden="true" width="14" height="16" viewBox="0 0 16 18" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M1 4h14M6 1h4l1 3H5l1-3ZM3 4l1 12h8l1-12M6 7v6M10 7v6" /></svg> : '제거'}</button></div></div>}

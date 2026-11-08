@@ -1,6 +1,7 @@
 import type {AutomationStageId} from '@/app/automation/model';
 import type {SelectedBatchStageResult} from '@/app/batch-selected-work';
 import type {RegistrationContentSummary} from '@/app/registration-content-summary';
+import type {RegistrationWorkProgress} from '@/app/registration-stage-status';
 
 type SourceProduct={id:string;updated_at:string;title:string;source_url?:string;image_keys?:string;content_summary?:unknown};
 export type BatchBoardSource={productVersion:string;sourceFingerprint:string};
@@ -13,7 +14,7 @@ export function batchBoardSource(product:SourceProduct):BatchBoardSource|null{
 }
 export type BatchBoardActivity={runId:string;attempt:number;kind:'start'}|{runId:string;attempt:number;kind:'finish'}|{runId:string;attempt:number;kind:'stage';productId:string;result:SelectedBatchStageResult};
 type Run={id:string;ownerId:string;stages:readonly AutomationStageId[]};
-type Entry={source:BatchBoardSource;state:'running'|'failed';detail:string};
+type Entry={source:BatchBoardSource;state:'running'|'failed';detail:string;progress?:RegistrationWorkProgress};
 export type BatchBoardFeedback={scope:object;runId:string;attempt:number;ownerId:string;products:readonly string[];stages:readonly AutomationStageId[];entries:Record<string,Partial<Record<AutomationStageId,Entry>>>};
 export function updateBatchBoardFeedback(previous:BatchBoardFeedback|null,scope:object,run:Run,products:readonly string[],event:BatchBoardActivity):BatchBoardFeedback|null{
  if(event.runId!==run.id||!Number.isSafeInteger(event.attempt)||event.attempt<1)return previous;
@@ -31,7 +32,9 @@ export function updateBatchBoardFeedback(previous:BatchBoardFeedback|null,scope:
   const values={...entries[event.productId]},result=event.result,source=result.boardSource;
   delete values[result.id];
   if(['running','blocked','failed'].includes(result.status)&&source&&Number.isFinite(Date.parse(source.productVersion))&&typeof source.sourceFingerprint==='string'&&source.sourceFingerprint.length<=85000){
-   values[result.id]={source:{...source},state:result.status==='running'?'running':'failed',detail:((result.status==='blocked'?'자료·검토 필요: ':'')+result.message).slice(0,2000)};
+   const progress=result.status==='running'?result.progress:undefined;
+   const measured=progress&&Number.isSafeInteger(progress.completed)&&Number.isSafeInteger(progress.total)&&progress.total>0&&progress.completed>=0&&progress.completed<=progress.total;
+   values[result.id]={source:{...source},state:result.status==='running'?'running':'failed',detail:((result.status==='blocked'?'자료·검토 필요: ':'')+result.message).slice(0,2000),...(measured?{progress:{...progress}}:{})};
   }
   entries[event.productId]=values;
  }
@@ -44,6 +47,6 @@ export function projectBatchBoardFeedback<T extends SourceProduct&{owner_id?:str
   if(product.owner_id!==ownerId||!source||!summary?.stages||!entries)return product;
   const statuses=Object.entries(entries).filter(([,entry])=>entry&&entry.source.productVersion===source.productVersion&&entry.source.sourceFingerprint===source.sourceFingerprint);
   if(!statuses.length)return product;
-  return{...product,content_summary:{...summary,stages:{...summary.stages,...Object.fromEntries(statuses.map(([id,entry])=>[id,{state:entry!.state,detail:entry!.detail}]))}}};
+  return{...product,content_summary:{...summary,stages:{...summary.stages,...Object.fromEntries(statuses.map(([id,entry])=>[id,{state:entry!.state,detail:entry!.detail,...(entry!.progress?{progress:entry!.progress}:{})}]))}}};
  });
 }

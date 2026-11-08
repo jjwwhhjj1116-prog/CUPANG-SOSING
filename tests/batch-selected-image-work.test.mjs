@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {createRequire} from 'node:module';
+import {fileURLToPath} from 'node:url';
 import vm from 'node:vm';
 import ts from 'typescript';
 import * as parse5 from 'parse5';
@@ -14,7 +16,8 @@ function loadModel(){
     if(name==='parse5')return parse5;
     if(name==='@/app/free-image-translation-client'){const real=load('app/free-image-translation-client.ts');return{initializeFreeImageVisionRegions:real.initializeFreeImageVisionRegions,isImageVisionObservation:real.isImageVisionObservation};}
     if(name==='@/app/image-files')return{isOwnedImageKey:(owner,key)=>typeof key==='string'&&new RegExp('^'+owner+'/[a-zA-Z0-9][a-zA-Z0-9._-]*$').test(key)};
-    assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');
+    assert.ok(name.startsWith('@/'),name);
+    return name.endsWith('.mjs')?createRequire(import.meta.url)(fileURLToPath(new URL('../'+name.slice(2),import.meta.url))):load(name.slice(2)+'.ts');
    }},{filename:file});return exports;
  }
  return{model:load('app/batch-selected-image-work.ts'),library:load('app/main-image-library.ts'),settingsModel:load('app/workspace-settings.ts'),style:load('app/free-image-vision-style.ts'),vision:load('app/free-image-vision-error.ts'),visionContract:load('app/image-text-vision.ts'),expire(){for(const timer of [...timers.values()])timer.fn();},timers};
@@ -81,12 +84,14 @@ for(const stage of ['main','additional','detail'])test(`${stage}: v2 mixed image
 
 for(const stage of ['main','additional'])test(`${stage}: unreadable fifth-option image retains its exact manual review target without inventing a completed recognition`,async()=>{
  const h=fixture(stage,['owner/source-a.png']),read=h.deps.readSource,first=plain(h.view.resolved.rows[0]),field=stage==='main'?'mainImage':'additionalImages';
+ const counts=[];h.options.onProgress=(_message,count)=>{if(count)counts.push(plain(count));};
  h.view.resolved.rows=Array.from({length:5},(_,index)=>{const row={...plain(first),optionId:`collected-${index+1}`,optionLabel:`옵션 ${index+1}`},key=`owner/source-${index+1}.png`;row.fields[field].value=key;if(stage==='main')row.fields.wireMain.value=key;h.view.imageKeys.push(key);return row;});
  h.plan.tasks=h.view.resolved.rows.map(row=>({...h.plan.tasks[0],optionId:row.optionId,optionLabel:row.optionLabel}));
  h.productOptions.rows=h.view.resolved.rows.map(row=>({id:row.optionId,provenance:{imageKey:'collected'}}));
  h.deps.readSource=async(...args)=>{const image=await read(...args);image.source.quotationTarget.bindingSha256='c'.repeat(64);return image;};
  h.deps.recognize=async image=>{h.calls.push(['vision',image.source.quotationTarget.optionId]);const unreadable=image.source.quotationTarget.optionId==='collected-5',c=h.visionContract;image.visionResult=c.parseImageTextVisionResult({provider:'workers-ai-vision',model:c.IMAGE_TEXT_VISION_MODEL,notice:c.IMAGE_TEXT_VISION_NOTICE,requests:1,inspection:{policy:'product-text-preservation-v2',decision:unreadable?'unreadable':'product-markings-only'},blocks:unreadable?[]:[{id:'vision-1',text:'YOGA SPORTS',translated:null,issue:null,kind:'product-marking',box:{x:20,y:20,width:40,height:20}}]},100,60);assert.ok(image.visionResult);return h.style.initializeVisionRegions(image.visionResult.blocks,image.canvas,100,60).regions;};
  const before=plain([h.content,h.view]),result=await h.run();assert.equal(result.status,'partial');assert.equal(result.failed,1);assert.equal(result.skipped,4);assert.equal(result.verifiedUnchanged,4);assert.equal(result.review,undefined);
+ assert.deepEqual([...new Set(counts.map(row=>row.completed))],[0,1,2,3,4]);assert.ok(counts.every(row=>row.total===5));
  assert.ok(result.reviewTarget);assert.equal(result.reviewTarget.source.quotationTarget.optionId,'collected-5');assert.equal(result.reviewTarget.source.quotationTarget.slotIndex,0);assert.equal(result.reviewTarget.source.sourceKey,'owner/source-5.png');
  assert.deepEqual(plain([h.content,h.view]),before);assert.equal(h.calls.filter(row=>['render','apply','translate'].includes(row[0])).length,0);assert.ok(h.canvases.every(canvas=>canvas.width===0));
 });
@@ -233,9 +238,13 @@ for(const stage of ['main','additional','detail'])test(`${stage}: a flattened sa
 });
 
 for(const stage of ['main','additional','detail'])test(`${stage}: explicit action saves generated drafts one slot at a time and leaves content/original roles intact`,async()=>{
- const h=fixture(stage,stage==='main'?['owner/source-a.png']:undefined),before=plain(h.content),result=await h.run();
+ const h=fixture(stage,stage==='main'?['owner/source-a.png']:undefined),before=plain(h.content),counts=[];
+ h.options.onProgress=(_message,count)=>{if(count)counts.push(plain(count));};
+ const result=await h.run();
  assert.equal(result.status,'completed');assert.equal(result.applied,stage==='main'?1:2);assert.equal(result.failed,0);assert.ok(result.productVersion);assert.equal(result.recoveryBatch,undefined);assert.deepEqual(h.content,before);assert.ok(h.view.imageKeys.includes('owner/source-a.png'));assert.ok(h.canvases.every(canvas=>canvas.width===0&&canvas.height===0));assert.equal(h.timers.size,0);assert.equal(h.calls.filter(row=>row[0]==='apply').length,result.applied);assert.match(result.messages.at(-1),/초안.*검토/);
  assert.deepEqual(h.calls.filter(row=>row[0]==='translate').map(row=>row[1]),stage==='detail'?['zh','en']:[]);
+ assert.deepEqual([...new Set(counts.map(row=>row.completed))],Array.from({length:result.applied+1},(_,index)=>index));
+ assert.ok(counts.every(row=>row.total===result.applied));
 });
 
 for(const stage of ['main','additional','detail'])test(`${stage}: saved setting, manual role, manual quotation choice and previous edited results are preserved without OCR or writes`,async()=>{
@@ -477,7 +486,9 @@ test('recovering the first option cannot complete a stage whose later options ha
 
 test('unknown write outcome retains exact source/PNG recovery proof and stops before the next slot',async()=>{
  const h=fixture();h.deps.apply=async(batch,index,_signal,progress)=>{h.calls.push(['apply',index]);const entry=batch.items[index],attempt={image:entry.rendered,before:batch.view};progress({...batch,items:batch.items.map(row=>row.slotIndex===index?{...row,status:'uncertain',attempt}:row)});throw Error('ACK lost');};
+ const counts=[];h.options.onProgress=(_message,count)=>{if(count)counts.push(plain(count));};
  const result=await h.run();assert.equal(result.status,'uncertain');assert.equal(result.applied,0);assert.equal(result.failed,1);assert.equal(h.calls.filter(row=>row[0]==='read').length,1);assert.equal(h.calls.filter(row=>row[0]==='apply').length,1);assert.ok(result.recoveryBatch.items[0].attempt.image.output instanceof Blob);assert.equal(result.recoveryBatch.items[0].attempt.image.source.sourceKey,'owner/source-a.png');assert.equal(result.recoveryBatch.items[1].status,'pending');
+ assert.deepEqual([...new Set(counts.map(row=>row.completed))],[0]);assert.ok(counts.every(row=>row.total===2));
 });
 
 test('owner, initial version and foreground scope changes cannot start or publish an image mutation',async()=>{

@@ -173,6 +173,17 @@ test('board separates all requested columns, shows saved title/image and opens t
  const [image]=elements(tree,node=>node.type==='img');assert.equal(image.props.src,'/api/files/owner/main');
 });
 
+test('board keeps the progress gauge under the running badge and leaves other stages unchanged',()=>{
+ const h=boardHarness();
+ h.product.content_summary.stages={detailImage:{state:'running',detail:'2개 처리',progress:{completed:2,total:5}},mainImage:{state:'complete',detail:'저장 확인'}};
+ const tree=h.render(),cell=elements(tree,node=>node.type==='td'&&node.props['data-column']==='상세 이미지')[0];
+ assert.equal(nodeText(cell),'진행 중');
+ const [gauge]=elements(cell,node=>node.type==='progress');assert.equal(gauge.props.value,2);assert.equal(gauge.props.max,5);
+ assert.equal(elements(tree,node=>node.type==='progress').length,1);
+ delete h.product.content_summary.stages.detailImage.progress;
+ const [unmeasured]=elements(h.render(),node=>node.type==='progress');assert.equal(unmeasured.props.value,undefined);
+});
+
 test('product title cell omits representative record prices while saved option-price editing remains connected',()=>{
  for(const useOptionSelector of [false,true]){
   const h=useOptionSelector?boardHarness():boardHarness({onOptions:undefined});

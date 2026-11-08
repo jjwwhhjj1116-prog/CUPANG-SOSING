@@ -5,7 +5,9 @@ import vm from 'node:vm';
 import path from 'node:path';
 import {webcrypto} from 'node:crypto';
 import ts from 'typescript';
+import {createRequire} from 'node:module';
 import {memoryDatabase,runtimeDDL} from '../scripts/check-db-schema.mjs';
+const nativeRequire=createRequire(import.meta.url);
 
 const accounts=[
  {id:'settings-admin-fixture',email:'jwhj1116@kakao.com',role:'admin',companyCode:'A01526306',companyName:'유앤채'},
@@ -30,7 +32,7 @@ async function harness({native=true,production=true}={}){
  function load(file){
   if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   const output=ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-  vm.runInNewContext(output,{exports,Error,Date,URL,Response,Request,Headers,TextEncoder,TextDecoder,Uint8Array,DataView,crypto:webcrypto,process:{env:{NODE_ENV:production?'production':'development'}},require(name){if(name in deps)return deps[name];if(name.startsWith('@/'))return load(name.slice(2)+'.ts');if(name.startsWith('.'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');throw Error(name);}});return exports;
+  vm.runInNewContext(output,{exports,Error,Date,URL,Response,Request,Headers,TextEncoder,TextDecoder,Uint8Array,DataView,crypto:webcrypto,process:{env:{NODE_ENV:production?'production':'development'}},require(name){if(name in deps)return deps[name];if(name.startsWith('@/'))return name.endsWith('.mjs')?nativeRequire('../'+name.slice(2)):load(name.slice(2)+'.ts');if(name.startsWith('.'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');return nativeRequire(name);}});return exports;
  }
  for(let index=0;index<accounts.length;index++){
   const account=accounts[index],token=(index?'b':'a').repeat(64),now='2026-01-01T00:00:00.000Z';

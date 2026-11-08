@@ -18,7 +18,7 @@ type Result = {status:'waiting'|'running'|'done'|'failed';message:string};
 export type SelectedBatchRequest={id:string;ownerId:string;mode?:'full'|'selected';stages:AutomationStageId[];keys:Map<string,string>;seoGenerationConsent?:SeoGenerationConfiguration};
 type BatchPanelProps={products:Item[];onOpen:(id:string,step?:CollectionEditorTab|'작업',review?:SelectedImageReview,reviewTarget?:SelectedImageReviewTarget)=>void;onBusyChange?:(busy:boolean)=>void;onActivity?:(event:BatchBoardActivity)=>void;runRequest?:SelectedBatchRequest};
 const stageNames:Record<AutomationStageId,CollectionEditorTab>={seo:'SEO',pricing:'가격',mainImage:'대표 이미지',additionalImages:'추가 이미지',detailImage:'상세 이미지',sizeChart:'사이즈표',koreanLabel:'표시사항',quotation:'견적서'};
-const statusNames:Record<SelectedBatchStageResult['status'],string>={waiting:'대기',running:'처리 중',draft:'초안 검토',complete:'저장 완료',blocked:'자료·검토 필요',failed:'실패',skipped:'건너뜀'};
+const statusNames:Record<SelectedBatchStageResult['status'],string>={waiting:'대기',running:'진행 중',draft:'초안 검토',complete:'저장 완료',blocked:'자료·검토 필요',failed:'실패',skipped:'건너뜀'};
 
 /** A click owns one immutable queue. Mounting a review editor is never a start. */
 export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,onActivity,runRequest}:{products:Item[];onOpen:BatchPanelProps['onOpen'];onBusyChange?:BatchPanelProps['onBusyChange'];onActivity?:BatchPanelProps['onActivity'];runRequest:SelectedBatchRequest}){
@@ -30,7 +30,10 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,onActivity,
   const active=new AbortController(),generation=++scope.generation;scope.active=active;scope.stop=false;setStopping(false);setBusy(true);setResults({});setErrors({});callbacks.current.onBusyChange?.(true);
   callbacks.current.onActivity?.({kind:'start',runId:scope.request.id,attempt:generation});
   const current=()=>context.current===scope&&scope.active===active&&scope.generation===generation&&!active.signal.aborted;
-  const publish=(id:string,stage:SelectedBatchStageResult)=>{if(!current()||!scope.request.stages.includes(stage.id))return;setResults(previous=>({...previous,[id]:{...previous[id],[stage.id]:stage}}));const product=scope.products.find(product=>product.id===id),source=stage.boardSource??(stage.status==='running'&&product?(product.boardSource??batchBoardSource(product)):null);callbacks.current.onActivity?.({kind:'stage',runId:scope.request.id,attempt:generation,productId:id,result:{...stage,...(source?{boardSource:{...source}}:{})}});};
+  const publish=(id:string,stage:SelectedBatchStageResult)=>{if(!current()||!scope.request.stages.includes(stage.id))return;setResults(previous=>({...previous,[id]:{...previous[id],[stage.id]:stage}}));const product=scope.products.find(product=>product.id===id);
+   // During a run the board still shows the frozen row. Terminal failures keep their latest server source proof.
+   const source=stage.status==='running'&&product?(product.boardSource??batchBoardSource(product)??stage.boardSource):stage.boardSource;
+   callbacks.current.onActivity?.({kind:'stage',runId:scope.request.id,attempt:generation,productId:id,result:{...stage,...(source?{boardSource:{...source}}:{})}});};
   try{
    const {runSelectedBatchProduct}=await import('@/app/batch-selected-work');
    for(const product of scope.products){
@@ -64,7 +67,7 @@ export function SelectedBatchWorkPanel({products,onOpen,onBusyChange,onActivity,
   <p>선택한 {products.length}개 상품 · {runRequest.stages.map(stage=>stageNames[stage]).join(' → ')}</p>
   <p>{runRequest.mode==='full'?'전체 작업은 현재 저장본에서 완료된 단계를 건너뜁니다. ':'선택한 단계만 작업합니다. '}저장 완료와 검토할 초안을 구분해 표시합니다. 이미 저장한 수동 수정값은 유지합니다.</p>
   <ul className="batch-work-list">{products.map(product=><li key={product.id}><strong>{product.title}</strong>{errors[product.id]&&<p role="alert">{errors[product.id]}</p>}
-   <ol>{runRequest.stages.map(stage=>{const result=results[product.id]?.[stage];return <li key={stage} data-stage={stage} data-stage-status={result?.status??'waiting'}><strong>{stageNames[stage]} · {statusNames[result?.status??'waiting']}</strong><p role="status">{result?.message??'실행 대기'}</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>review(product.id,stage)}>{stageNames[stage]} 검토 열기</button></li>;})}</ol>
+   <ol>{runRequest.stages.map(stage=>{const result=results[product.id]?.[stage];return <li key={stage} data-stage={stage} data-stage-status={result?.status??'waiting'}><strong>{stageNames[stage]} · {statusNames[result?.status??'waiting']}</strong>{result?.status==='running'&&<progress className="registration-work-progress" aria-label={`${stageNames[stage]} 진행률`} max={result.progress?.total} value={result.progress?.completed}/>}<p role="status">{result?.message??'실행 대기'}</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>review(product.id,stage)}>{stageNames[stage]} 검토 열기</button></li>;})}</ol>
    {runRequest.stages.includes('quotation')&&results[product.id]?.quotation&&<button type="button" className="btn primary" disabled={busy} onClick={()=>review(product.id,'quotation')}>견적서 검토·등록 전송</button>}
   </li>)}</ul>
   <div className="modal-actions"><button type="button" className="btn ghost" disabled={!busy||stopping} onClick={()=>{const scope=context.current;if(scope?.active){scope.stop=true;setStopping(true);}}}>{stopping?'현재 상품을 마친 뒤 중지합니다':'현재 상품 후 중지'}</button><button type="button" className="btn primary" disabled={busy} onClick={()=>{const scope=context.current;if(scope&&!scope.active)void execute(scope,true);}}>선택 작업 다시 시도</button></div>

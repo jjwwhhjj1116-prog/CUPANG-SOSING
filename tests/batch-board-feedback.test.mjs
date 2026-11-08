@@ -48,3 +48,13 @@ test('unknown product/stage, missing source proof and legacy missing summary can
  const missing=event(p);delete missing.result.boardSource;assert.equal(project([p],'owner-a',scope,update(initial,scope,run,[p.id],missing))[0],p);
  const legacy={...p,content_summary:null},feedback=update(initial,scope,run,[p.id],event(p));assert.equal(project([legacy],'owner-a',scope,feedback)[0],legacy);
 });
+
+test('only actual running work units appear under the matching board badge',()=>{
+ const p=product(),activity=event(p,'running','detailImage');
+ activity.result.progress={completed:2,total:5};
+ const running=update(start(),scope,run,[p.id],activity);
+ assert.deepEqual(plain(project([p],'owner-a',scope,running)[0].content_summary.stages.detailImage.progress),{completed:2,total:5});
+ assert.equal(project([p],'owner-a',scope,update(running,scope,run,[p.id],event(p,'complete','detailImage')))[0],p);
+ activity.result.progress={completed:7,total:5};
+ assert.equal(project([p],'owner-a',scope,update(running,scope,run,[p.id],activity))[0].content_summary.stages.detailImage.progress,undefined);
+});

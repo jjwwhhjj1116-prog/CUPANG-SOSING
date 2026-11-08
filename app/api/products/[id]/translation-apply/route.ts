@@ -16,6 +16,7 @@ import { readTranslationCategorySource } from '@/db/translation-category-source'
 import { getAttributeRules } from '@/db/quotation-attribute-rules';
 import { applyIntakeAttributeRules } from '@/app/intake-attribute-rules';
 import { savedRegistrationSettings } from '@/app/workspace-settings';
+import { registrationBrandChoices } from '@/app/quotation-brand-choices';
 import {capturedAttributeCategory,attributeCategorySchema} from '@/app/quotation-attribute-schema';
 import { intakeTranslationReplayContent, intakeTranslationReplayJob } from '@/app/intake-translation-replay';
 import { collectionSourceReference, parseCollectionRequest } from '@/app/sourcing';
@@ -162,7 +163,7 @@ export async function POST(request: Request, context: Context) {
       // Use the immutable intake settings, not settings changed after collection.
       const capturedSettings = categorySource?.snapshot?.linked ? JSON.parse(categorySource.snapshot.payload)?.settings : null;
       const hiddenAttributes = typeof capturedSettings?.hiddenAttributes === 'boolean' ? capturedSettings.hiddenAttributes : undefined;
-      const intakeBrand = capturedSettings ? savedRegistrationSettings(capturedSettings).brand.split(',')[0].trim() : undefined;
+      const intakeBrand = capturedSettings ? registrationBrandChoices(savedRegistrationSettings(capturedSettings).brand)[0] : undefined;
       const optionRecoveryJobs = job.review.instructionsVersion==='sourceflow-translation-v6' ? await listTranslationJobs(owner,id) : [];
       if (optionRecoveryJobs.length === 20) {
         // listTranslationJobs is intentionally bounded. An older canonical

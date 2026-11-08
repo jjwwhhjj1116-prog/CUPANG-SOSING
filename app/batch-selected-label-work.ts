@@ -6,7 +6,7 @@ import type { ProductLabelUploadCache } from '@/app/product-label-upload';
 import { readCurrentProductLabelResult } from '@/app/product-label-result';
 
 export type SelectedLabelWorkResult = { status: 'draft' | 'blocked' | 'failed' | 'complete'; message: string; completedOptions: number; totalOptions: number; uncertain: boolean };
-type Controls = { fetcher?: typeof fetch; signal: AbortSignal; assertCurrent?: () => void | Promise<void>; render?: typeof renderDocument;trackMutationDispatch?:(onDispatch:()=>void)=>()=>void };
+type Controls = { fetcher?: typeof fetch; signal: AbortSignal; assertCurrent?: () => void | Promise<void>; render?: typeof renderDocument;trackMutationDispatch?:(onDispatch:()=>void)=>()=>void;onProgress?:(message:string,progress?:{completed:number;total:number})=>void };
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 const draftKeys = new Set(['netContents', 'material', 'productType']);
 class LabelWorkError extends Error { constructor(message: string, public status: 'blocked' | 'failed', public code?: string) { super(message); } }
@@ -70,6 +70,8 @@ export async function runSelectedLabelWork(productId: string, controls: Controls
   totalOptions = selected.length;
   if (!totalOptions) return result('blocked', '표시사항을 작성할 포함 옵션이 없습니다.');
   if (selected.some(optionId => !view.rows.find(row => row.optionId === optionId)!.values.productName?.trim())) return result('blocked', '포함 옵션의 저장된 제품명이 비어 있습니다. 직접 비운 값은 유지했습니다.');
+  const progress = (message: string) => controls.onProgress?.(message, { completed: completedOptions, total: totalOptions });
+  progress('한글표시사항 PNG 작업 준비 중');
   const cache = new Map<string, ProductLabelUploadCache>();
   for (const optionId of selected) {
    const fresh = await read(); if (!same(fresh, view)) throw changed(); view = fresh;
@@ -78,7 +80,7 @@ export async function runSelectedLabelWork(productId: string, controls: Controls
    if (view.imageKeys.some(key => /\/quotation-label-[a-f0-9]{64}\.png$/.test(key))) {
     const existing = await readCurrentProductLabelResult({ productId, endpoint, quotationEndpoint, optionId }, request); await current();
     if (!same(existing.references.view, view)) throw changed();
-    if (existing.result) { completedOptions++; reusedOptions++; continue; }
+    if (existing.result) { completedOptions++; reusedOptions++; progress(`한글표시사항 PNG ${completedOptions}/${totalOptions}개 연결 확인`); continue; }
    }
    const eligible = productLabelDefinitions(view).some(field => draftKeys.has(field.key) && !['manual-common', 'manual-option','label-default','label-suggestion'].includes(row.sources[field.key]));
    let draft: ProductLabelDraft = {}, candidates:ProductLabelDraft|undefined;
@@ -117,6 +119,7 @@ export async function runSelectedLabelWork(productId: string, controls: Controls
     // awaited by its scoped requests and renderer, never passed as void hooks.
     assertCurrent: checkSignal }, request);
    await current(); view = saved.view; completedOptions++; pendingSave = false;
+   progress(`한글표시사항 PNG ${completedOptions}/${totalOptions}개 연결 확인`);
   }
   return result('draft', reusedOptions
    ? `${completedOptions}개 포함 옵션의 표시사항 내용과 PNG 연결을 확인했습니다. 기존 PNG ${reusedOptions}개를 재사용했습니다. 상품과 대조해 내용을 검토해주세요.`

@@ -110,6 +110,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'ê
    if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>draft};
    if(name==='@/app/components/use-source-registrations'&&sourceRegistrationsState)return{useSourceRegistrations:()=>sourceRegistrationsState};
    if(['@/app/components/use-registration-layout','@/app/components/use-source-registrations'].includes(name))return load(name.slice(2)+'.ts');
+   if(name==='@/app/registration-ui-reads')return load(name.slice(2)+'.tsx');
    if(name==='@/app/load-category-profiles')return{...load('app/load-category-profiles.ts'),loadCategoryProfiles:async()=>{
     if(nextProfiles){const pending=nextProfiles;nextProfiles=null;return pending.promise;}
     return officialFlow?(await (await officialFlow.request('/api/category-profiles')).json()).profiles:currentProfiles;
@@ -123,6 +124,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'ê
    if(realOptionBoard&&name==='@/app/components/product-option-board')return load('app/components/product-option-board.tsx');
    if(name==='@/app/components/studio-navigation')return load('app/components/studio-navigation.tsx');
    if(name.startsWith('@/app/components/'))return componentModule(name.split('/').at(-1));
+   if(name.startsWith('@/')&&name.endsWith('.mjs'))return native(native('node:url').fileURLToPath(new URL('../'+name.slice(2),import.meta.url)));
    return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);
   }});return exports;
  }

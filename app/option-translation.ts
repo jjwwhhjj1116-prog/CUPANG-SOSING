@@ -21,32 +21,37 @@ export function confirmOptionTranslationSave(input: unknown, current: ProductOpt
   }
  }
 }
-/** Only the exact unchanged copy from an old completed result is recoverable.
- * The caller supplies saved jobs for this owner/product; no option is reset. */
-function copiedOptionAttributes(options:ProductOptions,jobs:readonly TranslationJob[]){
- const copies=new Map<string,string>();
+/** A completed result must still match both the collected source and saved
+ * provider value. The caller supplies this owner/product's saved jobs. */
+function recoverableOptionAttributes(options:ProductOptions,jobs:readonly TranslationJob[]){
+ const recoverable=new Map<string,{source:string;partialName:boolean}>();
+ const rows=new Map(options.rows.map(row=>[row.id,row]));
  for(const job of jobs){
-  if(job.productId!==options.productId||job.status!=='completed'||job.review.instructionsVersion!=='sourceflow-translation-v5'||!job.result)continue;
+  const legacy=job.review.instructionsVersion==='sourceflow-translation-v5';
+  if(job.productId!==options.productId||job.status!=='completed'||!job.result||!legacy&&job.review.instructionsVersion!=='sourceflow-translation-v6')continue;
   for(const translated of job.result.draft.attributes){
    const source=job.review.source.attributes[translated.sourceIndex],binding=source?.name.match(/^option(?:-(color|size))?:([A-Za-z0-9_-]{1,80})$/);
-   if(!binding||translated.value!==source.value||!/[\p{Script=Han}]/u.test(source.value)||/[가-힣]/u.test(source.value))continue;
-   const field=binding[1] as 'color'|'size'|undefined,id=binding[2],row=options.rows.find(row=>row.id===id),key=field??'translatedName';
-   if(!row?.included||row.provenance[key]!=='translated'||row[key]!==source.value)continue;
+   if(!binding||!/\p{Script=Han}/u.test(source.value))continue;
+   const field=binding[1] as 'color'|'size'|undefined,id=binding[2],row=rows.get(id),key=field??'translatedName';
+   const value=legacy?translated.value:translated.value.trim();
+   if(legacy?value!==source.value||/[가-힣]/u.test(source.value)
+     :field||!/[가-힣]/u.test(value)||!/\p{Script=Han}/u.test(value)||translationAttributeIssue(source,translated))continue;
+   if(!row?.included||row.provenance[key]!=='translated'||row[key]!==value)continue;
    const original=job.review.source.attributes.filter(pair=>pair.name===`option:${id}`);
    if(original.length!==1||original[0].value!==row.originalName)continue;
-   copies.set(source.name,source.value);
+   recoverable.set(source.name,{source:source.value,partialName:!legacy});
   }
  }
- return copies;
+ return recoverable;
 }
 function pendingOptionAttributes(options:ProductOptions,recoveryJobs:readonly TranslationJob[]=[]){
- const copied=copiedOptionAttributes(options,recoveryJobs);
+ const recoverable=recoverableOptionAttributes(options,recoveryJobs);
  const attributes=options.rows.flatMap(row=>{
   if(!row.included)return [];
   const name=`option:${row.id}`;
-  const values=row.originalName.trim()&&(!row.translatedName.trim()&&row.provenance.translatedName!=='manual'||copied.has(name))?[{name,value:row.originalName}]:[];
+  const values=row.originalName.trim()&&(!row.translatedName.trim()&&row.provenance.translatedName!=='manual'||recoverable.has(name))?[{name,value:row.originalName}]:[];
   for(const field of ['color','size'] as const){
-   if(row[field]?.trim()&&(row.provenance[field]==='collected'||copied.has(`option-${field}:${row.id}`)))values.push({name:`option-${field}:${row.id}`,value:row[field]!});
+   if(row[field]?.trim()&&(row.provenance[field]==='collected'||recoverable.has(`option-${field}:${row.id}`)))values.push({name:`option-${field}:${row.id}`,value:row[field]!});
   }
   return values;
  });
@@ -69,7 +74,7 @@ export function adoptOptionTranslations(options:ProductOptions,job:TranslationJo
  assertWorkersRecoveryJobQuality(job);
  if(job.productId!==options.productId||job.productVersion!==productVersion||job.status!=='completed'||!job.result)throw new Error('상품이 변경됐거나 완료된 번역 결과가 아닙니다. 새 요청을 검토해주세요.');
  const rows=optionInputs(options);let changed=0;const seen=new Set<string>();
- const copied=copiedOptionAttributes(options,job.review.instructionsVersion==='sourceflow-translation-v6'?recoveryJobs:[]);
+ const recoverable=recoverableOptionAttributes(options,job.review.instructionsVersion==='sourceflow-translation-v6'?recoveryJobs:[]);
  const reviewed:{optionId:string;field:'translatedName'|'color'|'size'}[]=[];
  for(const translated of job.result.draft.attributes){
   const source=job.review.source.attributes[translated.sourceIndex];
@@ -84,7 +89,8 @@ export function adoptOptionTranslations(options:ProductOptions,job:TranslationJo
   // a batch prepared before they were excluded.
   if(!row.included)continue;
   if(job.review.instructionsVersion==='sourceflow-translation-v6'&&translationAttributeIssue(source,translated))continue;
-  const recovery=copied.get(source.name)===source.value;
+  const candidate=recoverable.get(source.name);
+  const recovery=candidate?.source===source.value?candidate:undefined;
   if(field){
    // Only unchanged collected attributes may be replaced. Reviewed/manual blanks stay blank.
    if(options.rows.find(value=>value.id===id)?.provenance[field]!=='collected'&&!recovery)continue;
@@ -96,6 +102,11 @@ export function adoptOptionTranslations(options:ProductOptions,job:TranslationJo
   const value=translated.value.trim();
   const limit=field?200:500;
   if(!value||value.length>limit||/[\u0000-\u001f]/u.test(value))throw new Error(`번역 옵션 값은 ${limit}자 이내의 한 줄 텍스트여야 합니다.`);
+  if(recovery?.partialName){
+   const modelCode=/\b[A-Za-z]+[-_]?[0-9][A-Za-z0-9._/-]*\b/gu;
+   const codes:readonly string[]=value.match(modelCode)??[];
+   if(/\p{Script=Han}/u.test(value)||(source.value.match(modelCode)??[]).some(code=>!codes.includes(code)))continue;
+  }
   if(recovery&&/\p{Script=Han}/u.test(value)&&!/[가-힣]/u.test(value))throw Error('옵션 재번역 결과가 중국어로 남아 있습니다. 기존 옵션을 유지했으며 한국어 초안을 다시 확인해주세요.');
   if(field)row[field]=value;else row.translatedName=value;
   reviewed.push({optionId:id,field:field??'translatedName'});

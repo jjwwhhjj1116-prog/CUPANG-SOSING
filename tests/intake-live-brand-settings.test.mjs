@@ -1,9 +1,45 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+import {hubSchemaSnapshot,schemaCompanies} from './helpers/hub-schema.mjs';
 
 const categoryPath=['패션의류잡화','유니섹스/남녀공용 패션','공용 잡화','선글라스','남녀공용패션선글라스'];
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
+
+for(const [index,company] of schemaCompanies.entries())test(`saved member brand supplies fresh native SEO, label and quotation (${company.code})`,async()=>{
+ const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});
+ try{
+  const settings=h.load('app/api/settings/route.ts'),jobs=h.load('app/api/collection-jobs/route.ts');
+  const request=(path,method,body)=>new Request('https://app.test'+path,{method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  const manualManufacturer=index?'직접 지정한 제조사':'',brand=company.name+' 새브랜드',storedBrand=', '+brand+', 보조 브랜드';
+  await json(await settings.PUT(request('/api/settings','PUT',{...h.settings,expectedOwnerId:'owner',brand:storedBrand,manufacturer:manualManufacturer,importer:''})));
+  const saved=(await json(await settings.GET())).settings;
+  assert.equal(saved.brand,storedBrand);assert.equal(saved.manufacturer,manualManufacturer);assert.equal(saved.importer,'');
+  const schema={...hubSchemaSnapshot(company,'69900'),categoryPath,nativeSerializationPolicy:'supplier-hub-native-required-form-v1',inputBindings:'couplus-paths-v1',draftInitialization:'couplus-required-v1',settingsInitialization:'couplus-options-v1'};
+  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'브랜드 기본값 검증',categoryId:'69900',categoryPath,hubSchema:schema,template:null,mappings:[]});
+  h.sqlite.prepare('UPDATE collection_jobs SET offer_id=?, source_url=? WHERE id=?').run('813724060929','https://detail.1688.com/offer/813724060929.html','job');
+  const requestBody={urls:[h.sourceUrl],goal:'price',profileId:profile.id,expectedProfileRevision:profile.revision,expectedSettings:saved};
+  const {jobs:[queued]}=await json(await jobs.POST(request('/api/collection-jobs','POST',requestBody)));
+  assert.equal(queued.context.settings.brand,storedBrand);
+  assert.equal(JSON.parse(h.sqlite.prepare('SELECT payload FROM collection_context WHERE job_id=?').get('job').payload).settings.brand,h.settings.brand,'a previously captured job keeps its settings');
+  await h.intake(queued.id);
+  const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+  const {content}=await json(await h.route(base+'/content'));
+  assert.equal(content.label.manufacturer.value,manualManufacturer||brand+' 협력사');
+  assert.equal(content.label.manufacturer.provenance,manualManufacturer?'manual':'generated');
+  assert.equal(content.label.importer.value,brand);assert.equal(content.label.importer.provenance,'generated');
+  assert.ok(content.seo.title.value.startsWith(brand+' '),content.seo.title.value);
+  const label=await json(await h.route(base+'/product-labels'));
+  assert.ok(label.rows.every(row=>row.values.manufacturer===(manualManufacturer||brand+' 협력사')&&row.values.importer===brand));
+  const quote=await json(await h.route(base+'/quotation-fields'));
+  assert.ok(quote.resolved.rows.every(row=>row.fields.brand.value===brand&&row.fields.title.value.startsWith(brand+' ')));
+  const option=label.rows.find(row=>row.optionId&&row.included);
+  await json(await h.route(base+'/product-labels',{method:'PUT',body:{expectedRevision:label.revision,expectedInputFingerprint:label.inputFingerprint,changes:[{optionId:option.optionId,fieldKey:'manufacturer',value:''},{optionId:option.optionId,fieldKey:'importer',value:'직접 입력한 수입판매원'}]}}));
+  const reopened=(await json(await h.route(base+'/product-labels'))).rows.find(row=>row.optionId===option.optionId);
+  assert.equal(reopened.values.manufacturer,'');assert.equal(reopened.values.importer,'직접 입력한 수입판매원');
+  assert.equal(reopened.sources.manufacturer,'manual-option');assert.equal(reopened.sources.importer,'manual-option');
+ }finally{h.close();}
+});
 for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])test(`live free-text brand keeps captured settings through intake, manual review and quotation (${company.code})`,async()=>{
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
   // Only the observed public 69900 paths and brand constraints, no private profile.

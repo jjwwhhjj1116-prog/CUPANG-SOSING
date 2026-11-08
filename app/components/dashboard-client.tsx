@@ -526,7 +526,8 @@ export default function DashboardClient({ userName, workspaceOwnerId, canAdminTo
     const result=await readJson<{product:Product}>(`/api/products/${encodeURIComponent(productId)}`,{cache:'no-store',signal});
     if(signal.aborted||request!==productNavigation.current)return;
     if(!result.product||result.product.id!==productId)throw new Error('연결된 상품을 확인하지 못했습니다. 수집 대기열을 새로고침해주세요.');
-    openProduct(result.product,initialTab);
+    const observed=result.product;
+    if(openProduct(observed,initialTab))setProducts(current=>current.map(product=>product.id===productId&&Date.parse(product.updated_at)<=Date.parse(observed.updated_at)?observed:product));
   }
   async function openIntakeReview(targets:readonly IntakeReviewTarget[],goal:'work'|'transmit',signal:AbortSignal){
     const company=sourceWorkspace.current?.company,settingsEpoch=settingsOperationRef.current.epoch;
@@ -1005,6 +1006,7 @@ useEffect(()=>{
     sourceReviewSession.current=null;setSourceReview(null);sourceRegistrations.reload();if(session.returnToIntake)setAddOpen(true);return true;
   }
   const captureToolsVisible=captureToolsOpen&&!addOpen&&!sourceReview&&!detail&&!categoryOpen&&!batchOpen&&!currentSubmission;
+  const batchPanel=batchOpen&&(!batchIntake||batchIntake.company===boardCompanyScope)&&<BatchWorkPanel key={batchRun?.request.id??(batchIntake?'intake':'review')} products={(batchRun?.products??batchIntake?.products??products.filter(product=>selected.has(product.id))).map(product=>({...product,title:registrationTitle(product),boardSource:batchBoardSource(product)}))} runRequest={batchRun?.request} onActivity={event=>{if(batchRun)recordBatchBoardActivity(batchRun,event);}} onOpen={(id,step,review,reviewTarget)=>{if(batchRunRef.current===batchRun)void openBatchProduct(id,step,review,reviewTarget);}} onBusyChange={value=>{const operation=settingsOperationRef.current;if(operation.mounted&&operation.ownerId===workspaceOwnerId&&batchRunRef.current===batchRun){const finished=batchBusyRef.current&&!value;changeBatchBusy(value);if(finished&&batchRun)void loadWorkspace();}}}/>;
   return (
     <main className="app-shell studio-shell">
       <StudioSidebar active={view} expandedGroup={navigationGroup} mobileOpen={mobileNavigationOpen} onToggleGroup={group=>setNavigationGroup(current=>current===group?null:group)} onRocketView={changeView} onBeforeNavigate={guardOperationsNavigation} onClose={()=>setMobileNavigationOpen(false)}/>
@@ -1033,7 +1035,13 @@ useEffect(()=>{
 
         {view==='archive'?<><ProductManagementWorkspace/><details className="collection-panel"><summary>YOOFAM 스튜디오 작업 상품 보관함</summary><ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/></details></>:<>
         {(sourceNotice||sourceRegistrations.error||sourceRegistrations.queryError)&&<p role="status" className="panel-note">{sourceNotice||sourceRegistrations.error||sourceRegistrations.queryError}</p>}
-        <RegistrationBoard products={projectBatchBoardFeedback(products,workspaceOwnerId,batchBoardScope,batchBoardFeedback)} sources={sourceRegistrations.items} querySources={sourceRegistrations.queryItems??[]} sourceJobs={querySourceCompany.scope===sourceReviewScope?collectionJobs:[]} onPrepareQuerySource={item=>prepareQuerySource(item)} sourceOwnerId={workspaceOwnerId} sourceCompany={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} sourceArchiveDisabled={sourceArchiveDisabled} onPrepareSource={item=>prepareSource(item)} selectedSourceReferences={selectedSources} onSourceSelectionChange={sourceSelectionChanged} onReviewSource={item=>reviewSource(item)} onArchiveSource={archiveSource} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={openOptionBoard} onDelete={removeWorkspaceProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/>
+        {batchOpen&&batchRun&&batchRun.request.ownerId===workspaceOwnerId&&<details className="workspace-batch-live">
+          <summary><span role="status">{batchBusy?'선택 작업 진행 중':'선택 작업 결과'} · {batchRun.products.length}개 상품</span></summary>
+          {batchOpenError&&<p role="alert">{batchOpenError}</p>}
+          {batchPanel}
+          <button type="button" className="btn ghost" disabled={batchBusy} onClick={closeBatch}>작업 결과 닫기</button>
+        </details>}
+        <RegistrationBoard products={projectBatchBoardFeedback(products,workspaceOwnerId,batchBoardScope,batchBoardFeedback)} sources={sourceRegistrations.items} querySources={sourceRegistrations.queryItems??[]} sourceJobs={querySourceCompany.scope===sourceReviewScope?collectionJobs:[]} onPrepareQuerySource={item=>prepareQuerySource(item)} sourceOwnerId={workspaceOwnerId} sourceCompany={querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null} sourceArchiveDisabled={sourceArchiveDisabled} onPrepareSource={item=>prepareSource(item)} selectedSourceReferences={selectedSources} onSourceSelectionChange={sourceSelectionChanged} onReviewSource={item=>reviewSource(item)} onArchiveSource={archiveSource} selected={selected} onSelected={value=>{if(!batchBusyRef.current)setSelected(value);}} onOpen={openProduct} onOptions={openOptionBoard} onDelete={removeWorkspaceProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/>
         <button type="button" className="btn ghost" onClick={()=>setRemovedOpen(true)}>삭제된 상품</button>
         <div className="modal-backdrop intake-tools-backdrop" hidden={!captureToolsVisible} role="presentation" onMouseDown={closeCaptureTools}>
         <section id="capture-tools-dialog" className="modal wide capture-tools-dialog" role={captureToolsVisible?'dialog':undefined} aria-modal={captureToolsVisible?true:undefined} aria-label="수집함·수집 대기열" onMouseDown={event=>event.stopPropagation()} onKeyDown={event=>{
@@ -1074,14 +1082,14 @@ useEffect(()=>{
       </Modal>}
       {categoryOpen&&<Modal wide title="카테고리·견적서 연결" subtitle="상품 자료를 견적서 열에 연결하고 카테고리별 설정을 보관합니다." onClose={()=>setCategoryOpen(false)}><CategoryProfileEditor value={editingCategory} initialDraft={categorySeed} onClose={()=>setCategoryOpen(false)} onSave={profile=>{setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)]);setCategoryOpen(false);setAddOpen(true);}}/></Modal>}
 
-      {batchOpen&&(!batchRun||batchRun.request.ownerId===workspaceOwnerId)&&<Modal wide title={batchRun?'선택 작업 진행':'선택 상품 일괄 작업'} subtitle={batchRun?'선택한 단계의 초안을 만들고 저장·검토 상태를 확인합니다.':'저장한 상품을 순서대로 처리하고 각 결과를 기록합니다.'} onClose={()=>{const operation=settingsOperationRef.current;if(operation.mounted&&operation.ownerId===workspaceOwnerId&&batchRunRef.current===batchRun)closeBatch();}}>
+      {batchOpen&&!batchRun&&<Modal wide title="선택 상품 일괄 작업" subtitle="저장한 상품을 순서대로 처리하고 각 결과를 기록합니다." onClose={()=>{const operation=settingsOperationRef.current;if(operation.mounted&&operation.ownerId===workspaceOwnerId&&batchRunRef.current===null)closeBatch();}}>
         {batchOpenError&&<p role="alert">{batchOpenError}</p>}
         {batchIntake&&batchIntake.company!==boardCompanyScope&&<p role="alert">회원의 등록 회사가 변경되었습니다. 대기열에서 작업 대상을 다시 확인해주세요.</p>}
         {batchSeoNoticeRequired&&<details aria-label="SEO 실행 전 안내"><summary>SEO 실행 안내</summary>
           {batchSeoConfiguration?<BatchAiNotice configuration={batchSeoConfiguration}/>:<p role="status">{seoConfigurationError||'현재 계정·회사의 SEO 실행 안내를 확인하는 중입니다. 안내 확인 전에는 SEO 작업을 시작하지 않습니다.'}</p>}
           <button type="button" className="btn ghost" disabled={batchBusy||settingsBusy} onClick={()=>{if(batchScopeRef.current===batchScope&&!batchBusyRef.current&&!settingsBusyRef.current)setSeoConfigurationReload(value=>value+1);}}>SEO 실행 안내 다시 확인</button>
         </details>}
-        {(!batchIntake||batchIntake.company===boardCompanyScope)&&<BatchWorkPanel key={batchRun?.request.id??(batchIntake?'intake':'review')} products={(batchRun?.products??batchIntake?.products??products.filter(product=>selected.has(product.id))).map(product=>({...product,title:registrationTitle(product),boardSource:batchBoardSource(product)}))} runRequest={batchRun?.request} onActivity={event=>{if(batchRun)recordBatchBoardActivity(batchRun,event);}} onOpen={(id,step,review,reviewTarget)=>{if(batchRunRef.current===batchRun)void openBatchProduct(id,step,review,reviewTarget);}} onBusyChange={value=>{const operation=settingsOperationRef.current;if(operation.mounted&&operation.ownerId===workspaceOwnerId&&batchRunRef.current===batchRun){const finished=batchBusyRef.current&&!value;changeBatchBusy(value);if(finished&&batchRun)void loadWorkspace();}}}/>}
+        {batchPanel}
       </Modal>}
       {historyOpen&&<Modal wide title="상품별 작업 이력" subtitle="각 상품에 저장된 단계별 산출물과 실행 이력을 확인합니다." onClose={()=>setHistoryOpen(false)}><div className="modal-form"><label>상품 선택<select aria-label="작업 이력 상품 선택" value={historyProductId} onChange={event=>setHistoryProductId(event.target.value)}>{!products.length&&<option value="">저장된 상품 없음</option>}{products.map(product=><option key={product.id} value={product.id}>{product.title}</option>)}</select></label>{products.filter(product=>product.id===historyProductId).map(product=><AutomationPanel key={product.id} productId={product.id} version={product.updated_at}/>)}</div><PreservedProductRequestInspector ownerId={workspaceOwnerId} onReceiptSaved={id=>{const product=products.find(item=>item.id===id);if(product)void refreshReceiptStatus(id,product.updated_at);}}/></Modal>}
 

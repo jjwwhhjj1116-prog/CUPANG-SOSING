@@ -89,3 +89,47 @@ test('genuine translated Korean stays excluded and a copied recovery value remai
   assert.equal(options(h).rows[0].translatedName,'기존 한국어 옵션');assert.equal(model.optionTranslationBatch(options(h),50,[job]).total,1);assert.equal(model.optionTranslationBatch(options(h),50,[job]).attributes[0].name,batch.attributes[0].name);
  }finally{h.close();}
 });
+
+test('a later options request repairs an exact saved mixed-language v6 name without rewriting the original result',async()=>{
+ const h=mobileIntakeHarness();try{
+  h.sqlite.exec("UPDATE collection_jobs SET goal='collect'");await h.intake();
+  const base='/api/products/'+product(h).id;
+  const request=body=>h.route(base+'/translation',{method:'POST',body});
+  const {job:initial}=await json(await request({action:'prepare-collected',intake:true}));
+  const ai=h.bindings.AI.run;
+  h.bindings.AI.run=async(...args)=>{
+   const result=await ai(...args),source=h.aiSources.at(-1).attributes;
+   const first=result.response.attributes.find(pair=>source[pair.sourceIndex].name.startsWith('option:'));
+   first.value='테두리 框 옵션';
+   return result;
+  };
+  await json(await request({action:'approve',jobId:initial.id,reviewFingerprint:initial.review.fingerprint,confirmPaid:true}));
+  await json(await request({action:'execute',jobId:initial.id}));
+  h.bindings.AI.run=ai;
+  const apply=(jobId,scope,version,action,fingerprint)=>h.route(base+'/translation-apply',{method:'POST',body:{action,scope,jobId,expectedVersion:version,...(fingerprint?{fingerprint}:{})}});
+  const collectedVersion=product(h).updated_at;
+  const initialPreview=await json(await apply(initial.id,'all',collectedVersion,'preview'));
+  await json(await apply(initial.id,'all',collectedVersion,'apply',initialPreview.fingerprint));
+  const current=options(h);
+  assert.equal(current.rows[0].translatedName,'테두리 框 옵션');
+  assert.equal(current.rows[0].provenance.translatedName,'translated');
+  const {jobs}=await json(await h.route(base+'/translation'));
+  assert.equal(jobs[0].review.instructionsVersion,'sourceflow-translation-v6');
+  const historical=h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(jobs[0].id);
+  const batch=h.load('app/option-translation.ts').optionTranslationBatch(current,50,jobs);
+  assert.deepEqual(plain(batch.attributes),[{name:'option:'+current.rows[0].id,value:current.rows[0].originalName}]);
+  const version=product(h).updated_at;
+  const {job}=await json(await request({action:'prepare',expectedVersion:version,idempotencyKey:crypto.randomUUID(),source:{...jobs[0].review.source,attributes:plain(batch.attributes)}}));
+  await json(await request({action:'approve',jobId:job.id,reviewFingerprint:job.review.fingerprint,confirmPaid:true}));
+  await json(await request({action:'execute',jobId:job.id}));
+  const preview=await json(await apply(job.id,'options',version,'preview'));
+  assert.equal(preview.preview.length,1);
+  await json(await apply(job.id,'options',version,'apply',preview.fingerprint));
+  const saved=options(h);
+  assert.doesNotMatch(saved.rows[0].translatedName,/\p{Script=Han}/u);
+  assert.equal(saved.rows[0].originalName,current.rows[0].originalName);
+  assert.equal(saved.rows[0].provenance.translatedName,'translated');
+  assert.deepEqual(saved.rows.slice(1),current.rows.slice(1));
+  assert.deepEqual(h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(jobs[0].id),historical);
+ }finally{h.close();}
+});

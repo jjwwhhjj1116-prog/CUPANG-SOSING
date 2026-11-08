@@ -97,7 +97,10 @@ test('an unknown provider result after a confirmed chunk stops later inference w
   const f = await fixture(companies[0], 41); try {
     const provider = f.h.bindings.AI.run; let attempts = 0;
     f.h.bindings.AI.run = async (...args) => { if (++attempts === 2) { f.models.push({ unknown: true }); throw Error('synthetic provider outcome unknown'); } return provider(...args); };
-    const result = await run(f.id, await f.controls()); assert.equal(result.status, 'incomplete'); assert.equal(result.changed, 20); assert.equal(result.estimated, 20); assert.equal(result.remaining, 21);
+    const counts = [];
+    const result = await run(f.id, await f.controls({ onProgress: (_message, count) => { if (count) counts.push([count.completed, count.total]); } }));
+    assert.equal(result.status, 'incomplete'); assert.equal(result.changed, 20); assert.equal(result.estimated, 20); assert.equal(result.remaining, 21);
+    assert.deepEqual(counts, [[0, 3], [1, 3], [1, 3]]);
     assert.equal(attempts, 2); assert.equal(f.requests.filter(call => call.method === 'POST').length, 2); assert.equal(f.requests.filter(call => call.method === 'PUT').length, 1);
     assert.equal(JSON.stringify(await f.store.readProductOptions('owner', f.id)), f.optionsBefore);
   } finally { f.close(); }
@@ -106,7 +109,11 @@ test('an unknown provider result after a confirmed chunk stops later inference w
 test('a lost confirmed chunk save ACK is read exactly before continuing disjoint later chunks', async () => {
   const f = await fixture(companies[0], 41); try {
     let lost = false; const fetcher = async (url, init) => { const response = await f.fetcher(url, init); if (init.method === 'PUT' && !lost) { lost = true; throw Error('synthetic first chunk save ACK lost'); } return response; };
-    const result = await run(f.id, await f.controls({ fetcher })); assert.equal(result.status, 'draft'); assert.equal(result.recovered, true); assert.equal(result.changed, 41); assert.equal(result.remaining, 0);
+    const counts = [];
+    const result = await run(f.id, await f.controls({ fetcher, onProgress: (_message, count) => { if (count) counts.push([count.completed, count.total, f.requests.at(-1)?.method]); } }));
+    assert.equal(result.status, 'draft'); assert.equal(result.recovered, true); assert.equal(result.changed, 41); assert.equal(result.remaining, 0);
+    assert.deepEqual(counts.map(([completed, total]) => [completed, total]), [[0, 3], [1, 3], [1, 3], [2, 3], [2, 3], [3, 3]]);
+    assert.equal(counts[1][2], 'GET');
     assert.deepEqual(f.requests.map(call => call.method), ['GET', 'POST', 'PUT', 'GET', 'GET', 'POST', 'PUT', 'GET', 'POST', 'PUT']); assert.equal(f.models.length, 3);
     assert.equal(new Set(f.requests.filter(call => call.method === 'POST').flatMap(call => call.body.batchOptionIds)).size, 41);
   } finally { f.close(); }

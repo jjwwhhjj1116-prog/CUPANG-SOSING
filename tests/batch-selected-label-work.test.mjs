@@ -17,7 +17,7 @@ function initial(){
    .map(row=>({...row,automatic:{...automatic},values:{...automatic},sources:Object.fromEntries(Object.entries(automatic).map(([key,value])=>[key,value?'content':'empty']))}))};
 }
 function fixture({intercept,complete,prepare,afterWrite,currentCheck,renderImage,beforeMutation}={}){
- let view=initial();prepare?.(view);const calls=[],plans=[],attachments=[],controller=new AbortController();let scope=true,checks=0,onDispatch;
+ let view=initial();prepare?.(view);const calls=[],plans=[],attachments=[],progress=[],controller=new AbortController();let scope=true,checks=0,onDispatch;
  const refresh=()=>{for(const row of view.rows){const own=row.optionId?view.overrides.options[row.optionId]??{}:{};row.values={...row.automatic,...view.overrides.common,...own};row.sources=Object.fromEntries(Object.keys(row.values).map(key=>[key,Object.hasOwn(own,key)?'manual-option':Object.hasOwn(view.overrides.common,key)?'manual-common':row.automatic[key]?'content':'empty']));for(const entry of view.automaticSuggestions?.entries??[])if(entry.optionId===row.optionId&&!Object.hasOwn(own,entry.fieldKey)&&!Object.hasOwn(view.overrides.common,entry.fieldKey)){row.automatic[entry.fieldKey]=entry.value;row.values[entry.fieldKey]=entry.value;row.sources[entry.fieldKey]='label-suggestion';}}};
  refresh();const exports={};
  const render=async plan=>{plans.push(clone(plan));if(renderImage)return renderImage(plan);return{blob:new Blob([png],{type:'image/png'}),width:800,height:500};};
@@ -49,13 +49,15 @@ function fixture({intercept,complete,prepare,afterWrite,currentCheck,renderImage
   return Response.json(view);
  };
  const controls={fetcher,signal:controller.signal,assertCurrent(){checks++;if(!scope)throw Error('owner/company changed');return currentCheck?.();},render,
+  onProgress:(_message,count)=>{if(count)progress.push([count.completed,count.total]);},
   trackMutationDispatch:mark=>{onDispatch=mark;return()=>{onDispatch=undefined;};}};
- return{run:()=>exports.runSelectedLabelWork('selected-label',controls),calls,plans,attachments,controller,get view(){return view;},setScope(value){scope=value;},get checks(){return checks;}};
+ return{run:()=>exports.runSelectedLabelWork('selected-label',controls),calls,plans,attachments,progress,controller,get view(){return view;},setScope(value){scope=value;},get checks(){return checks;}};
 }
 
 test('selected label work generates once per included option, preserves common/manual blanks, saves only proposals and renders draft PNGs',async()=>{
  const f=fixture({prepare(view){view.overrides.common.netContents='검토한 1쌍';view.overrides.options.one={material:''};}}),before=clone(f.view),result=await f.run();
  assert.equal(result.status,'draft',result.message);assert.equal(result.completedOptions,2);assert.equal(result.uncertain,false);assert.deepEqual(f.attachments,['one','two']);assert.equal(f.plans.length,2);
+ assert.deepEqual(f.progress,[[0,2],[1,2],[2,2]]);
  assert.deepEqual(f.view.overrides.common,before.overrides.common);assert.equal(f.view.rows[1].values.material,'');assert.deepEqual(f.view.rows[3],before.rows[3]);
  const writes=f.calls.filter(call=>call.init.method==='PUT').map(call=>JSON.parse(call.init.body));
  assert.deepEqual(writes.map(write=>{assert.deepEqual(write.changes,[]);return Object.keys(write.automaticProcessing.values);}),[['productType'],['material','productType']]);
@@ -129,6 +131,7 @@ test('dispatched unknown upload, pool and quotation reference writes remain unce
    complete:async(_input,request)=>{await request(target,{method:target==='/api/files'?'POST':'PUT'});throw Error('dispatched reply lost');},
    intercept(url,init){if(url===target&&init.method)throw Error('dispatched reply lost');}}),before=clone(f.view),result=await f.run();
   assert.equal(result.status,'blocked',target);assert.equal(result.uncertain,true,target);assert.equal(result.completedOptions,0);assert.deepEqual(f.attachments,['one']);
+  assert.deepEqual(f.progress,[[0,2]],target);
   assert.equal(f.calls.filter(call=>call.url===target&&call.init.method).length,1);assert.deepEqual(f.view,before);assert.match(result.message,/저장 결과가 미확인/);
  }
 });
@@ -179,6 +182,12 @@ test('real label draft/save/upload/reference handlers persist the proposed value
   assert.deepEqual(saved.rows.filter(row=>row.optionId===null||!row.included),excluded);
   for(const row of included){const next=saved.rows.find(item=>item.optionId===row.optionId),key=quote.resolved.rows.find(item=>item.optionId===row.optionId).fields.labelImages.value;assert.equal(next.values.material,'실리콘');assert.match(key,/owner\/quotation-label-[a-f0-9]{64}\.png/u);assert.deepEqual(h.objects.get(key),png);}
   assert.equal(calls.filter(call=>call.url==='/api/files'&&call.method==='POST').length,included.length);assert.equal(h.network.length,beforeNetwork,'No live source/provider requests');
+  const progress=[],beforeReuse=calls.length;
+  const reused=await h.load('app/batch-selected-label-work.ts').runSelectedLabelWork(product.id,{signal:controller.signal,fetcher:request,assertCurrent(){},
+   render:async()=>{throw Error('Verified saved labels must not render again.');},onProgress:(_message,count)=>{if(count)progress.push([count.completed,count.total]);}});
+  assert.equal(reused.status,'draft',reused.message);assert.equal(reused.completedOptions,included.length);assert.equal(aiCalls,included.length);
+  assert.deepEqual(progress,Array.from({length:included.length+1},(_,completed)=>[completed,included.length]));
+  assert.ok(calls.slice(beforeReuse).every(call=>call.method==='GET'));
  }finally{h.close();}
 });
 

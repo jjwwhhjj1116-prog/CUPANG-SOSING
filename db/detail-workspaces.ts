@@ -48,7 +48,7 @@ async function row(db: D1Database, owner: string, id: string, scope: string, opt
   return db.prepare('SELECT revision,request_id,payload,updated_at FROM product_detail_workspaces WHERE owner_id=? AND product_id=? AND category_scope=? AND option_id=?')
     .bind(owner, id, scope, optionId).first<Row>();
 }
-async function snapshot(db: D1Database, owner: string, company: SupplierHubCompany, identity: Identity, id: string, profileId: string | null, optionId: string) {
+async function snapshot(db: D1Database, owner: string, company: SupplierHubCompany, identity: Identity, id: string, profileId: string | null, optionId: string, confirmImmediately = true) {
   const { view } = await stableQuotationFieldsView(owner, id, profileId), saved = await readOwnedSplitSnapshot(owner, id, view.categoryContext.profileId, db), raw = saved.raw,
     state = raw.quotation[0] ? JSON.parse(raw.quotation[0].payload as string) : { revision: 0, updatedAt: null, overrides: { common: {}, options: {} } };
   verifyMember(raw.member, company, identity);
@@ -60,8 +60,10 @@ async function snapshot(db: D1Database, owner: string, company: SupplierHubCompa
     return [...new Set(keys.filter((key: unknown): key is string => isOwnedImageKey(owner, key) && view.imageKeys.includes(key)))];
   };
   const roles = validateDetailWorkspaceRoles({ top: readRole('detailTop'), bottom: readRole('detailBottom') }, owner, view.imageKeys), scope = await detailWorkspaceScope(view.categoryContext), previous = await row(db, owner, id, scope, optionId);
-  const confirmed = await stableQuotationFieldsView(owner, id, profileId);
-  if (!same(confirmed.view, view) || (await readOwnedSplitSnapshot(owner, id, view.categoryContext.profileId, db)).payload !== saved.payload) throw conflict();
+  if (confirmImmediately) {
+    const confirmed = await stableQuotationFieldsView(owner, id, profileId);
+    if (!same(confirmed.view, view) || (await readOwnedSplitSnapshot(owner, id, view.categoryContext.profileId, db)).payload !== saved.payload) throw conflict();
+  }
   return { saved, view, roles, scope, previous };
 }
 function stored(value: Row | null, owner: string, id: string, optionId: string, current: Awaited<ReturnType<typeof snapshot>>, company: SupplierHubCompany, historicalBanners = false): DetailWorkspaceRecord | null {
@@ -165,7 +167,8 @@ async function confirm(db: D1Database, owner: string, company: SupplierHubCompan
   if (saved.payload !== before.saved.payload || !same(previous, before.previous) || !same(view, before.view)) throw conflict();
 }
 export async function readDetailWorkspace(owner: string, company: SupplierHubCompany, identity: Identity, id: string, profileId: string | null, optionId: string, signal: AbortSignal): Promise<DetailWorkspaceView> {
-  const db = await database(owner, id, profileId), before = await snapshot(db, owner, company, identity, id, profileId, optionId), workspace = stored(before.previous, owner, id, optionId, before, company);
+  // The final confirmation follows the file read and covers the same read-only snapshot.
+  const db = await database(owner, id, profileId), before = await snapshot(db, owner, company, identity, id, profileId, optionId, false), workspace = stored(before.previous, owner, id, optionId, before, company);
   if (workspace) await verifyRecord(workspace, owner, before.view.imageKeys, signal);
   await confirm(db, owner, company, identity, id, profileId, optionId, before);
   return { view: before.view, workspace, roles: before.roles };

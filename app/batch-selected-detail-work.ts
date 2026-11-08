@@ -39,7 +39,7 @@ export type SelectedDetailWorkState = {
 export type SelectedDetailWorkResult = { status: 'completed'|'partial'|'skipped'|'uncertain'; applied: number; failed: number; skipped: number;
   messages: string[]; productVersion?: string; recovered?: boolean; reused?: true; sourceChanged?: true; inferencePending?: true; verifiedUnchanged?: number };
 type Options = { ownerId: string; company: SupplierHubCompany; signal: AbortSignal; fetcher: typeof fetch;
-  state: SelectedDetailWorkState; assertCurrent: () => Promise<void>; expectedProductVersion?: string; onProgress?: (message: string) => void;
+  state: SelectedDetailWorkState; assertCurrent: () => Promise<void>; expectedProductVersion?: string; onProgress?: (message: string, progress?: {completed:number;total:number}) => void;
   currentBodyTranslation?: { policy: 'translate-current-body-v1'; productId: string; productVersion: string } };
 type Dependencies = { readImage?: typeof readDetailWorkspaceImage; recognize?: typeof recognizeFreeImage; render?: typeof renderFreeImageTranslation;
   applyImage?: typeof applyDetailWorkspaceImage; recoverImage?: typeof recoverDetailWorkspaceImage; observe?: typeof observeFreeImageVisionStatus;
@@ -277,16 +277,21 @@ export async function processSelectedDetailWork(productId: string, options: Opti
       }
       pending.observation = observation;
     }
-    for (const [photoIndex,photo] of current.saved.workspace!.document.photos.filter(row => row.role === 'body').entries()) {
+    const photos = current.saved.workspace!.document.photos.filter(row => row.role === 'body');
+    let completed = 0;
+    const progress = (message: string) => options.onProgress?.(message, photos.length ? { completed, total: photos.length } : undefined);
+    const photoConfirmed = () => { completed++; progress(`상세 본문 사진 ${completed}/${photos.length}장 확인`); };
+    for (const [photoIndex,photo] of photos.entries()) {
       if (state.photos[photo.id]) {
         if (state.photos[photo.id].key !== photo.key || state.photos[photo.id].partial) return finish('partial','미완료 본문 번역을 원문과 함께 개별 편집에서 검토해주세요. 자동 재번역하지 않았습니다.');
+        photoConfirmed();
         continue;
       }
       await exact(); const bound = context(photo.id); let image: FreeImageLoaded | undefined;
       const controller = new AbortController(), abort = () => controller.abort(signal.reason); signal.addEventListener('abort',abort,{once:true});
       const timer = setTimeout(() => controller.abort(Error('상세 본문 사진의 처리 시간이 4분을 초과했습니다. 서버 번역 작업과 원본을 보존했습니다.')),240000);
       try {
-        options.onProgress?.(`상세 본문 사진 ${photoIndex + 1} 원문·번역 확인 중`);
+        progress(`상세 본문 사진 ${photoIndex + 1} 원문·번역 확인 중`);
         image = await (deps.readImage ?? readDetailWorkspaceImage)(bound,controller.signal,fetcher); controller.signal.throwIfAborted();
         if (!image.source.workspaceTarget || image.source.quotationTarget || image.source.workspaceTarget.photoId !== photo.id
           || image.source.workspaceTarget.optionId !== bound.target.optionId || image.source.workspaceTarget.revision !== bound.target.revision
@@ -325,7 +330,7 @@ export async function processSelectedDetailWork(productId: string, options: Opti
           const styled = initializeFreeImageVisionRegions(image,observed); regions = styled.regions;
         } else {
           await guard(); controller.signal.throwIfAborted();
-          try { regions = await (deps.recognize ?? recognizeFreeImage)(image,'zh',controller.signal,options.onProgress); }
+          try { regions = await (deps.recognize ?? recognizeFreeImage)(image,'zh',controller.signal,progress); }
           catch (cause) { if (!isVerifiedOriginalPreservation(image.visionResult)) throw cause; regions = []; }
         }
         controller.signal.throwIfAborted();
@@ -339,7 +344,12 @@ export async function processSelectedDetailWork(productId: string, options: Opti
         catch (cause) { if (cause instanceof FreeImageApplyError && !cause.uncertain) delete state.image; throw cause; }
         if (partial) return finish('partial','검증된 일부 본문 문구만 편집 가능한 초안으로 보관했습니다. 미완료 원문은 개별 검토가 필요해 통합 저장하지 않았습니다.');
         if (recovered) { result.recovered = true; return finish('partial','원래 Vision 요청의 번역과 해당 본문 사진 저장을 확인했습니다. 새 추론이나 다음 사진 작업은 하지 않았습니다.'); }
-      } finally { clearTimeout(timer); signal.removeEventListener('abort',abort); if (image?.canvas) { image.canvas.width = 0; image.canvas.height = 0; } }
+      } finally {
+        clearTimeout(timer); signal.removeEventListener('abort',abort);
+        if (image?.canvas) { image.canvas.width = 0; image.canvas.height = 0; }
+        const confirmed = state.photos[photo.id];
+        if (confirmed && !confirmed.partial && !controller.signal.aborted && !signal.aborted) photoConfirmed();
+      }
     }
     await exact();
     if (state.reviewRequired || !state.shared || manualOutput(view) || content.detail?.altText?.provenance === 'manual' || content.detail?.description?.provenance === 'manual')
@@ -348,6 +358,7 @@ export async function processSelectedDetailWork(productId: string, options: Opti
     await exact();
     const peers: DetailSavePeers = state.peers!.map(peer => ({ optionId: peer.selection.optionId,
       workspace: peer.saved.workspace ? { revision: peer.saved.workspace.revision, digest: peer.saved.workspace.digest } : null }));
+    progress('상세 본문 사진 확인 완료 · 상세 이미지 통합 저장 중');
     const input = await (deps.prepareComposite ?? prepareDetailWorkspaceComposite)(current.selection,current.saved,signal,fetcher,peers,DETAIL_SAVE_PUBLICATION_POLICY); await exact();
     state.composite = { input, attempt: {} };
     const next = await (deps.applyComposite ?? applyDetailWorkspaceComposite)(input,state.composite.attempt,signal,fetcher); await guard();

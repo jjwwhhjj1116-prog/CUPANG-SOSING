@@ -1,4 +1,5 @@
 import {seoCompositionContext} from '@/app/seo-composition-context';
+import {registrationBrandChoices} from '@/app/quotation-brand-choices';
 import {assertGeneratedSeoQuality,validateSeoOptionResults} from '@/app/seo-option-results';
 import type {TranslationJob} from '@/app/automation/translation';
 import type {ProductContent} from '@/app/product-content';
@@ -39,7 +40,7 @@ export function createSeoGeneratedDraft(input:{ownerId?:string;productVersion:st
  assertGeneratedSeoQuality(job.review,job.result,job.review.seoComposition?.memo.brand??input.memo?.brand??input.brand);
  const values:SeoWorkspaceDraft={seo:{},optionNames:{}},draft=job.result.draft,warnings=[...draft.warnings];
  const eligible=(field:'title'|'keywords'|'description')=>input.replaceSaved||content.seo[field].provenance!=='manual'||field==='keywords'&&untouchedIntakeKeywords(content,job);
- const memo=input.memo?{...input.memo,brand:input.memo.brand.split(',')[0].trim()}:null;
+ const memo=input.memo?{...input.memo,brand:registrationBrandChoices(input.memo.brand)[0]??''}:null;
  const composed:Partial<Pick<typeof draft,'title'|'keywords'>>={};
  if(eligible('title'))composed.title=signedSeoGuidanceTitle(job);
  if(memo&&!job.review.seoComposition){
@@ -60,7 +61,7 @@ export function createSeoGeneratedDraft(input:{ownerId?:string;productVersion:st
     if(job.review.seoKeywordPolicy==='couplus-generated-v1')values.generatedKeywords={text:values.seo.keywords,values:[...value as string[]]};
    }
   }else if(typeof value==='string'&&value.trim()){
-   const prefix=(memo?.brand??input.brand).split(',')[0].trim();let name=field==='title'&&composed.title===undefined&&prefix&&value!==prefix&&!value.startsWith(prefix)?prefix+' '+value:value;
+   const prefix=memo?.brand??registrationBrandChoices(input.brand)[0]??'';let name=field==='title'&&composed.title===undefined&&prefix&&value!==prefix&&!value.startsWith(prefix)?prefix+' '+value:value;
    if(memo&&field==='title'&&(name.length>100||/[\r\n]/u.test(name))){name=draft.title;if(name.length>100||/[\r\n]/u.test(name))continue;}
    if(input.replaceSaved||name!==content.seo[field].value)values.seo[field]=name;
   }

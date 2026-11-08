@@ -59,13 +59,15 @@ test('fresh automatic BODY recognition carries only the saved copywriting and tr
 });
 
 test('automatic detail translates raw BODY once and composites its ordered banners instead of the saved final quote',async()=>{
- const h=await setup(),result=await h.run();
+ const h=await setup(),counts=[];h.options.onProgress=(_message,count)=>{if(count)counts.push(plain(count));};
+ const result=await h.run();
  assert.equal(result.status,'completed',result.messages.join(' '));assert.equal(result.applied,2);
  assert.deepEqual(h.calls.filter(row=>row.operation==='vision').map(row=>row.key),['owner/one.png','owner/two.png']);
  assert.ok(!h.calls.some(row=>row.operation==='image-read'&&row.key==='owner/replacement.png'));
  const keys=h.calls.find(row=>row.operation==='composite-prepare').keys;assert.equal(keys[0],'owner/top.png');assert.equal(keys.at(-1),'owner/bottom.png');assert.equal(keys.length,4);
  assert.equal(h.calls.find(row=>row.operation==='composite-prepare').publicationPolicy,h.base.load('app/detail-save-plan.ts').DETAIL_SAVE_PUBLICATION_POLICY);
  assert.equal(h.calls.filter(row=>row.operation==='composite-apply').length,1);assert.ok(h.f.workspace.document.photos.filter(row=>row.role==='body').every(row=>row.originKey!==row.key));
+ assert.deepEqual([...new Set(counts.map(row=>row.completed))],[0,1,2]);assert.ok(counts.every(row=>row.total===2));
 });
 
 const fitIssue='VISION_TEXT_FIT: 한국어를 읽을 수 있는 크기로 넣기 어렵습니다. 문구와 영역을 직접 조정한 뒤 선택해주세요.';
@@ -287,7 +289,9 @@ for(const field of ['detailImages','detailHtml','altText'])test(`a manual ${fiel
 
 test('a lost committed BODY apply ACK is recovered before any new image or final write',async()=>{
  const h=await setup(),apply=h.deps.applyImage;let lost=false;h.deps.applyImage=async(...args)=>{const value=await apply(...args);if(!lost){lost=true;throw Error('lost BODY ACK');}return value;};
+ const counts=[];h.options.onProgress=(_message,count)=>{if(count)counts.push(plain(count));};
  const first=await h.run();assert.equal(first.status,'uncertain');const before=h.calls.length,second=await h.run();assert.equal(second.recovered,true);assert.equal(h.calls.slice(before).filter(row=>row.operation==='image-recover').length,1);assert.ok(!h.calls.slice(before).some(row=>['vision','image-apply','composite-apply'].includes(row.operation)));
+ assert.deepEqual([...new Set(counts.map(row=>row.completed))],[0]);assert.ok(counts.every(row=>row.total===2));
  assert.equal((await h.run()).status,'completed');assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,2);
 });
 

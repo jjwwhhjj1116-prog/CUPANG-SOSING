@@ -24,8 +24,9 @@ import { runSelectedPricingWork } from '@/app/batch-selected-pricing-work';
 import { runSelectedPackagingWork } from '@/app/batch-selected-packaging-work';
 import { runSelectedSizeChartWork, hasSelectedSizeChartAttempt, SelectedSizeChartSourceChanged } from '@/app/batch-selected-size-chart-work';
 import type {SelectedImageReview,SelectedImageReviewTarget} from '@/app/selected-image-review';
+import type {RegistrationWorkProgress} from '@/app/registration-stage-status';
 
-export type SelectedBatchStageResult = { id: AutomationStageId; status: 'waiting'|'running'|'draft'|'complete'|'blocked'|'failed'|'skipped'; message: string;boardSource?:BatchBoardSource;review?:SelectedImageReview;reviewTarget?:SelectedImageReviewTarget };
+export type SelectedBatchStageResult = { id: AutomationStageId; status: 'waiting'|'running'|'draft'|'complete'|'blocked'|'failed'|'skipped'; message: string;progress?:RegistrationWorkProgress;boardSource?:BatchBoardSource;review?:SelectedImageReview;reviewTarget?:SelectedImageReviewTarget };
 type Controls = { stages: readonly AutomationStageId[]; mode?:'full'|'selected'; expectedOwnerId: string; signal: AbortSignal; fetcher: typeof fetch;
   keys: Map<string,string>; newKey:()=>string; onStage:(result:SelectedBatchStageResult)=>void;seoGenerationConsent?:SeoGenerationConfiguration;retryFailedQwen?:boolean;retryFailedQuotation?:boolean };
 type Outcome = Pick<SelectedBatchStageResult,'status'|'message'|'review'|'reviewTarget'> & {uncertain?:boolean;stop?:boolean};
@@ -118,6 +119,9 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
   const read=async<T>(suffix:string)=>await responseJson(await fetcher(base+suffix,{cache:'no-store',credentials:'same-origin',redirect:'error'}),`상품 ${suffix||'/'} 조회`) as T;
   const post=async<T>(suffix:string,body:unknown,method='POST')=>await responseJson(await fetcher(base+suffix,{method,credentials:'same-origin',redirect:'error',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),`상품 ${suffix} 저장`) as T;
   const boardObservation:{current:BatchBoardSource|null}={current:null};
+  const publishProgress=(id:AutomationStageId,message:string,progress?:RegistrationWorkProgress)=>{
+    if(!signal.aborted)controls.onStage({id,status:'running',message,...(progress?{progress}:{})});
+  };
   let boardSourceLost=false;
   const product=async()=>{
     const value=await read<{product:{id:string;owner_id?:string;updated_at:string;title:string;source_url?:string;image_keys?:string;content_summary?:unknown}}>('');
@@ -399,8 +403,8 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
     try{
       result=detailState?await processSelectedDetailWork(productId,{state:detailState,ownerId:controls.expectedOwnerId,company:expected.company,signal,fetcher,assertCurrent,expectedProductVersion,
         ...(['full','selected'].includes(controls.mode??'')?{currentBodyTranslation:{policy:'translate-current-body-v1' as const,productId,productVersion:expectedProductVersion??current.updated_at}}:{}),
-        onProgress:message=>controls.onStage({id,status:'running',message})}):await processSelectedImageStage(productId,role,{state,ownerId:controls.expectedOwnerId,signal,fetcher,expectedProductVersion,reworkCurrentSelection:controls.mode==='selected',isCurrent:()=>!signal.aborted,
-        onProgress:message=>controls.onStage({id,status:'running',message})});
+        onProgress:(message,progress)=>publishProgress(id,message,progress)}):await processSelectedImageStage(productId,role,{state,ownerId:controls.expectedOwnerId,signal,fetcher,expectedProductVersion,reworkCurrentSelection:controls.mode==='selected',isCurrent:()=>!signal.aborted,
+        onProgress:(message,progress)=>publishProgress(id,message,progress)});
     }finally{
       // The coordinator records an unknown UUID before propagating abort.
       // Install its queue fence even when no result can return to this caller.
@@ -538,7 +542,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       confirmGeneratedQuotationSave(previous,view,[],changes,job!.id);
     }
     const packaging=await once('packaging:'+view.inputFingerprint,()=>runSelectedPackagingWork(productId,{view,signal,fetcher,assertCurrent,
-      onProgress:message=>controls.onStage({id:'quotation',status:'running',message})}),true);
+      onProgress:(message,progress)=>publishProgress('quotation',message,progress)}),true);
     view=packaging.view;
     const missing=view.resolved.rows.filter(row=>row.included).flatMap(row=>view.resolved.schema.fields.filter(field=>field.required
       &&(!row.fields[field.id]?.value.trim()&&!hasSelectedEmptyQuotationChoice(field,row.fields[field.id])||(row.fields[field.id]?.validationIssues??row.fields[field.id]?.issues??[]).length)).map(field=>field.label));
@@ -622,7 +626,7 @@ export async function runSelectedBatchProduct(productId:string, controls:Control
       }
       const checkpoint=await imageCheckpointBefore();imageCheckpointObservation=checkpoint?{mutated:false,valid:true,productVersion:checkpoint.view.productVersion,current:checkpoint.view}:null;
       const outcome:Outcome=id==='seo'?await seo():id==='pricing'?await pricing():id==='mainImage'||id==='additionalImages'||id==='detailImage'?await image(id)
-        :id==='sizeChart'?await sizeChart():id==='koreanLabel'?await once('label:'+(await product()).updated_at,()=>runSelectedLabelWork(productId,{signal,fetcher,assertCurrent,trackMutationDispatch:mark=>{
+        :id==='sizeChart'?await sizeChart():id==='koreanLabel'?await once('label:'+(await product()).updated_at,()=>runSelectedLabelWork(productId,{signal,fetcher,assertCurrent,onProgress:(message,progress)=>publishProgress('koreanLabel',message,progress),trackMutationDispatch:mark=>{
           const previousDispatch=onMutationDispatch;onMutationDispatch=()=>{mark();previousDispatch?.();};return()=>{onMutationDispatch=previousDispatch;};
         }}))
         :await quotation();

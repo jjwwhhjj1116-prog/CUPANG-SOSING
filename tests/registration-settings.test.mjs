@@ -3,16 +3,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import {createRequire} from 'node:module';
+const native=createRequire(import.meta.url);
 const fixtureCompany={code:'A01464742',name:'와이홉'};
 function api({verified=true,product=true,captured=null,fail=false}={}) {
- const calls=[];
+ const calls=[],cache=new Map();
  const deps={
  'next/server':{NextResponse:Response},
  '@/app/chatgpt-auth':{getChatGPTUser:async()=>({userId:'owner',verifiedAccess:verified,membership:{id:'owner',email:'registration-settings-fixture@example.test',role:'member',status:'approved',companyCode:fixtureCompany.code,companyName:fixtureCompany.name}}),getWorkspaceOwnerId:async()=> 'owner'},
  '@/db/queries':{findProduct:async(owner,id)=>{calls.push(['product',owner,id]);return product?{id,source_url:'https://detail.1688.com/offer/813724060928.html'}:null;},getSettings:async()=>({payload:JSON.stringify({manufacturer:'현재 제조사',importer:'현재 수입원',serviceContact:'현재 연락처',boxSkuQuantity:7})})},
  '@/db/quotation-fields':{readQuotationCollectionSource:async(...args)=>{calls.push(['source',...args]);if(fail)throw Error('unavailable');return captured;}},
  };
- function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,URL,TextEncoder,process:{env:{NODE_ENV:'production'}},require(name){return deps[name]??load(name.replace('@/','')+'.ts');}});return exports;}
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,URL,TextEncoder,process:{env:{NODE_ENV:'production'}},require(name){return deps[name]??(name.startsWith('@/')?name.endsWith('.mjs')?native('../'+name.slice(2)):load(name.slice(2)+'.ts'):native(name));}});return exports;}
  return {calls,get:()=>load('app/api/products/[id]/registration-settings/route.ts').GET(new Request('https://example.test'),{params:Promise.resolve({id:'p'})})};
 }
 test('product label settings prefer the linked snapshot including explicit blanks',async()=>{

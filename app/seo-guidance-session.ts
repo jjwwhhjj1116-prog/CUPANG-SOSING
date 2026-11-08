@@ -42,10 +42,11 @@ export function commitSeoGuidanceSession(session: SeoGuidanceSession | null, key
 export function releaseSeoGuidanceSession(session: SeoGuidanceSession | null): void {
   const entry = current(session); if (entry) delete entry.session;
 }
-/** Vendor initialization prefers a nonempty default brand and its first comma
- * segment. Features and target preserve a finalized explicit blank. */
+/** Vendor initialization prefers the first named default brand. Features and
+ * target preserve a finalized explicit blank. */
 export function initialSeoGuidanceMemo(defaults: SeoWorkspaceDraftMemo, saved: Partial<SeoWorkspaceDraftMemo> | null): SeoWorkspaceDraftMemo {
-  return { brand: (defaults.brand || saved?.brand || '').split(',')[0],
+  const firstNamedBrand = (value:string) => value.split(',').find(brand => brand.trim());
+  return { brand: firstNamedBrand(defaults.brand) ?? firstNamedBrand(saved?.brand ?? '') ?? '',
     features: saved && Object.hasOwn(saved, 'features') ? saved.features! : defaults.features,
     keywords: saved && Object.hasOwn(saved, 'keywords') ? saved.keywords! : defaults.keywords };
 }
