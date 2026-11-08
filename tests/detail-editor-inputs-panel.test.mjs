@@ -39,6 +39,7 @@ function panel(f, transport = f.request, confirm = () => true) {
       return [slots[i], value => { if (closed) { lateWrites++; return; } const next = typeof value === 'function' ? value(slots[i]) : value; if (!Object.is(next, slots[i])) { slots[i] = next; epoch++; } }]; },
     useRef(initial) { const i = cursor++; return slots[i] ?? (slots[i] = { current: initial }); },
     useCallback(fn, deps) { const i = cursor++, before = slots[i]; if (!before || changed(before.deps, deps)) slots[i] = { fn, deps }; return slots[i].fn; },
+    useMemo(factory, deps) { const i = cursor++, before = slots[i]; if (!before || changed(before.deps, deps)) slots[i] = { value: factory(), deps }; return slots[i].value; },
     useEffect(fn, deps) { effect(effects, fn, deps); }, useLayoutEffect(fn, deps) { effect(layouts, fn, deps); },
   };
   const document = { activeElement: null, addEventListener(name, callback) { const set = listeners.get(name) ?? new Set(); set.add(callback); listeners.set(name, set); },
@@ -67,8 +68,8 @@ function panel(f, transport = f.request, confirm = () => true) {
         if (name === 'react') return react;
         if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
         if (name === '@/app/components/detail-image-composite-panel') return { DetailImageCompositePanel: () => null };
-        if (name.startsWith('@/')) return load(name.slice(2) + (name.includes('/components/') ? '.tsx' : '.ts'));
-        if (name.startsWith('./') || name.startsWith('../')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts');
+        if (name.startsWith('@/')) return name.endsWith('.mjs') ? native('../' + name.slice(2)) : load(name.slice(2) + (name.includes('/components/') ? '.tsx' : '.ts'));
+        if (name.startsWith('./') || name.startsWith('../')) { const target = path.posix.join(path.posix.dirname(file), name); return name.endsWith('.mjs') ? native('../' + target) : load(target + '.ts'); }
         return native(name);
       } });
     return exports;

@@ -14,7 +14,7 @@ function harness({onSave}={}){
   if(name==='react')return{useState(value){const i=cursor++;if(!(i in slots))slots[i]=value;return[slots[i],v=>{if(!Object.is(slots[i],v))changed=true;slots[i]=v;}];},useRef(value){const i=cursor++;return slots[i]??(slots[i]={current:value});},useMemo(factory,deps){const i=cursor++,previous=slots[i];if(!previous||deps.some((value,j)=>!Object.is(value,previous.deps[j])))slots[i]={deps:[...deps],value:factory()};return slots[i].value;},useLayoutEffect(effect){cursor++;layouts.push(effect);}};
   if(name==='@/app/components/option-quotation-prices')return{OptionQuotationPrices:()=>null};
   if(name==='@/app/components/option-price-preview')return{OptionPricePreview:()=>null};
-  if(name==='@/app/pricing')return{priceMinimumMarginEnabled:providedOptionModule('app/pricing.ts').priceMinimumMarginEnabled,calculatePrice:(_cost,p)=>({supplyPrice:p.exchangeRate,salePrice:1,msrp:1,costKrw:1830.5,marginKrw:2999.5,actualMargin:1})};
+  if(name==='@/app/pricing')return{...providedOptionModule('app/pricing.ts'),calculateRepresentativePrice:(_cost,p)=>({supplyPrice:p.exchangeRate,salePrice:1,msrp:1,costKrw:1830.5,marginKrw:2999.5,actualMargin:1})};
   return native(name);
  }});
  const render=()=>{let tree;for(let i=0;i<10;i++){cursor=0;changed=false;tree=exports.PriceEditor({initial,sourcePrice:2,onSave:async p=>{saveCalls++;if(fail)throw Error('save failed');await onSave?.(p);initial={...p};}});if(!changed){layouts.splice(0).forEach(effect=>effect());return tree;}layouts.length=0;}throw Error('render loop');};

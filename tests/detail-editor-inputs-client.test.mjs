@@ -21,8 +21,8 @@ function loadClient(fetcher) {
     { exports, Error, Date, URL, URLSearchParams, AbortController, AbortSignal, DOMException, Response, Headers, Blob, File,
       Uint8Array, DataView, TextEncoder, TextDecoder, structuredClone, crypto: webcrypto, fetch: fetcher,
       require(name) {
-        if (name.startsWith('@/')) return load(name.slice(2) + '.ts');
-        if (name.startsWith('./') || name.startsWith('../')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts');
+        if (name.startsWith('@/')) return name.endsWith('.mjs') ? native('../' + name.slice(2)) : load(name.slice(2) + '.ts');
+        if (name.startsWith('./') || name.startsWith('../')) { const target = path.posix.join(path.posix.dirname(file), name); return name.endsWith('.mjs') ? native('../' + target) : load(target + '.ts'); }
         return native(name);
       } });
     return exports;
