@@ -45,6 +45,7 @@ function seoUi(f) {
       if (name === 'react') return hooks;
       if (name === 'react/jsx-runtime') return { jsx: (type, props, key) => ({ type, props, key }), jsxs: (type, props, key) => ({ type, props, key }) };
       if (name.endsWith('.css')) return {};
+      if (name === '@/app/components/translation-panel') return { default: () => null };
       if (name === '@/app/components/translation-integrated-preview') return { TranslationIntegratedPreview: () => null };
       if (name === '@/app/seo-workspace-draft') return { ...helper, createSeoWorkspaceDraftState(input) { creates.push(plain(input)); return helper.createSeoWorkspaceDraftState(input); } };
       assert.ok(name.startsWith('@/')); return f.h.load(name.slice(2) + '.ts');
@@ -121,8 +122,9 @@ for (const company of companies) for (const provider of ['workers', 'google']) t
     const beforeUi = f.state(), objects = f.objects(), target = provider === 'workers' ? '직접 입력한 타겟' : f.keywords;
     const enterRequiredTarget = async () => {
       await ui.until(() => ui.input()?.props.value === f.brand.split(',')[0] && !ui.input().props.disabled);
-      assert.equal(ui.input('SEO 타겟 키워드').props.value, f.keywords);
+      assert.equal(ui.input('SEO 타겟 키워드').props.value, provider === 'workers' ? f.keywords || categoryPath.at(-1) : f.keywords);
       if (provider === 'workers') {
+        ui.input('SEO 타겟 키워드').props.onChange({ target: { value: '' } });
         assert.equal(ui.button().props.disabled, true, 'A blank required target cannot generate a new draft');
         ui.input('SEO 타겟 키워드').props.onChange({ target: { value: target } });
       }

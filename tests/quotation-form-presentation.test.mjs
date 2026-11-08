@@ -282,3 +282,63 @@ test('image raw keys and candidate editing are collapsed while final selected th
   const reorder=titleNodes(details).find(node=>node.props?.['aria-label']==='2번 이미지 앞으로');reorder.props.onClick();ui.render();assert.equal(ui.changes[0].value,'owner/second.png\nowner/first.png');assert.equal(JSON.stringify(view),before);assert.equal(mutations(ui).length,0);
  }finally{ui.close();}
 });
+
+test('the official label attachment pairs a fixed name with the option-scoped image picker',async()=>{
+ const view=quotationPresentationFixture(),id='labelImages',name='제품 한글 표시사항 라벨 또는 도안 이미지';
+ const wire={path:['imagePage','images','labelImages'],name,nameKey:'labelImageType',valueKey:'labelImageFiles'};
+ const fileFields=[['mainImage',['images','mainImage'],'대표이미지 파일명','대표 이미지'],['additionalImages',['images','additionalImage'],'추가이미지 파일명','추가 이미지'],['detailImages',['details','detailedImage'],'상세이미지 파일명','상세 이미지']];
+ const detailFields=[['detailHtml',['details','htmlProductDetailContent'],'HTML 상품 상세 컨텐츠','HTML 상세 내용'],['altText',['details','altText'],'이미지 대체 텍스트','대체 텍스트']];
+ const [first,second]=view.imageKeys=['owner/label.png','owner/revised-label.png'];
+ for(const data of [view.resolved,view.automatic]){
+  const field=data.schema.fields.find(item=>item.id===id);field.hubWire=wire;
+  for(const [fieldId,path,rawCaption] of [...fileFields,...detailFields]){
+   const bound=data.schema.fields.find(item=>item.id===fieldId);bound.hubWire={path:['imagePage',...path]};bound.label=rawCaption;
+  }
+  for(const row of data.rows)row.fields[id].value=row.optionId==='red'?first:'';
+ }
+ const field=view.resolved.schema.fields.find(item=>item.id===id),custom={...field,id:'custom-label',hubWire:{...wire,path:['imagePage','images','customLabelImages']}};
+ addField(view,custom,'');
+ const ui=quotationTitleUI({view});try{
+  await ui.idle();ui.select('red');
+  const container=fieldContainer(ui,id),pair=titleNodes(container).find(node=>node.props?.className==='quotation-named-pair');
+  assert.ok(pair);
+  const section=ui.nodes().find(node=>node.type==='fieldset'&&node.props['data-section']==='image');
+  const imageFields=titleNodes(section).filter(node=>node.props?.['data-quotation-field']).map(node=>node.props['data-quotation-field']);
+  assert.deepEqual(imageFields.filter(fieldId=>['mainImage','additionalImages','labelImages','detailImages','detailHtml','altText'].includes(fieldId)),['mainImage','additionalImages','labelImages','detailImages','detailHtml','altText']);
+  assert.equal(visibleNodes(section).some(node=>node.type==='button'||node.type==='input'&&node.props.type==='file'),false);
+  assert.equal(ui.field('detailHtml').props.rows,1);assert.equal(ui.field('detailHtml').props.placeholder,undefined);
+  assert.equal(ui.field('altText').props.placeholder,undefined);
+  for(const [fieldId,,,caption] of [...fileFields,...detailFields]){
+   const heading=visibleNodes(fieldContainer(ui,fieldId)).find(node=>node.type==='label');
+   assert.equal(heading.props.children[0],caption,fieldId);
+   const control=visibleNodes(fieldContainer(ui,fieldId)).find(node=>node.props?.id===heading.props.htmlFor);
+   assert.ok(control,`${fieldId} associates its caption with the visible control`);
+  }
+  for(const [fileId,,,caption] of fileFields){
+   const input=visibleNodes(fieldContainer(ui,fileId)).find(node=>node.type==='input');
+   assert.equal(input?.props.type,'text',fileId);assert.equal(input.props.placeholder,undefined,fileId);
+   assert.equal(ui.field(fileId).props['aria-label'],`${caption} 파일 선택 순서`);
+  }
+  const [fixed,attachment]=pair.props.children;
+  const fixedName=titleNodes(fixed).find(node=>node.type==='input');
+  assert.equal(fixedName.props.value,name);assert.equal(fixedName.props.readOnly,true);assert.equal(fixedName.props.placeholder,'라벨 타입');
+  const attachmentFile=visibleNodes(attachment).find(node=>node.type==='input');
+  assert.equal(attachmentFile?.props.value,'label.png');assert.equal(attachmentFile.props.placeholder,'이미지 파일');
+  assert.equal(attachmentFile.props.readOnly,true);
+  const picker=titleNodes(attachment).find(node=>node.props?.className==='quotation-image-tools');
+  assert.ok(picker);assert.equal(visibleNodes(attachment).filter(node=>node.type==='img').length,0);
+  const selected=visibleNodes(attachment,new Set([picker])).find(node=>node.props?.className==='quotation-fields-image-final');
+  assert.equal(titleNodes(selected).filter(node=>node.type==='img').length,1);
+  assert.equal(titleNodes(fieldContainer(ui,custom.id)).some(node=>node.props?.className==='quotation-named-pair'),false);
+  const main=view.resolved.schema.fields.find(item=>item.id==='mainImage');
+  assert.equal(policy.quotationImageFieldCaption({...main,hubWire:{path:['imagePage','images','customMainImage']}}),main.label);
+  assert.equal(policy.quotationUsesNamedPair({...field,hubWire:{...wire,valueKey:'otherFiles'}}),false);
+  titleNodes(picker).find(node=>node.props?.['aria-label']==='이미지 2 연결').props.onClick();ui.render();
+  assert.deepEqual(plain(ui.changes),[{fieldKey:id,optionId:'red',value:`${first}\n${second}`}]);
+  assert.equal(visibleNodes(fieldContainer(ui,id)).find(node=>node.props?.id===`seo-title-test-${id}-file`).props.value,'label.png, revised-label.png');
+  ui.field(id).props.onChange({target:{value:'https://example.invalid/foreign-label.png'}});ui.render();
+  assert.equal(ui.button('견적 입력 저장').props.disabled,true);
+  assert.equal(visibleNodes(fieldContainer(ui,id)).find(node=>node.props?.id===`seo-title-test-${id}-file`).props.value,'');
+  assert.equal(mutations(ui).length,0);
+ }finally{ui.close();}
+});

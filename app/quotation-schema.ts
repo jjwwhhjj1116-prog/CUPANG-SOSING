@@ -31,7 +31,8 @@ import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence
 import { quotationPriceInputs, quotationPriceTargets, quotationIndependentOptionalOsrp } from '@/app/quotation-price-targets';
 import { quotationSeoDocumentTitle } from '@/app/seo-title-document';
 import { isProductSizeAttribute, matchingSellingQuantity, productSizeValue, proposeProductName, supplierHubDisplayedProductName, supplierHubProductNameIssue, type ProductNameProposal } from '@/app/product-name-proposal';
-import { quotationOptionNameColor } from '@/app/quotation-option-color';
+import { quotationOptionNameColor, quotationStructuredOptionColor } from '@/app/quotation-option-color';
+import { canonicalCollectedOrigin } from '@/app/collection-label-attributes';
 import { registrationBrandChoices } from '@/app/quotation-brand-choices';
 import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
 import { productLabelFields, validateProductLabelOverrides, validateProductLabelStructure, type ProductLabelsState, type ProductLabelFixedKey } from '@/app/product-label';
@@ -475,6 +476,9 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
   const content={...input.content,label:prioritizedContentLabelFields(input.content)};
   const nativeWorkflow = content.quotationWorkflow === 'collected-native-v1' && schema.status === 'observed'
     && input.hubSchema?.nativeSerializationPolicy === 'supplier-hub-native-required-form-v1';
+  const confirmedNativeFacts = nativeWorkflow && content.collectedFacts === 'confirmed-origin-color-v1';
+  const originNotices = new Set(confirmedNativeFacts ? schema.fields.filter(field => isQuotationAutomaticLegalNotice(field)
+    && ['제조국', '제조국(원산지)', '원산지', '제조국/원산지', '제조국 또는 원산지'].includes(field.label)) : []);
   const memberBrand = nativeWorkflow ? registrationBrandChoices(settings.brand)[0] ?? '' : '';
   const detail=productFactDetailDescription(content);
   const detailAttributes=prioritizedProductAttributes(['generated','unverified'].includes(detail.provenance)?'':detail.value,
@@ -579,6 +583,12 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
       // keep that explicit wire value instead of applying another default.
       return value===undefined?literal('','empty'):{value,source:'settings'};
     };
+    if (confirmedNativeFacts && definition.label === '색상' && isNamedExposedOption(definition)) {
+      if (option?.provenance.color === 'manual') return { value: option.color ?? '', source: 'option' };
+      const raw = option?.color ?? '', color = quotationStructuredOptionColor(raw, definition.choices);
+      if (raw.trim() && !color) return { value: '', source: 'empty', issues: ['수집한 옵션 색상을 공식 입력값에 연결하지 못했습니다. 색상을 직접 확인해주세요.'] };
+      return literal(color, 'option');
+    }
     if(definition.hubWire?.path.join('.')==='productPage.commonAttributes.exposedAttributes'&&definition.hubWire.name===definition.label
       &&definition.hubWire.nameKey==='attributeName'&&definition.hubWire.valueKey==='attributeValue'&&definition.section==='product'&&definition.visibility==='exposed'){
       if(definition.label==='색상')return option?.provenance.color==='manual'?{value:option.color??'',source:'option'}:literal(option?.color,'option');
@@ -728,6 +738,14 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
     return contentValue(field ?? { value: '', provenance: 'unverified', updatedAt: null }, fallback);
   }
   function auto(definition: QuotationField, option: ProductOption | null): Automatic {
+    if (originNotices.has(definition)) {
+      const origin = labelSource('countryOfOrigin', option);
+      if (!origin.value || !definition.choices) return origin;
+      const country = canonicalCollectedOrigin(origin.value);
+      const matches = new Set(definition.choices.filter(choice => [choice.value, choice.label].some(value =>
+        value === origin.value || country && canonicalCollectedOrigin(value) === country)).map(choice => choice.value));
+      return matches.size === 1 ? { ...origin, value: [...matches][0] } : origin;
+    }
     if (definition === nativeLegalColor && sharedColorInitial && option?.included && option.provenance.color !== 'manual') return sharedColorInitial;
     let current: Automatic;
     const notice = isQuotationAutomaticLegalNotice(definition) ? quotationNoticeInput(definition) ?? notice80719.find(([, name]) => name === definition.label)?.[0] ?? definition.id : undefined;
@@ -818,17 +836,18 @@ function resolveQuotationFieldsWithSchema(input: QuotationResolverInput, schema:
         const color = quotationOptionNameColor(option.originalName, option.translatedName, definition.choices);
         if (color && !quotationValueIssues(definition, color, ownedKeys).length) automatic = literal(color, 'option');
       }
-      const preset = couplusQuotationDefault(schema.categoryId, definition);
+      const preset = originNotices.has(definition) ? undefined : couplusQuotationDefault(schema.categoryId, definition);
       if (automatic.source === 'empty' && !automatic.issues?.length && preset !== undefined) automatic = {
         value: preset, source: 'couplus-default',
         issues: [],
       };
-      if(automatic.source==='empty'&&!automatic.issues?.length&&definition.schemaDefault!==undefined)automatic={value:definition.schemaDefault,source:'schema'};
+      if(!originNotices.has(definition)&&automatic.source==='empty'&&!automatic.issues?.length&&definition.schemaDefault!==undefined)automatic={value:definition.schemaDefault,source:'schema'};
       if(automatic.source==='couplus-default')automatic={...automatic,value:couplusNotApplicableWireValue(definition,automatic.value)};
       const explicitSeoDefault=explicitSeoDefaultFor(definition,automatic);
       if(explicitSeoDefault!==null&&!quotationValueIssues(definition,explicitSeoDefault,ownedKeys,'content').length)automatic={value:explicitSeoDefault,source:'content'};
       if (nativeWorkflow && isNamedExposedOption(definition)) {
-        const raw = definition.label === '색상' ? option?.color
+        const raw = definition.label === '색상' ? option && (confirmedNativeFacts && option.provenance.color !== 'manual'
+          ? quotationStructuredOptionColor(option.color ?? '', definition.choices) : option.color)
           : isProductSizeAttribute(definition.label) ? option && productSizeValue(option.size ?? '')
             : definition.label === '수량' && option ? String(option.unitsPerPack) : undefined;
         const candidates = option && raw && definition.label === '수량' ? [matchingSellingQuantity(automatic.value, option.unitsPerPack), `${raw}개`, raw] : [raw];

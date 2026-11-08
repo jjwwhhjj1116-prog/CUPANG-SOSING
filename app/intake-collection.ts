@@ -16,6 +16,9 @@ import {selectedPageReceiptMatches} from '@/app/selected-page-receipt';
 export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void;onProductReused?:(productId:string)=>void;onFreshProduct?:(productId:string)=>void;initializeImageRoles?:boolean;selectedCapture?:Readonly<SourceCaptureSelection>;captureFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture>;probeExistingFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture|null>}) {
  if(options.signal.aborted)return;
  const fetcher=options.fetcher;
+ const initializeLabel=options.initializeImageRoles&&job.goal==='price'&&!job.product_id&&!!job.context?.company
+  &&job.context.category.hubSchema?.nativeSerializationPolicy==='supplier-hub-native-required-form-v1';
+ let freshLabelProductId:string|null=null;
  const selectedCapture=options.selectedCapture===undefined?undefined:validateSourceCaptureSelection(options.selectedCapture,job.source_url);
  if(options.onFreshProduct&&job.product_id)throw Error('기존에 연결된 상품은 새 작업 대상에서 제외했습니다.');
  if(selectedCapture?.format==='yoofam-saved-query-capture-v1'&&job.product_id)throw Error('기존 상품이 연결된 요청입니다. 기존 이미지와 SEO 수정값은 유지했습니다. 새 상품의 수집본을 선택해주세요.');
@@ -171,8 +174,10 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
    if(!current||body.receipt?.receivedAt!==received.received_at||!selectedPageReceiptMatches(current,source??undefined,job.offer_id))
     throw Error('이미지 반영 전에 보관된 수집 원문이 변경되었습니다. 선택한 수집본을 다시 확인해주세요.');
   }
-  if(productRequest&&response.ok&&(selectedCapture||options.onFreshProduct)){
+  if(productRequest&&response.ok&&(selectedCapture||options.onFreshProduct||initializeLabel)){
    const body=await response.clone().json() as {productId?:unknown;reused?:unknown};
+   if(initializeLabel)freshLabelProductId=body.reused===false&&typeof body.productId==='string'?body.productId:null;
+   if(!selectedCapture&&!options.onFreshProduct)return response;
    if(typeof body.productId!=='string'||!body.productId||typeof body.reused!=='boolean'){
     if(options.onFreshProduct)return Response.json({error:'새 상품 생성 결과를 확인하지 못했습니다. 대기열에서 저장된 상품을 확인해주세요.'},{status:409});
     throw Error('선택한 수집본의 상품 연결 상태를 확인하지 못했습니다. 기존 작업을 확인해주세요.');
@@ -220,8 +225,15 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   if(!imageResponse.ok||imageDraft.productId!==outcome.productId||imageDraft.prepared!==true)throw Error(imageDraft.error||'이미지 초안 연결 상태를 확인하지 못했습니다. 저장한 원본과 수정값은 유지됩니다.');
  }
  if(outcome.status!=='completed' || !draft.completed&&!draft.reviewRequired&&!draft.manualReady)throw Error([outcome.status!=='completed'?(outcome.error||'이미지 반영을 완료하지 못했습니다. 원문은 보존됩니다.'):'',draft.message,...(outcome.warnings??[])].filter(Boolean).join(' '));
+ let labelNotice='';
+ if(freshLabelProductId===outcome.productId){
+  reportProgress('저장된 표시사항으로 PNG·견적 연결 중');
+  const { prepareIntakeProductLabel }=await import('@/app/intake-product-label');
+  labelNotice=await prepareIntakeProductLabel(outcome.productId,job,{fetcher,signal:options.signal});
+  if(options.signal.aborted)return;
+ }
  // Manual readiness is acknowledged only after source/options/image import and
  // requested role assignment succeed. It never marks translation completed.
- if(draft.manualReady)return [draft.message,supplementNotice,...(outcome.warnings??[])].filter(Boolean).join(' ');
- return ['상품 초안 저장됨 · 옵션·이미지·견적서를 확인하고 수정해주세요.',draft.message,supplementNotice,...(outcome.warnings??[])].filter(Boolean).join(' ');
+ if(draft.manualReady)return [draft.message,labelNotice,supplementNotice,...(outcome.warnings??[])].filter(Boolean).join(' ');
+ return ['상품 초안 저장됨 · 옵션·이미지·견적서를 확인하고 수정해주세요.',draft.message,labelNotice,supplementNotice,...(outcome.warnings??[])].filter(Boolean).join(' ');
 }

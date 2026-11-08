@@ -45,6 +45,9 @@
 .registration-workspace .quotation-seo-guidance .quotation-field-text-button{color:inherit;font:inherit}
 .registration-workspace .quotation-fields-section .quotation-named-pair{grid-template-columns:minmax(0,29fr) minmax(0,71fr);gap:8px}
 .registration-workspace .quotation-fields-section[data-section=product] .quotation-named-pair{grid-template-columns:minmax(0,27fr) minmax(0,73fr);gap:3%}
+.registration-workspace .quotation-image-attachment{min-width:0}
+.registration-workspace .quotation-field input.quotation-attachment-file:read-only{background:#fff}
+.registration-workspace .quotation-attachment-file+.quotation-image-tools{padding:3px 0 0;line-height:20px}
 .registration-workspace .quotation-fields-image-final{display:flex;align-items:flex-start;flex-wrap:wrap;gap:8px}
 .registration-workspace .quotation-fields-image-final>div{position:relative;padding:4px;border:1px solid #dcdfe8;border-radius:8px;background:#fff}
 .registration-workspace .quotation-fields-image-final img{display:block;width:74px;height:74px;object-fit:contain;border-radius:4px}

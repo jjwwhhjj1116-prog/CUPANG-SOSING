@@ -38,7 +38,7 @@ import { quotationManualModelLinkState, quotationModelSuggestionState } from '@/
 import { QuotationExposedDuplicates } from '@/app/components/quotation-exposed-duplicates';
 import { ProductOptionSplitPanel } from '@/app/components/product-option-split-panel';
 import { assertQuotationSeoTitleDraft, isQuotationSeoTitleField } from '@/app/quotation-seo-title';
-import { quotationFieldIssueNotes, quotationUsesNamedPair } from '@/app/quotation-field-notes';
+import { quotationFieldIssueNotes, quotationImageFieldCaption, quotationUsesImageFileDisplay, quotationUsesNamedPair } from '@/app/quotation-field-notes';
 
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
 type Row = QuotationFieldsView['resolved']['rows'][number];
@@ -868,8 +868,13 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, init
         const originalHelp = field.help && !(seoTitle && ['상품명은 SEO 설정에서 수정해주세요.', '저장한 SEO 상품명을 우선 사용합니다. 수정값은 견적서에만 적용됩니다.'].includes(field.help)) ? field.help : null;
         const quantityUnitHelp = field.visibility === 'exposed' && field.label.trim() === '수량' && field.type === 'text' && !field.unit && !field.numericText && !field.numericValue
           ? '판매 단위를 확인해주세요. 이 카테고리의 공식 예시가 단위 포함 표기를 요구하면 실제 구성에 맞춰 1개·1쌍·1세트처럼 입력하세요. 숫자만 요구하는 양식에는 단위를 붙이지 않습니다.' : null;
-        const fieldHelp = Boolean(originalHelp || quantityUnitHelp);
         const editable = !field.readOnly && !seoTitle; const imageKeys = imageValues(cell.value);
+        const namedPair = quotationUsesNamedPair(field);
+        const imageFileDisplay = quotationUsesImageFileDisplay(field);
+        const namedImage = imageFileDisplay && namedPair;
+        const fieldCaption = quotationImageFieldCaption(field);
+        const imageDetailHtml = field.section === 'image' && (field.id === 'detailHtml' || field.hubInput === 'detailHtml');
+        const fieldHelp = Boolean(originalHelp || quantityUnitHelp || namedImage);
         const modelState = quotationModelSuggestionState(view.resolved.schema, field.id,
           (key, optionId = selectedOption) => resolveQuotationEditorCell(view, changes, optionId, key),
           { optionId: selectedOption, optionIds: view.resolved.rows.filter(item => item.included).map(item => item.optionId) });
@@ -883,7 +888,6 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, init
         const group = quotationFieldGroup(field, schema?.fields);
         const heading = group && (fieldIndex === 0 || quotationFieldGroup(sectionFields[fieldIndex - 1], schema?.fields) !== group) ? <h5 key={`group-${field.id}`} className="quotation-field-group">{group}</h5> : null;
         const priceMismatch = priceAliases.map(alias => ({ alias, cell: resolveQuotationEditorCell(view, changes, selectedOption, alias.id) })).filter(item => item.cell.value !== cell.value);
-        const namedPair = quotationUsesNamedPair(field);
         const example = field.example && <span className="quotation-field-example" role="img" tabIndex={0} title={`예시: ${field.example}`} aria-label={`예시: ${field.example}`}>?</span>;
         const control = field.type === 'select' && editable ? <QuotationChoiceInput field={field} cell={cell} id={id} disabled={busy || loading} invalid={inputProps['aria-invalid']} onChange={value => edit(field.id, value)}/>
           : editable && usesRegistrationBrandChoices(field, schema?.unsupportedFields) ? <QuotationBrandInput cell={cell} brands={view.registrationBrandChoices ?? []} id={id} disabled={busy || loading} invalid={inputProps['aria-invalid']} onChange={value => {
@@ -892,12 +896,22 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, init
               || current.busy || current.loading || activeWrite.current) return;
             edit(field.id, value);
           }}/>
-          : field.type === 'textarea' || field.type === 'images' || lengthInput?.role === 'searchTags' ? <textarea {...inputProps} rows={field.type === 'images' ? 2 : 3} placeholder={field.type === 'images' ? '아래에서 이 상품의 이미지 파일을 선택하세요.' : lengthInput?.role === 'searchTags' ? '검색 태그를 쉼표(,)로 구분하여 입력하세요' : '확인한 내용을 입력하세요.'} />
-            : <input {...inputProps} type="text" inputMode={field.type === 'number' ? 'decimal' : 'text'} placeholder={!editable ? '' : hasCouplusEmptyAttributeDefault(field, cell) ? '해당사항없음' : '확인한 내용을 입력하세요.'} />;
+          : field.type === 'textarea' || field.type === 'images' || lengthInput?.role === 'searchTags' ? <textarea {...inputProps} aria-label={imageFileDisplay ? `${fieldCaption} 파일 선택 순서` : undefined} rows={imageDetailHtml ? 1 : field.type === 'images' ? 2 : 3} placeholder={imageDetailHtml ? undefined : field.type === 'images' ? '아래에서 이 상품의 이미지 파일을 선택하세요.' : lengthInput?.role === 'searchTags' ? '검색 태그를 쉼표(,)로 구분하여 입력하세요' : '확인한 내용을 입력하세요.'} />
+            : <input {...inputProps} type="text" inputMode={field.type === 'number' ? 'decimal' : 'text'} placeholder={field.section === 'image' && (field.id === 'altText' || field.hubInput === 'altText') ? undefined : !editable ? '' : hasCouplusEmptyAttributeDefault(field, cell) ? '해당사항없음' : '확인한 내용을 입력하세요.'} />;
+        const selectedImagePreview = field.type === 'images' && imageKeys.length > 0 && <div className="quotation-fields-image-final" aria-label={`${fieldCaption} 선택 이미지`}>{imageKeys.map((key, index) => <div key={key}>
+          {/* eslint-disable-next-line @next/next/no-img-element -- Existing selected owned quotation images; display only. */}
+          <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`${fieldCaption} ${index + 1}`} loading="lazy" /><span>{index + 1}</span></div>)}</div>;
+        const attachmentControl = field.type === 'images' && <div className="quotation-image-attachment">
+          {imageFileDisplay ? <input id={`${id}-file`} className="quotation-attachment-file" type="text" readOnly aria-invalid={inputProps['aria-invalid']} aria-describedby={inputProps['aria-describedby']}
+            placeholder={namedImage ? '이미지 파일' : undefined} value={imageKeys.filter(key => view.imageKeys.includes(key)).map(key => key.split('/').at(-1)).join(', ')} /> : selectedImagePreview}
+          <details className="quotation-image-tools"><summary>이미지 선택·순서 편집</summary>{imageFileDisplay && selectedImagePreview}{control}<div className="quotation-fields-image-list">{view.imageKeys.map((key, index) => <button className="quotation-fields-image-choice" key={key} type="button" disabled={!editable} aria-pressed={imageKeys.includes(key)} aria-label={`이미지 ${index + 1} ${imageKeys.includes(key) ? '연결 해제' : '연결'}`} onClick={() => edit(field.id, (imageKeys.includes(key) ? imageKeys.filter(item => item !== key) : field.maxItems === 1 ? [key] : [...imageKeys, key]).join('\n'))}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`업로드 이미지 ${index + 1}`} loading="lazy" /><span>이미지 {index + 1}</span>{imageKeys.includes(key) && <b>{imageKeys.indexOf(key) + 1}</b>}</button>)}</div>{imageKeys.length > 0 && <div className="quotation-fields-image-selected">{imageKeys.map((key, index) => <div key={key}><span>{index + 1}. {view.imageKeys.includes(key) ? `이미지 ${view.imageKeys.indexOf(key) + 1}` : `연결 확인: ${key}`}</span><button type="button" disabled={!editable || index === 0} aria-label={`${index + 1}번 이미지 앞으로`} onClick={() => { const next = [...imageKeys]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; edit(field.id, next.join('\n')); }}>↑</button><button type="button" disabled={!editable || index === imageKeys.length - 1} aria-label={`${index + 1}번 이미지 뒤로`} onClick={() => { const next = [...imageKeys]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; edit(field.id, next.join('\n')); }}>↓</button><button type="button" disabled={!editable} onClick={() => edit(field.id, imageKeys.filter(item => item !== key).join('\n'))}>제외</button></div>)}</div>}</details>
+        </div>;
         const fieldCard = <div className={`quotation-field ${field.type === 'textarea' || field.type === 'images' || lengthInput?.role === 'searchTags' ? 'wide' : ''}`} data-quotation-field={field.id} key={field.id}>
-          <div className="quotation-field-heading"><label htmlFor={id} className={namedPair ? 'quotation-value-label' : undefined}>{field.label}{field.unit ? ` (${field.unit})` : ''}{field.required && <b>*</b>}</label>{!namedPair && example}{field.workbookWire?.requirement==='conditional'&&<span className="quotation-field-badge">조건부 필수</span>}</div>
-          {fieldHelp && <p id={`${id}-description`} className="quotation-field-help quotation-schema-description">{originalHelp}{originalHelp && quantityUnitHelp && <br/>}{quantityUnitHelp}</p>}
-          {namedPair ? <div className="quotation-named-pair"><div className="quotation-named-pair-name"><input type="text" readOnly aria-label={`${field.label} 항목명`} value={field.hubWire!.name} tabIndex={-1}/>{field.required && <b aria-hidden="true">*</b>}{example}</div>{control}</div> : field.type !== 'images' ? control : null}
+          <div className="quotation-field-heading"><label htmlFor={imageFileDisplay ? `${id}-file` : id} className={namedPair ? 'quotation-value-label' : undefined}>{fieldCaption}{field.unit ? ` (${field.unit})` : ''}{field.required && <b>*</b>}</label>{!namedPair && example}{field.workbookWire?.requirement==='conditional'&&<span className="quotation-field-badge">조건부 필수</span>}</div>
+          {fieldHelp && <p id={`${id}-description`} className="quotation-field-help quotation-schema-description">{namedImage ? <>제품 라벨, 사이즈 차트 등의 이미지 정보입니다.{originalHelp && <br/>}</> : null}{originalHelp}{originalHelp && quantityUnitHelp && <br/>}{quantityUnitHelp}</p>}
+          {namedPair ? <div className="quotation-named-pair"><div className="quotation-named-pair-name"><input type="text" readOnly aria-label={`${field.label} 항목명`} value={field.hubWire!.name} tabIndex={-1} placeholder={namedImage ? '라벨 타입' : undefined}/>{field.required && <b aria-hidden="true">*</b>}{example}</div>{attachmentControl || control}</div> : attachmentControl || control}
           {lengthInput && <div className="quotation-field-input-guidance"><small>{lengthInput.role === 'model' ? `모델번호는 최대 ${lengthInput.maxLength}자까지 입력 가능합니다.` : `쉼표(,)로 구분하여 입력하세요. 최대 ${lengthInput.maxLength}자`}</small><small id={`${id}-length`} className="quotation-field-length" data-quotation-length-role={lengthInput.role} data-quotation-length-state={lengthInput.state}>{lengthInput.length}/{lengthInput.maxLength}자</small></div>}
           {showAdminTools && modelSuggestion && <details className="quotation-field-diagnostics"><summary>모델명 제안 확인</summary><div className="quotation-field-auto">
             <small>출처: 현재 {selectedOption === null ? '공통' : '옵션'} 견적 상품명 · {sourceLabels[modelSuggestion.source] ?? modelSuggestion.source}</small>
@@ -936,11 +950,6 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, init
             <small>위 두 값이 같은 실제 모델인지 확인한 뒤 적용하세요. 현재 편집 범위의 견적 초안에만 반영하며 다른 옵션 일괄 적용 선택은 해제합니다. 견적 입력 저장을 눌러 확정합니다.</small>
           </div></details>}
           {showAdminTools && manualModelState.reason && <p className="quotation-field-help">{manualModelState.reason}</p>}
-          {field.type === 'images' && <>{imageKeys.length > 0 && <div className="quotation-fields-image-final" aria-label={`${field.label} 선택 이미지`}>{imageKeys.map((key, index) => <div key={key}>
-            {/* eslint-disable-next-line @next/next/no-img-element -- Existing selected owned quotation images; display only. */}
-            <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`${field.label} ${index + 1}`} loading="lazy" /><span>{index + 1}</span></div>)}</div>}<details className="quotation-image-tools"><summary>이미지 선택·순서 편집</summary>{control}<div className="quotation-fields-image-list">{view.imageKeys.map((key, index) => <button className="quotation-fields-image-choice" key={key} type="button" disabled={!editable} aria-pressed={imageKeys.includes(key)} aria-label={`이미지 ${index + 1} ${imageKeys.includes(key) ? '연결 해제' : '연결'}`} onClick={() => edit(field.id, (imageKeys.includes(key) ? imageKeys.filter(item => item !== key) : field.maxItems === 1 ? [key] : [...imageKeys, key]).join('\n'))}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`업로드 이미지 ${index + 1}`} loading="lazy" /><span>이미지 {index + 1}</span>{imageKeys.includes(key) && <b>{imageKeys.indexOf(key) + 1}</b>}</button>)}</div>{imageKeys.length > 0 && <div className="quotation-fields-image-selected">{imageKeys.map((key, index) => <div key={key}><span>{index + 1}. {view.imageKeys.includes(key) ? `이미지 ${view.imageKeys.indexOf(key) + 1}` : `연결 확인: ${key}`}</span><button type="button" disabled={!editable || index === 0} aria-label={`${index + 1}번 이미지 앞으로`} onClick={() => { const next = [...imageKeys]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; edit(field.id, next.join('\n')); }}>↑</button><button type="button" disabled={!editable || index === imageKeys.length - 1} aria-label={`${index + 1}번 이미지 뒤로`} onClick={() => { const next = [...imageKeys]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; edit(field.id, next.join('\n')); }}>↓</button><button type="button" disabled={!editable} onClick={() => edit(field.id, imageKeys.filter(item => item !== key).join('\n'))}>제외</button></div>)}</div>}</details></>}
           <div id={`${id}-notes`}>{seoTitle && <p className="quotation-field-help quotation-seo-guidance">{onEditSeo
             ? <button type="button" className="quotation-field-text-button" aria-label="SEO 설정에서 상품명 수정" disabled={dirty || busy || loading || conflicts.length > 0} onClick={editSeo}>상품명은 SEO 설정에서 수정해주세요.</button>
             : '상품명은 SEO 설정에서 수정해주세요.'}</p>}{priceMismatch.map(item => <p key={item.alias.id} className="quotation-field-issue">이전 요약 가격 {quotationFieldDisplay(item.alias, item.cell, '(공란)')}과 Supplier Hub 가격이 다릅니다. 저장값은 유지했습니다. 이 금액을 직접 입력하면 두 항목에 함께 반영합니다.</p>)}{issueNotes.visible.map(issue => <p key={issue} className="quotation-field-issue">{issue}</p>)}</div>

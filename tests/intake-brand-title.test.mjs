@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {webcrypto} from 'node:crypto';
+import {createRequire} from 'node:module';
+import {fileURLToPath} from 'node:url';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
 
@@ -13,7 +15,15 @@ function loader(overrides={}){
  function load(file){
   if(cache.has(file))return cache.get(file);
   const exports={};cache.set(file,exports);
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Date,Error,URL,Response,TextEncoder,TextDecoder,Uint8Array,DataView,structuredClone,crypto:webcrypto,process:{env:{NODE_ENV:'development'}},require:name=>name==='@/extensions/supplier-hub/page-source-price-basis.mjs'?pageSourcePriceBasis:(name in overrides?overrides[name]:name==='next/server'?{NextResponse:Response}:load(name.slice(2)+'.ts'))});
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Date,Error,URL,Response,TextEncoder,TextDecoder,Uint8Array,DataView,structuredClone,crypto:webcrypto,process:{env:{NODE_ENV:'development'}},require(name){
+   if(name==='@/extensions/supplier-hub/page-source-price-basis.mjs')return pageSourcePriceBasis;
+   if(name in overrides)return overrides[name];
+   if(name==='next/server')return {NextResponse:Response};
+   if(name==='cloudflare:workers')return {env:{}};
+   if(name.startsWith('@/')&&!name.endsWith('.mjs'))return load(name.slice(2)+'.ts');
+   const native=createRequire(new URL('../'+file,import.meta.url));
+   return native(name.startsWith('@/')?fileURLToPath(new URL('../'+name.slice(2),import.meta.url)):name);
+  }});
   return exports;
  }
  return load;

@@ -7,7 +7,8 @@ import { initialBundleQuantity } from '@/app/bundle-policy';
 import { emptyProductOptions, emptyOptionInput, optionFieldNames, validateOptionsInput, type ProductOption } from '@/app/product-options';
 import { workspaceBannerAssignments } from '@/app/workspace-banners';
 import { fillLabelDraft, labelDateNotice } from '@/app/label-autofill';
-import { collectionLabelAttributes } from '@/app/collection-label-attributes';
+import { collectionLabelAttributes, confirmedCollectionOrigin } from '@/app/collection-label-attributes';
+import { quotationStructuredOptionColor, translateCollectedOptionColor } from '@/app/quotation-option-color';
 import { newProductContent, type LabelField } from '@/app/product-content';
 import { initialStatuses } from '@/app/workflow';
 import { collectionKeywords, collectionSourceReference, type CollectionJob } from '@/app/sourcing';
@@ -30,16 +31,30 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   const capturedSettings={...job.context.settings};delete capturedSettings.rocketMarginGate;
   const settings=validateSettings(capturedSettings);
   const policy=pricePolicy({...settings,...(settings.roundingMode==='nearest'?{arithmeticMode:'couplus-number-v1'}:{}),minimumMargin:settings.minimumMarginEnabled?settings.minimumMargin:0,recalculationMinimumEnabled:settings.minimumMarginEnabled});
+  const native = category.hubSchema?.nativeSerializationPolicy === 'supplier-hub-native-required-form-v1';
   // Use observed SKU prices, or the separately proved product-level default.
   const cost=Math.min(...result.options.map(row=>row.unitPriceCny));const price=calculateRepresentativePrice(cost,policy);
-  const rows=result.options.map((row,index)=>({...emptyOptionInput(`collected-${index+1}`),originalName:row.name,supplierSku:row.sku,stock:row.stock,color:row.color??'',size:row.size??'',unitCostCny:row.unitPriceCny,unitsPerPack:initialBundleQuantity(row.unitPriceCny,policy,settings),minimumOrderQuantity:row.minimumOrder,included:true,
+  const productColors = native && result.options.length === 1 ? new Set((result.attributes ?? [])
+    .filter(pair => ['색상', '颜色', '顏色', 'color', 'colour'].includes(pair.name.trim().toLowerCase())).map(pair => pair.value.trim())) : new Set<string>();
+  const onlyColor = productColors.size === 1 ? [...productColors][0] : '';
+  const singleOptionColor = quotationStructuredOptionColor(onlyColor) ? onlyColor : '';
+  const rawColors = result.options.map(row => row.color || singleOptionColor);
+  const translatedColors = native ? rawColors.map(translateCollectedOptionColor) : [];
+  const rows=result.options.map((row,index)=>({...emptyOptionInput(`collected-${index+1}`),originalName:row.name,supplierSku:row.sku,stock:row.stock,color:translatedColors[index]??rawColors[index],size:row.size??'',unitCostCny:row.unitPriceCny,unitsPerPack:initialBundleQuantity(row.unitPriceCny,policy,settings),minimumOrderQuantity:row.minimumOrder,included:true,
     ...(row.packaging?{packagedWeightG:row.packaging.weightG??null,packagedWidthMm:row.packaging.widthMm??null,packagedLengthMm:row.packaging.lengthMm??null,packagedHeightMm:row.packaging.heightMm??null}:{})}));
   validateOptionsInput({expectedRevision:0,expectedProductVersion:now,rows},owner,[]);
   for(const row of rows)calculatePrice(row.unitCostCny,policy,row.unitsPerPack);
-  const options={...emptyProductOptions(id),revision:1,updatedAt:now,rows:rows.map((row,index)=>({...row,...(result.options[index].packaging?{packagingUnitsPerPack:1}:{}),updatedAt:now,provenance:Object.fromEntries(Object.keys(optionFieldNames).map(key=>[key,['originalName','unitCostCny'].includes(key)||key==='minimumOrderQuantity'&&row.minimumOrderQuantity!==null||key==='supplierSku'&&row.supplierSku!==''||key==='stock'&&row.stock!==null||key==='color'&&row.color||key==='size'&&row.size||['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'].includes(key)&&row[key as keyof typeof row]!=null?'collected':['unitsPerPack','included'].includes(key)?'manual':'unverified']))} as ProductOption))};
+  const options={...emptyProductOptions(id),revision:1,updatedAt:now,rows:rows.map((row,index)=>{
+    const provenance = Object.fromEntries(Object.keys(optionFieldNames).map(key=>[key,
+      ['originalName','unitCostCny'].includes(key)||key==='minimumOrderQuantity'&&row.minimumOrderQuantity!==null||key==='supplierSku'&&row.supplierSku!==''||key==='stock'&&row.stock!==null||key==='color'&&row.color||key==='size'&&row.size||['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'].includes(key)&&row[key as keyof typeof row]!=null?'collected':['unitsPerPack','included'].includes(key)?'manual':'unverified',
+    ])) as ProductOption['provenance'];
+    if (translatedColors[index]) provenance.color = 'translated';
+    return {...row,...(result.options[index].packaging?{packagingUnitsPerPack:1}:{}),updatedAt:now,provenance};
+  })};
   const content=newProductContent(id);content.revision=1;content.updatedAt=now;
-  if (category.hubSchema?.nativeSerializationPolicy === 'supplier-hub-native-required-form-v1') {
+  if (native) {
     content.quotationWorkflow = 'collected-native-v1';
+    content.collectedFacts = 'confirmed-origin-color-v1';
     content.labelDefaults = 'couplus-category-v1';
   }
   content.seo.title={value:result.title,provenance:'collected',updatedAt:now};content.seo.description={value:result.description,provenance:'collected',updatedAt:now};
@@ -50,8 +65,11 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
     content.intakeKeywordSeed={value:[...keywords],updatedAt:now,sourceReference:collectionSourceReference(job.id,result.sourceUrl)};
   }
   for (const [field, value] of Object.entries(collectionLabelAttributes(result.attributes))) {
+    if (native && field === 'countryOfOrigin') continue;
     content.label[field as LabelField] = { value, provenance: 'collected', updatedAt: now };
   }
+  const origin = native && confirmedCollectionOrigin(result.attributes);
+  if (origin) content.label.countryOfOrigin = { ...origin, updatedAt: now };
   // These are the owner's captured registration inputs, not supplier facts or
   // translated claims. Explicit blanks must survive later workspace changes.
   for (const [field, setting] of [['manufacturer','manufacturer'],['importer','importer'],['contact','serviceContact']] as const) {

@@ -1,11 +1,11 @@
 import { productLabelPlan, verifyProductLabelsView, type ProductLabelsView } from '@/app/product-label';
-import { attachProductLabel, type ProductLabelAttachment } from '@/app/product-label-attachment';
+import { attachProductLabel, type ProductLabelAttachment, type BeforeProductLabelWrite } from '@/app/product-label-attachment';
 import { productLabelPreviewSignature, type ProductLabelUploadCache } from '@/app/product-label-upload';
 import type { DocumentImagePlan } from '@/app/document-image';
 import { productLabelResponseJson } from '@/app/product-label-read-response';
 
 type Input = { productId: string; endpoint: string; quotationEndpoint: string; optionId: string | null; view: ProductLabelsView;
-  cache: Map<string, ProductLabelUploadCache>; assertCurrent: () => void;
+  cache: Map<string, ProductLabelUploadCache>; assertCurrent: () => void; beforeWrite?: BeforeProductLabelWrite;
   render: (plan: DocumentImagePlan) => Promise<{ blob: Blob; width: number; height: number }> };
 
 /** Complete one explicitly reviewed save. Reuse the exact render/upload recipe
@@ -27,7 +27,7 @@ export async function completeProductLabelSave(input: Input, request: typeof fet
   const rendered = cache.rendered ?? await input.render(productLabelPlan(before, input.optionId)); current();
   await read(); cache.rendered = rendered;
   const result = await attachProductLabel({ productId: input.productId, endpoint: input.endpoint, quotationEndpoint: input.quotationEndpoint,
-    optionId: input.optionId, renderedView: before, blob: rendered.blob, uploadedKey: cache.uploadedKey, onUploaded: key => { current(); cache.uploadedKey = key; } }, scoped);
+    optionId: input.optionId, renderedView: before, blob: rendered.blob, uploadedKey: cache.uploadedKey, beforeWrite: input.beforeWrite, onUploaded: key => { current(); cache.uploadedKey = key; } }, scoped);
   current(); verifyProductLabelsView(result.view, input.optionId);
   if (productLabelPreviewSignature({ ...input, view: result.view }) !== signature || !result.key || !result.view.imageKeys.includes(result.key))
     throw Error('저장한 표시사항 PNG와 최종 견적 연결을 확인하지 못했습니다.');

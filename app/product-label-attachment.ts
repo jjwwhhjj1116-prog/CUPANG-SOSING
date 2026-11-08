@@ -7,8 +7,10 @@ import { productLabelProofRequest, readProductLabelReceipt } from '@/app/product
 import { labelUploadDigest } from '@/app/label-upload-key';
 import { productLabelResponseJson } from '@/app/product-label-read-response';
 
+export type BeforeProductLabelWrite = (view: ProductLabelsView, quotation: QuotationFieldsView, key: string | null) => void | Promise<void>;
+
 type Input = { productId: string; endpoint: string; quotationEndpoint: string; renderedView: ProductLabelsView; optionId: string | null;
-  blob: Blob | null; uploadedKey: string | null; onUploaded: (key: string) => void };
+  blob: Blob | null; uploadedKey: string | null; onUploaded: (key: string) => void; beforeWrite?: BeforeProductLabelWrite };
 export type ProductLabelAttachment = { view: ProductLabelsView; quotation: QuotationFieldsView; key: string };
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 const keys = (value: string) => value.split('\n').map(key => key.trim()).filter(Boolean);
@@ -116,6 +118,7 @@ export async function attachProductLabel(input: Input, request: typeof fetch = f
     if (!input.blob || input.blob.type !== 'image/png' || input.blob.size < 1 || input.blob.size > 10 * 1024 * 1024) throw Error('내용이 있는 표시사항 PNG를 먼저 만들어주세요.');
     const form = new FormData(); form.set('file', new File([input.blob], 'sourceflow-quotation-label.png', { type: 'image/png' })); form.set('labelUploadId', stored.uploadId);
     form.set('productLabelProof',JSON.stringify(productLabelProofRequest({productId:input.productId,optionId:input.optionId,endpoint:input.endpoint,view:state.view})));
+    await input.beforeWrite?.(state.view, state.quotation, null);
     let uploaded: { key?: string; contentType?: string; size?: number } | null = null;
     try { uploaded = await read<{ key?: string; contentType?: string; size?: number }>('/api/files', { method: 'POST', body: form }); }
     catch (cause) {
@@ -136,6 +139,7 @@ export async function attachProductLabel(input: Input, request: typeof fetch = f
   // Re-read all nine saved values after the upload and before its pool write.
   state = await pair(); current = await selection(state,key);
   if (!state.quotation.imageKeys.includes(key)) {
+    await input.beforeWrite?.(state.view, state.quotation, key);
     try { await read(`${base}/attachments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key, role: null, expectedVersion: state.view.productVersion, expectedContentRevision: state.view.contentRevision }) }); }
     catch (cause) { const recovered = await pair(); if (!recovered.quotation.imageKeys.includes(key)) throw cause; state = recovered; }
   }
@@ -154,6 +158,7 @@ export async function attachProductLabel(input: Input, request: typeof fetch = f
   const changes = validateQuotationChanges(current.target.linked.map(fieldKey => ({ fieldKey, optionId: input.optionId, value })), {
     schema: state.quotation.resolved.schema, optionIds: state.quotation.resolved.rows.flatMap(row => row.optionId ? [row.optionId] : []), ownedImageKeys: state.quotation.imageKeys, overrides: state.quotation.overrides });
   const before = state.quotation;
+  await input.beforeWrite?.(state.view, before, key);
   let acknowledged: QuotationFieldsView;
   try {
     acknowledged = await read<QuotationFieldsView>(input.quotationEndpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: before.revision, expectedInputFingerprint: before.inputFingerprint, changes }) });

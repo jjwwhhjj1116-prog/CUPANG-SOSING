@@ -26,6 +26,7 @@ export function suggestTranslationLabels(content: ProductContent, job: Translati
   const skipped: string[] = [];
   const attributes = job.result?.draft.attributes ?? [];
   for (const field of Object.keys(labelFields) as LabelField[]) {
+    if (field === 'countryOfOrigin' && content.collectedFacts === 'confirmed-origin-color-v1') continue;
     const headings = [labelFields[field], ...(equivalentHeadings[field] ?? [])];
     const sourceMatches = job.review.source.attributes.filter(source => source.name.startsWith('상품속성: ')
       && collectionLabelField(source.name.slice('상품속성: '.length)) === field);

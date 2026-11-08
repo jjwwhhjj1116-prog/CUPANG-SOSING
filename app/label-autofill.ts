@@ -16,7 +16,8 @@ export function fillLabelDraft(draft: Record<LabelField, string>, content: Produ
   const stored = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings as Record<string, unknown> : {};
   // New intake and explicit fill may use the general Couplus form defaults.
   // Opening an older saved common draft preserves its former 80719-only scope.
-  const formDefaults = includeGenericDefaults || categoryId === '80719' ? couplusLabelDefaults(categoryId) : {};
+  const formDefaults = { ...(includeGenericDefaults || categoryId === '80719' ? couplusLabelDefaults(categoryId) : {}) };
+  if (content.collectedFacts === 'confirmed-origin-color-v1') delete formDefaults.countryOfOrigin;
   const candidates: Partial<Record<LabelField, unknown>> = {
     ...formDefaults,
     productName: savedTextOrFallback(content.seo.title, productTitle).trim(),
