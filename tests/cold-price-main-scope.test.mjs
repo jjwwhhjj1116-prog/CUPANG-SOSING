@@ -6,6 +6,11 @@ import {stageDOM,repo} from './helpers/cold-price-main-dom.mjs';
 const {mobileIntakeHarness}=await import(pathToFileURL(path.join(repo,'tests/helpers/mobile-intake.mjs')).href);
 const {imageBytes}=await import(pathToFileURL(path.join(repo,'tests/helpers/supplier-hub-single-assets.mjs')).href);
 const hold=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
+async function openSavedGallery(h){
+ const gallery=h.container.querySelector('.main-image-all-saved');
+ assert.ok(gallery);
+ await h.React.act(async()=>{gallery.open=true;});
+}
 async function fixture(){const api=mobileIntakeHarness();await api.intake();const product=await api.load('db/queries.ts').findProduct('owner',api.latest.product_id);return{api,product,base:'/api/products/'+product.id,scope:{ownerId:'owner',company:{code:'A01464742',name:'와이홉'},productId:product.id,productVersion:product.updated_at,sourceUrl:product.source_url,settingsEpoch:0,profileEpoch:0,profileId:null,refresh:0}};}
 
 test('actual response subscribers isolate cancellation and failed reads do not become successful entries',async()=>{
@@ -19,6 +24,28 @@ test('actual response subscribers isolate cancellation and failed reads do not b
   const mutation=reads.beginMutation();await assert.rejects(reads.options(),/저장 상태/);mutation.confirm();fail=true;await assert.rejects(reads.options(),/temporarily/);fail=false;
   const next=await reads.options();assert.deepEqual(next,body);assert.equal(calls.length,3,'failed response was retried, not cached');
  }finally{gate.resolve();await h.close();f.api.close();}
+});
+
+test('a quotation image review link opens and focuses only its own deferred candidate gallery',async()=>{
+ const f=await fixture(),calls=[];
+ const h=await stageDOM(async(url,init={})=>{calls.push(init.method??'GET');return f.api.route(String(url));});
+ try{
+  const view=await(await f.api.route(f.base+'/quotation-fields')).json();
+  const optionId=view.resolved.rows.find(row=>row.optionId)?.optionId;
+  const fieldId=view.resolved.schema.fields.find(field=>field.type==='images')?.id;
+  assert.ok(optionId&&fieldId&&view.imageKeys.length);
+  const Quote=h.load('app/components/quotation-fields-editor.tsx').QuotationFieldsEditor;
+  await h.render(Quote,{productId:f.product.id,navigationTarget:{optionId,fieldId}});
+  for(let i=0;i<5;i++)await h.settle();
+  const gallery=h.container.querySelector(`[data-quotation-field="${fieldId}"] .quotation-image-tools`);
+  assert.ok(gallery?.open);
+  assert.equal(h.window.document.activeElement,gallery.querySelector('textarea'));
+  assert.equal(gallery.querySelectorAll('.quotation-fields-image-choice').length,view.imageKeys.length);
+  assert.equal(h.container.querySelectorAll('.quotation-fields-image-choice').length,view.imageKeys.length);
+  await h.React.act(async()=>{gallery.open=false;});
+  assert.equal(h.container.querySelectorAll('.quotation-fields-image-choice').length,0);
+  assert.deepEqual(calls,['GET']);
+ }finally{await h.close();f.api.close();}
 });
 
 for(const dimension of ['owner','company','settings','profile','catalog','version','refresh','source','exit'])test(`actual hook retires ${dimension} A→B→A responses and drawer disposal owns transport abort`,async()=>{
@@ -67,6 +94,7 @@ test('actual main-image dispatch holds sharing before ACK; unknown ACK recovery 
   const Main=h.load('app/components/option-main-image-editor.tsx').OptionMainImageEditor;
   function Editor(){return h.React.createElement(Main,{uiReads:reads,productId:f.product.id,version:f.product.updated_at,active:true,saveOnSelect:true,onSaved(){saved++;}});}
   await h.render(Editor,{});for(let i=0;i<5;i++)await h.settle();
+  await openSavedGallery(h);
   const candidate=[...h.container.querySelectorAll('button[aria-label^="최종 대표이미지 "][aria-label$=" 선택"]')].find(node=>node.getAttribute('aria-pressed')==='false'&&!node.disabled);assert.ok(candidate);
   await h.React.act(async()=>candidate.click());for(let i=0;i<5;i++)await h.settle();assert.equal(calls.filter(call=>call.method==='PUT').length,1,JSON.stringify(calls)+' '+h.container.textContent.slice(0,1000));await assert.rejects(reads.quotation(f.base+'/quotation-fields'),/저장 상태/);assert.equal(saved,0);
   loseAck=true;holdPut=false;await h.React.act(async()=>gate.resolve());for(let i=0;i<7;i++)await h.settle();assert.equal(saved,0);assert.equal(h.container.querySelector('[data-workspace-dirty]').getAttribute('data-workspace-dirty'),'true');await assert.rejects(reads.options(),/저장 상태/);
@@ -124,7 +152,7 @@ test('real 409 keeps the main-image choice and an original fresh read cannot rev
  try{
   const model=h.load('app/registration-ui-reads.tsx');reads=model.createRegistrationUiReads(f.scope,new Set(),async url=>f.api.route(String(url)));const Main=h.load('app/components/option-main-image-editor.tsx').OptionMainImageEditor;
   function View(){return h.React.createElement(Main,{uiReads:reads,productId:f.product.id,version:f.product.updated_at,active:true,saveOnSelect:true});}
-  await h.render(View,{});for(let i=0;i<5;i++)await h.settle();const candidate=[...h.container.querySelectorAll('button[aria-label^="최종 대표이미지 "][aria-label$=" 선택"]')].find(node=>node.getAttribute('aria-pressed')==='false'&&!node.disabled),label=candidate?.getAttribute('aria-label');assert.ok(candidate);
+  await h.render(View,{});for(let i=0;i<5;i++)await h.settle();await openSavedGallery(h);const candidate=[...h.container.querySelectorAll('button[aria-label^="최종 대표이미지 "][aria-label$=" 선택"]')].find(node=>node.getAttribute('aria-pressed')==='false'&&!node.disabled),label=candidate?.getAttribute('aria-label');assert.ok(candidate);
   await h.React.act(async()=>candidate.click());for(let i=0;i<6;i++)await h.settle();assert.equal(calls.filter(call=>call.method==='PUT').length,1);assert.equal(h.container.querySelector('[data-workspace-dirty]').getAttribute('data-workspace-dirty'),'true');assert.equal(h.container.querySelector(`[aria-label="${label}"]`).getAttribute('aria-pressed'),'true');await assert.rejects(reads.options(),/저장 상태/);
   const before=calls.length,refresh=[...h.container.querySelectorAll('button')].find(node=>node.textContent==='선택 유지·최신 대표이미지 조회');await h.React.act(async()=>refresh.click());for(let i=0;i<5;i++)await h.settle();assert.ok(calls.slice(before).some(call=>call.method==='GET'&&call.url===f.base+'/quotation-fields'));assert.equal(calls.slice(before).filter(call=>call.method==='PUT').length,0);assert.equal(h.container.querySelector('[data-workspace-dirty]').getAttribute('data-workspace-dirty'),'true','uncommitted manual image choice survives fresh 409 reload');await assert.rejects(reads.options(),/저장 상태/,'the original product scope remains held when the server clock moved');
   const latest=await f.api.load('db/queries.ts').findProduct('owner',f.product.id),next=model.createRegistrationUiReads({...f.scope,productVersion:latest.updated_at},new Set(),async url=>f.api.route(String(url)));assert.equal((await next.options()).productVersion,latest.updated_at);

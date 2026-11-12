@@ -47,7 +47,8 @@ function editor(f,{wrapper=false,focusedOptionId=f.id,imageView=true,onTranslate
  const settled=async()=>{await idle();const deadline=Date.now()+5000;let quiet=0;for(;;){const tree=render(),busy=visible(tree).some(node=>node.props['data-workspace-saving']===true||node.props['aria-busy']===true);
    quiet=!pendingQuotes&&!busy?quiet+1:0;if(quiet>=2)return tree;if(Date.now()>deadline)throw Error('Main image editor did not finish its local quotation requests and ACK/readback');await new Promise(resolve=>setImmediate(resolve));}};
  const button=label=>visible(render()).find(node=>node.type==='button'&&(node.props['aria-label']===label||text(node)===label)),input=label=>visible(render()).find(node=>node.props?.['aria-label']===label);
- return {props,saved,render,idle,settled,button,input,async click(label){const node=button(label);assert.ok(node,label);assert.equal(node.props.disabled,false,label);node.props.onClick();await settled();},close(){for(const ctx of contexts.values())for(const slot of ctx.slots)slot?.cleanup?.();}};
+ const openSavedGallery=()=>visible(render()).find(node=>node.props?.className==='main-image-all-saved').props.onToggle({currentTarget:{open:true}});
+ return {props,saved,render,idle,settled,button,input,openSavedGallery,async click(label){const node=button(label);assert.ok(node,label);assert.equal(node.props.disabled,false,label);node.props.onClick();await settled();},close(){for(const ctx of contexts.values())for(const slot of ctx.slots)slot?.cleanup?.();}};
 }
 
 test('main-only entry does not mount and load a hidden price editor',async()=>{
@@ -57,6 +58,27 @@ test('main-only entry does not mount and load a hidden price editor',async()=>{
   await h.settled();assert.equal(f.calls.filter(call=>call.url.includes('/quotation-fields')).length,1,'one final-image view, no hidden price view');
   assert.equal(f.calls.filter(call=>call.url.endsWith('/options')).length,1,'only the final-image library needs option sources');
   assert.ok(h.input('최종 대표이미지 옵션'));assert.equal(f.calls.some(call=>call.method!=='GET'),false);
+ }finally{h.close();f.close();}
+});
+
+test('the closed all-saved gallery mounts no cards and reopening preserves the draft',async()=>{
+ const f=await fixture(),h=editor(f);
+ try{
+  await h.settled();
+  const gallery=()=>visible(h.render()).find(node=>node.props?.className==='main-image-all-saved');
+  const cards=()=>visible(gallery()).filter(node=>node.type==='button');
+  assert.equal(cards().length,0);
+  assert.ok(h.button('최종 대표이미지 크게 보기'));
+  const view=await f.read(),reads=f.calls.length;
+  gallery().props.onToggle({currentTarget:{open:true}});
+  assert.equal(cards().length,view.imageKeys.length);
+  cards()[view.imageKeys.indexOf(f.nextKey)].props.onClick();
+  gallery().props.onToggle({currentTarget:{open:false}});
+  assert.equal(cards().length,0);
+  assert.equal(h.render().props['data-workspace-dirty'],true);
+  gallery().props.onToggle({currentTarget:{open:true}});
+  assert.equal(cards()[view.imageKeys.indexOf(f.nextKey)].props['aria-pressed'],true);
+  assert.equal(f.calls.length,reads);
  }finally{h.close();f.close();}
 });
 
@@ -109,7 +131,7 @@ test('hiding a main image stage retains its pending original PUT and GET-only re
  const f=await fixture(),h=editor(f,{wrapper:true});let release;const held=new Promise(resolve=>{release=resolve;}),original=f.request;let signal;
  try{
   await h.settled();f.lost();f.request=async(url,init={})=>{if(init.method==='PUT'){signal=init.signal;await held;}return original(url,init);};
-  const view=await f.read(),candidate=h.button(`최종 대표이미지 ${view.imageKeys.indexOf(f.nextKey)+1} 선택`);assert.ok(candidate);candidate.props.onClick();await h.idle();assert.ok(signal,'original PUT admitted before hiding');
+  h.openSavedGallery();const view=await f.read(),candidate=h.button(`최종 대표이미지 ${view.imageKeys.indexOf(f.nextKey)+1} 선택`);assert.ok(candidate);candidate.props.onClick();await h.idle();assert.ok(signal,'original PUT admitted before hiding');
   h.props.active=false;h.props.imageView=false;h.render();await h.idle();assert.equal(signal.aborted,false);release();await h.settled();
   assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);assert.equal(h.saved.length,0,'uncertain storage must not claim completion');
   f.recover();h.props.imageView=true;h.props.active=true;await h.settled();assert.equal(f.calls.filter(call=>call.method==='PUT').length,1,'reactivation cannot replay the write');
@@ -122,7 +144,7 @@ for(const lost of [false,true])test(`actual main stage exit keeps the admitted P
  const f=await fixture(),h=editor(f,{wrapper:true});let release;const held=new Promise(resolve=>{release=resolve;}),original=f.request;let writeSignal;
  try{
   await h.settled();f.request=async(url,init={})=>{if(init.method==='PUT'){writeSignal=init.signal;await held;const response=await original(url,init);if(lost)throw Error('injected committed ACK loss');return response;}return original(url,init);};
-  const before=await f.read(),candidate=h.button(`최종 대표이미지 ${before.imageKeys.indexOf(f.nextKey)+1} 선택`);candidate.props.onClick();await h.idle();assert.ok(writeSignal,'original PUT admitted');
+  h.openSavedGallery();const before=await f.read(),candidate=h.button(`최종 대표이미지 ${before.imageKeys.indexOf(f.nextKey)+1} 선택`);candidate.props.onClick();await h.idle();assert.ok(writeSignal,'original PUT admitted');
   h.props.active=false;h.props.imageView=false;await h.idle();assert.equal(writeSignal.aborted,false);release();await h.settled();
   assert.equal(h.saved.length,1,'original receipt is confirmed after the real stage exit');assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);
   assert.equal((await f.read()).resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value,f.nextKey);
@@ -134,7 +156,7 @@ test('leaving the main stage before its held preflight completes cannot dispatch
  const f=await fixture(),h=editor(f,{wrapper:true});let release;const held=new Promise(resolve=>{release=resolve;}),original=f.request;let intercepted=false;
  try{
   await h.settled();f.request=async(url,init={})=>{if(!intercepted&&url.includes('/quotation-fields')&&(init.method??'GET')==='GET'){intercepted=true;await held;}return original(url,init);};
-  const before=await f.read();h.button(`최종 대표이미지 ${before.imageKeys.indexOf(f.nextKey)+1} 선택`).props.onClick();h.props.active=false;h.props.imageView=false;await h.idle();release();await h.settled();
+  h.openSavedGallery();const before=await f.read();h.button(`최종 대표이미지 ${before.imageKeys.indexOf(f.nextKey)+1} 선택`).props.onClick();h.props.active=false;h.props.imageView=false;await h.idle();release();await h.settled();
   assert.equal(intercepted,true);assert.equal(h.saved.length,0);assert.equal(f.calls.filter(call=>call.method==='PUT').length,0);
   assert.equal((await f.read()).resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value,before.resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value);
  }finally{release?.();h.close();f.close();}
@@ -177,7 +199,7 @@ test('main translation toolbar uses final quotation A with exact saved binding a
   assert.deepEqual(plain(targets[0]),[f.key,'main','zh',{kind:'quotation',profileId:f.profile.id,optionId:f.id,input:'mainImage',fieldKey:binding.primary,slotIndex:0,revision:view.revision,inputFingerprint:view.inputFingerprint,optionRevision:view.optionRevision,value:f.key},plain(view)]);
   assert.notEqual(targets[0][0],f.source,'translation must use final A rather than source option B');assert.equal(targets[1][2],'en');
   const old=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick,index=view.imageKeys.indexOf(f.nextKey)+1;
-  await h.click(`최종 대표이미지 ${index} 선택`);old();await h.idle();assert.equal(targets.length,2);assert.equal(h.button('최종 대표이미지 영어 한국어 번역').props.disabled,false);
+  h.openSavedGallery();await h.click(`최종 대표이미지 ${index} 선택`);old();await h.idle();assert.equal(targets.length,2);assert.equal(h.button('최종 대표이미지 영어 한국어 번역').props.disabled,false);
   await h.click('최종 대표이미지 저장본 조회');const previousStage=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick;
   h.props.imageView=false;await h.idle();previousStage();await h.idle();assert.equal(targets.length,2,'hidden main toolbar cannot start translation');
   h.props.imageView=true;await h.idle();const previousFocus=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick;
@@ -192,7 +214,7 @@ test('main manual editing uses its exact final slot and live lock blocks retaine
  const f=await fixture(),targets=[];let h;
  try{const view=await f.read(),binding=f.backend.load('app/quotation-main-image.ts').verifyMainImageView(view);h=editor(f,{wrapper:true,onEdit(...args){targets.push(args);},onTranslate(...args){targets.push(args);}});await h.idle();
   await h.click('최종 대표이미지 편집하기');assert.deepEqual(plain(targets[0]),[f.key,'main',{kind:'quotation',profileId:f.profile.id,optionId:f.id,input:'mainImage',fieldKey:binding.primary,slotIndex:0,revision:view.revision,inputFingerprint:view.inputFingerprint,optionRevision:view.optionRevision,value:f.key},plain(view)]);
-  const manual=h.button('최종 대표이미지 편집하기').props.onClick,translate=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick,blank=h.button('최종 대표이미지 비우기').props.onClick,candidate=h.button(`최종 대표이미지 ${view.imageKeys.indexOf(f.nextKey)+1} 선택`).props.onClick;
+  h.openSavedGallery();const manual=h.button('최종 대표이미지 편집하기').props.onClick,translate=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick,blank=h.button('최종 대표이미지 비우기').props.onClick,candidate=h.button(`최종 대표이미지 ${view.imageKeys.indexOf(f.nextKey)+1} 선택`).props.onClick;
   h.props.imageProcessingBusy=true;await h.idle();manual();translate();blank();candidate();await h.idle();assert.equal(targets.length,1);assert.equal(h.button('최종 대표이미지 편집하기').props.disabled,true);assert.equal(h.button('최종 견적 대표이미지 저장'),undefined);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);
   h.props.imageProcessingBusy=false;await h.idle();candidate();await h.settled();manual();assert.equal(targets.length,1);
   h.props.imageProcessingBusy=true;await h.idle();blank();await h.idle();assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);assert.equal(h.button('최종 견적 대표이미지 저장'),undefined);
@@ -230,7 +252,7 @@ test('stage three edits final quotation A rather than source B; hidden normal dr
   await h.idle();assert.ok(f.calls.every(call=>call.url.endsWith('/options')));const fields=f.backend.load('app/product-options.ts').optionFieldNames,name='옵션 1 '+fields.originalName,cost='옵션 1 '+fields.unitCostCny;
   h.input(name).props.onChange({target:{value:'저장 전 옵션 원문 편집'}});h.input(cost).props.onChange({target:{value:'12.5',valueAsNumber:12.5}});h.render();const sourceTables=JSON.stringify(['product_options','product_content','product_price_policy'].map(table=>f.backend.sqlite.prepare('SELECT * FROM '+table+' WHERE product_id=?').get(f.product.id))),files=[...f.backend.objects.keys()];
   h.props.imageView=true;await h.idle();const selected=()=>visible(h.render()).filter(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지');assert.equal(selected()[0].props.src,'/api/files/'+f.key);assert.notEqual(f.source,f.key);assert.equal(h.input('옵션 1 포장 무게 g'),undefined);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);
-  const view=await f.read(),index=view.imageKeys.indexOf(f.nextKey)+1;await h.click(`최종 대표이미지 ${index} 선택`);assert.equal(selected()[0].props.src,'/api/files/'+f.nextKey);assert.equal(h.saved.length,1);assert.equal((await f.read()).resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value,f.nextKey);assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);assert.equal(f.calls.filter(call=>call.method==='PATCH').length,0);
+  h.openSavedGallery();const view=await f.read(),index=view.imageKeys.indexOf(f.nextKey)+1;await h.click(`최종 대표이미지 ${index} 선택`);assert.equal(selected()[0].props.src,'/api/files/'+f.nextKey);assert.equal(h.saved.length,1);assert.equal((await f.read()).resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value,f.nextKey);assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);assert.equal(f.calls.filter(call=>call.method==='PATCH').length,0);
   h.props.imageView=false;await h.idle();assert.equal(h.input(name).props.value,'저장 전 옵션 원문 편집');assert.equal(h.input(cost).props.value,12.5);assert.match(text(h.render()),/옵션 입력은 유지했습니다/);assert.equal(JSON.stringify(['product_options','product_content','product_price_policy'].map(table=>f.backend.sqlite.prepare('SELECT * FROM '+table+' WHERE product_id=?').get(f.product.id))),sourceTables);assert.deepEqual([...f.backend.objects.keys()],files);assert.equal(h.saved.length,1,'hidden normal editor only reads and never reports a save');
   h.props.imageView=true;await h.idle();await h.click('최종 대표이미지 비우기');assert.equal(visible(h.render()).filter(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지').length,0);assert.match(text(h.render()),/최종 대표이미지는 공란/);assert.equal((await f.read()).resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value,'');
  }finally{h.close();f.close();}
@@ -238,19 +260,19 @@ test('stage three edits final quotation A rather than source B; hidden normal dr
 
 test('unknown committed final-image save keeps its exact choice and explicit retry confirms with no second PUT',async()=>{
  const f=await fixture(),h=editor(f);try{
-  await h.idle();const index=(await f.read()).imageKeys.indexOf(f.nextKey)+1;await h.click(`최종 대표이미지 ${index} 선택`);f.lost();await h.click('최종 견적 대표이미지 저장');assert.equal(h.saved.length,0);assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(h.button('최종 대표이미지 비우기').props.disabled,true);assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);
+  await h.idle();h.openSavedGallery();const index=(await f.read()).imageKeys.indexOf(f.nextKey)+1;await h.click(`최종 대표이미지 ${index} 선택`);f.lost();await h.click('최종 견적 대표이미지 저장');assert.equal(h.saved.length,0);assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(h.button('최종 대표이미지 비우기').props.disabled,true);assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);
   f.recover();await h.click('대표이미지 저장 결과 확인·재시도');assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);assert.equal(h.saved.length,1);assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal((await f.read()).resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value,f.nextKey);
  }finally{h.close();f.close();}
 });
 
 test('missing focus does not select another SKU and retained callbacks cannot save into a changed option scope',async()=>{
- const f=await fixture(),missing=editor(f,{focusedOptionId:'missing'});try{await missing.idle();assert.match(text(missing.render()),/현재 견적서에 없습니다/);assert.equal(missing.button('최종 대표이미지 1 선택').props.disabled,true);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);}finally{missing.close();}
+ const f=await fixture(),missing=editor(f,{focusedOptionId:'missing'});try{await missing.idle();missing.openSavedGallery();assert.match(text(missing.render()),/현재 견적서에 없습니다/);assert.equal(missing.button('최종 대표이미지 1 선택').props.disabled,true);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);}finally{missing.close();}
  const h=editor(f);try{await h.idle();await h.click('최종 대표이미지 비우기');const old=h.button('최종 견적 대표이미지 저장').props.onClick;h.props.focusedOptionId=(await f.read()).resolved.rows.filter(row=>row.optionId)[1].optionId;await h.idle();old();await h.idle();assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);assert.equal((await f.read()).resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value,f.key);assert.equal(h.render().props['data-workspace-dirty'],false);}finally{h.close();f.close();}
 });
 
 for(const company of schemaCompanies)test(`a captured global main-image candidate cannot edit the previous SKU after selection changes; current choice/blank/reset reach exact XLSX and ZIP (${company.code})`,async()=>{
  const f=await fixture(company,true),h=editor(f,{focusedOptionId:undefined});try{
-  h.props.focusedOptionId=undefined;await h.idle();const before=await f.read(),other=before.resolved.rows.filter(row=>row.optionId)[1].optionId,index=before.imageKeys.indexOf(f.nextKey)+1,oldCandidate=h.button(`최종 대표이미지 ${index} 선택`).props.onClick,oldSave=h.button('최종 견적 대표이미지 저장').props.onClick,oldCancel=h.button('최종 대표이미지 저장본 조회').props.onClick;
+  h.props.focusedOptionId=undefined;await h.idle();h.openSavedGallery();const before=await f.read(),other=before.resolved.rows.filter(row=>row.optionId)[1].optionId,index=before.imageKeys.indexOf(f.nextKey)+1,oldCandidate=h.button(`최종 대표이미지 ${index} 선택`).props.onClick,oldSave=h.button('최종 견적 대표이미지 저장').props.onClick,oldCancel=h.button('최종 대표이미지 저장본 조회').props.onClick;
   const source=JSON.stringify(['product_content','product_options','product_price_policy'].map(table=>f.backend.sqlite.prepare('SELECT * FROM '+table+' WHERE product_id=?').get(f.product.id))),bytes=[...f.backend.objects].map(([key,value])=>[key,Buffer.from(value).toString('hex')]);
   h.input('최종 대표이미지 옵션').props.onChange({target:{value:other}});await h.idle();assert.equal(h.input('최종 대표이미지 옵션').props.value,other);
   oldCandidate();await h.idle();if(h.render().props['data-workspace-dirty'])await h.click('최종 견적 대표이미지 저장');

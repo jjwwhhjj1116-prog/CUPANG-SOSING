@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
+import {fileURLToPath} from 'node:url';
 import {companies,downloadFixture,downloadUI,json,text} from './helpers/image-download-ui.mjs';
 import {panel as workspacePanel} from './helpers/detail-workspace.mjs';
 
@@ -34,7 +35,11 @@ function dashboard(){
    if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};
    if(name.endsWith('.css'))return{};
    if(name.startsWith('@/app/components/')){if(!components.has(name))components.set(name,new Proxy({},{get:(_,key)=>{const label=name+':'+String(key);if(!components.has(label))components.set(label,Object.assign(()=>null,{label}));return components.get(label);}}));return components.get(name);}
-   return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);
+   if(name.startsWith('@/')&&!name.endsWith('.mjs')){
+    const dependency=name.slice(2);
+    return load(dependency+(fs.existsSync(new URL('../'+dependency+'.ts',import.meta.url))?'.ts':'.tsx'));
+   }
+   return native(name.startsWith('@/')?fileURLToPath(new URL('../'+name.slice(2),import.meta.url)):name);
   }});return exports;
  }
  const Detail=load('app/components/dashboard-client.tsx').DetailPanel,settings=load('app/workspace-settings.ts').defaultSettings;
@@ -58,10 +63,10 @@ test('selected Stage5 opens its stored BODY editor with stable busy ownership an
  }finally{h.close();}
 });
 
-test('selected Stage4 opens its existing gallery and instant tools while unscoped common upload remains intact',()=>{
+test('selected Stage4 opens its gallery with explicit draft saves while unscoped common upload remains intact',()=>{
  const h=dashboard();try{
   h.render({tab:'추가 이미지'});const image=h.child('OptionImageEditor','additional'),batch=h.child('DetailImageBatchPanel','additional');
-  assert.equal(initiallyVisible(image),true);assert.equal(initiallyVisible(batch),true);assert.equal(image.node.props.saveOnChange,true);assert.equal(initiallyVisible(h.child('ProductContentEditor')),false);
+  assert.equal(initiallyVisible(image),true);assert.equal(initiallyVisible(batch),true);assert.equal(image.node.props.additionalDraft,true);assert.notEqual(image.node.props.saveOnChange,true);assert.equal(initiallyVisible(h.child('ProductContentEditor')),false);
   assert.equal(image.node.props.optionId,'red');assert.equal(batch.node.props.optionId,'red');assert.equal(batch.node.props.profileId,'cat');assert.notEqual(batch.node.props.autoPrepare,true);assert.equal(batch.node.props.compactToolbar,true);
   const imageKey=image.node.key,batchKey=batch.node.key;
   for(const tab of ['견적서','SEO','상세 이미지','추가 이미지']){h.render({tab});const current=h.child('OptionImageEditor','additional'),currentBatch=h.child('DetailImageBatchPanel','additional');assert.equal(current.node.type,image.node.type);assert.equal(current.node.key,imageKey);assert.equal(currentBatch.node.key,batchKey);assert.equal(initiallyVisible(current),tab==='추가 이미지');assert.equal(current.node.props.active,tab==='추가 이미지');}
@@ -100,6 +105,12 @@ for(const company of companies)test(`${company.companyCode} primary stored BODY 
   const composite=entries(h.render()).find(({node})=>typeof node.type==='function'&&node.type.name==='DetailImageCompositePanel');assert.ok(composite);assert.equal(initiallyVisible(composite),false,'saved final-image composite remains a secondary tool');assert.equal(composite.node.props.disabled,false);assert.equal(composite.node.props.beforeApply(),true);
   assert.equal(entries(h.render()).filter(({node})=>node.type?.name==='DetailImageCompositePanel').length,1,'one original composite controller');
   const zip=entries(h.render()).find(({node})=>node.type==='button'&&text(node)==='상세 이미지 ZIP 다운로드');assert(zip);assert.equal(initiallyVisible(zip),false);
+  const finalImages=()=>entries(h.render()).find(({node})=>node.props?.className==='option-detail-final-images').node;
+  assert.equal(entries(finalImages()).some(({node})=>node.props?.className==='option-detail-image-item'),false,'closed final gallery creates no duplicate photo cards');
+  h.button('수집 사진 선택하기').props.onClick();
+  assert.equal(finalImages().props.open,true,'source photo shortcut also opens its enclosing final-image gallery');
+  const closeEvent={open:false};finalImages().props.onToggle({target:closeEvent,currentTarget:closeEvent});
+  assert.equal(finalImages().props.open,false);
   for(const name of ['상세 이미지 2 번역·수정','상세 이미지 2 순서·삭제'])assert(entries(h.render()).some(({node})=>node.props?.role==='group'&&node.props['aria-label']===name));
   const workspace=entries(h.render()).find(({node})=>typeof node.type==='function'&&node.type.name==='DetailWorkspacePanel');assert.ok(workspace);assert.equal(initiallyVisible(workspace),true,'stored BODY composition is the primary editor');assert.equal(workspace.node.props.primaryDetailTools,true);
   const workspaceCalls=[],request=async(url,init={})=>{

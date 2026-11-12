@@ -14,7 +14,7 @@ function loadModel(){
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
    {exports,Error,Date,URL,TextEncoder,AbortController,AbortSignal,structuredClone,setTimeout:(fn,ms)=>{timers.set(++clock,{fn,ms});return clock;},clearTimeout:id=>timers.delete(id),require(name){
     if(name==='parse5')return parse5;
-    if(name==='@/app/free-image-translation-client'){const real=load('app/free-image-translation-client.ts');return{initializeFreeImageVisionRegions:real.initializeFreeImageVisionRegions,isImageVisionObservation:real.isImageVisionObservation};}
+    if(name==='@/app/free-image-translation-client'){const real=load('app/free-image-translation-client.ts');return{initializeFreeImageVisionRegions:real.initializeFreeImageVisionRegions,initializedVisionRegionBox:real.initializedVisionRegionBox,isImageVisionObservation:real.isImageVisionObservation};}
     if(name==='@/app/image-files')return{isOwnedImageKey:(owner,key)=>typeof key==='string'&&new RegExp('^'+owner+'/[a-zA-Z0-9][a-zA-Z0-9._-]*$').test(key)};
     assert.ok(name.startsWith('@/'),name);
     return name.endsWith('.mjs')?createRequire(import.meta.url)(fileURLToPath(new URL('../'+name.slice(2),import.meta.url))):load(name.slice(2)+'.ts');
@@ -111,6 +111,37 @@ test('completed complex-background Vision is retained as bounded exact manual-re
  const result=await h.run();assert.equal(result.status,'partial');assert.equal(result.applied,0);assert.ok(result.review,'the completed result survives the known review failure');
  assert.equal(result.review.source.sourceKey,'owner/source-a.png');assert.equal(result.review.source.quotationTarget.slotIndex,0);assert.equal(result.review.result.blocks[0].text,'中文');assert.equal(result.review.requestId,'11111111-1111-4111-8111-111111111111');
  assert.ok(h.canvases.every(canvas=>canvas.width===0));assert.equal(h.calls.filter(row=>['render','apply','translate'].includes(row[0])).length,0);assert.equal(h.calls.filter(row=>row[0]==='vision').length,1);assert.doesNotMatch(JSON.stringify(result.review),/canvas|blob:|synthetic/);
+});
+
+test('additional cleanup with visible ink outside the Vision box stays in review without saving or advancing progress',async()=>{
+ const h=fixture('additional',['owner/source-a.png']),contract=h.visionContract,read=h.deps.readSource,progress=[];
+ h.options.onProgress=(_message,counts)=>{if(counts)progress.push(counts.completed);};
+ h.deps.readSource=async(...args)=>{
+  const image=await read(...args);
+  image.source.quotationTarget.bindingSha256='c'.repeat(64);
+  image.visionConfiguration={provider:'workers-ai-vision',model:contract.IMAGE_TEXT_VISION_MODEL,notice:contract.IMAGE_TEXT_VISION_NOTICE,configured:true,paidAllowed:true};
+  const context=image.canvas.getContext();
+  context.getImageData=(x,y,width,height)=>({data:new Uint8ClampedArray(Array.from({length:width*height},(_,index)=>{
+   const pixelX=x+index%width,pixelY=y+Math.floor(index/width);
+   return pixelX===15&&pixelY>=25&&pixelY<=29?[215,0,0,255]:[238,238,238,255];
+  }).flat())});
+  return image;
+ };
+ h.deps.recognize=async image=>{
+  h.calls.push(['vision']);
+  image.visionRequestId='11111111-1111-4111-8111-111111111111';
+  image.visionResult={provider:'workers-ai-vision',model:contract.IMAGE_TEXT_VISION_MODEL,notice:contract.IMAGE_TEXT_VISION_NOTICE,requests:1,
+   inspection:{policy:contract.IMAGE_TEXT_PRESERVATION_POLICY,decision:'foreign-text'},
+   blocks:[{id:'vision-1',text:'中文',translated:'한국어',issue:null,kind:'overlay',box:{x:20,y:20,width:40,height:20}}]};
+  const styled=h.style.initializeVisionRegions(image.visionResult.blocks,image.canvas,image.width,image.height);
+  assert.deepEqual(plain(styled.issues),[]);
+  image.visionStyleIssues=styled.issues;
+  return styled.regions;
+ };
+ const before=plain(h.view),result=await h.run();
+ assert.equal(result.status,'partial');assert.equal(result.applied,0);assert.equal(result.review?.source.sourceKey,'owner/source-a.png');
+ assert.deepEqual(h.calls.filter(([name])=>['vision','translate','render','apply'].includes(name)),[['vision']]);
+ assert.deepEqual(plain(h.view),before);assert.deepEqual([...new Set(progress)],[0]);
 });
 
 for(const stage of ['main','additional','detail'])test(`${stage}: a validated untranslated model code follows cleanup purpose while detail translation remains review-blocked`,async()=>{

@@ -22,6 +22,7 @@ export function OptionMainImageEditor({uiReads,onBeginSourceWrite,productId,vers
  const [pending,setPending]=useState<{scope:string;optionId:string;value:string|null|undefined}>({scope,optionId:'',value:undefined}),liveDraft=useRef(pending);
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState(''),[uncertain,setUncertain]=useState(false),liveUncertain=useRef(false);
  const [library,setLibrary]=useState<{scope:string;sourceKey:string;value:MainImageLibrary|null;error:string}|null>(null);
+ const [allSavedOpen,setAllSavedOpen]=useState(false);
  const libraryRequest=useRef<AbortController|null>(null);
  const current=()=>mounted.current&&liveScope.current===scope&&liveSource.current===sourceKey;
  useLayoutEffect(()=>{mounted.current=true;liveScope.current=scope;liveSource.current=sourceKey;if(liveDraft.current.scope!==scope)liveDraft.current={scope,optionId:'',value:undefined};return()=>{mounted.current=false;request.current?.abort();request.current=null;libraryRequest.current?.abort();libraryRequest.current=null;};},[scope,sourceKey]);
@@ -137,7 +138,10 @@ export function OptionMainImageEditor({uiReads,onBeginSourceWrite,productId,vers
     <div className="image-asset-grid main-image-library-grid" aria-label={`${libraryTabs.find(([name])=>name===tab)?.[1]} 후보`}>{visiblePool.map(key=>candidate(key,tab))}</div>
     {base&&!visiblePool.length&&<p>이 종류에 연결된 이미지가 없습니다.</p>}
     <small>탭을 바꿔도 현재 선택은 유지됩니다. 직접 올린 사진은 아래 전체 저장 이미지에서 선택하세요.</small>
-    <details className="main-image-all-saved"><summary>전체 저장 이미지 · {pool.length}개</summary><p>직접 업로드한 사진을 포함한 저장 목록입니다.</p><div className="image-asset-grid main-image-library-grid">{pool.map(key=>candidate(key))}</div></details>
+    <details className="main-image-all-saved" open={allSavedOpen} onToggle={event=>setAllSavedOpen(event.currentTarget.open)}>
+      <summary>전체 저장 이미지 · {pool.length}개</summary><p>직접 업로드한 사진을 포함한 저장 목록입니다.</p>
+      {allSavedOpen && <div className="image-asset-grid main-image-library-grid">{pool.map(key=>candidate(key))}</div>}
+    </details>
     </div>
     <section className="main-image-current-summary" aria-label="현재 메인 이미지">
      <div className="main-image-current-preview-card"><h4>현재 메인 이미지</h4>

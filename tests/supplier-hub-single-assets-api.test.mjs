@@ -52,6 +52,44 @@ test('manual option image blank and edited option main remain final, without pub
     assert.ok(!out.manifest.some(slot => slot.role === 'main' && slot.optionId === 'synthetic-two')); assert.ok(!out.manifest.some(slot => slot.keys.includes(keys[7]))); preserve(f, state, objects);
   } finally { f.close(); }
 });
+test('Single preparation binds internal HTML image URLs to the same option detail assets', async () => {
+  const f = await assetApiFixture(); try {
+    await edit(f, [{ fieldKey: f.byWire(['imagePage', 'details', 'detailedImage']), optionId: 'synthetic-two', value: keys[7] }]);
+    const initial = await json(await f.h.route(f.endpoint));
+    const main = initial.manifest.find(slot => slot.role === 'main').files[0].url;
+    const detail = initial.manifest.find(slot => slot.role === 'detail' && slot.optionId === 'synthetic-one').files[0].url;
+    const otherDetail = initial.manifest.find(slot => slot.role === 'detail' && slot.optionId === 'synthetic-two').files[0].url;
+    const unknown = new URL('/media/quotation/' + 'f'.repeat(64), detail).href;
+    const fieldKey = f.byWire(['imagePage', 'details', 'htmlProductDetailContent']);
+    const optionId = 'synthetic-one';
+    for (const url of [unknown, main, otherDetail, new URL(detail).pathname]) {
+      const html = `<IMG SRC="${url}">`;
+      await edit(f, [{ fieldKey, optionId, value: html }]);
+      const state = f.state(), objects = f.objectState();
+      const view = await json(await f.h.route(f.endpoint));
+      assert.equal(view.review.canPrepare, false, url);
+      assert.ok(view.review.issues.some(issue => issue.code === 'SINGLE_DETAIL_HTML_REFERENCE' && issue.level === 'error'
+        && issue.optionId === optionId && issue.fieldId === fieldKey));
+      const prepared = await json(await f.prepare(view.fingerprint));
+      assert.equal(prepared.prepared, false);
+      assert.equal(prepared.payload.jsonDocument[0].imagePage.details.htmlProductDetailContent, html);
+      assert.equal(publicKeys(f).length, 0);
+      preserve(f, state, objects);
+    }
+    const external = 'https://seller.example.test/media/quotation/' + 'f'.repeat(64);
+    const html = `<img src="${detail}"><img src="${external}"><template><img src="${unknown}"></template>`;
+    await edit(f, [{ fieldKey, optionId, value: html }]);
+    const state = f.state(), objects = f.objectState(), view = await json(await f.h.route(f.endpoint));
+    assert.equal(view.review.canPrepare, true);
+    assert.equal(view.prepared, false);
+    assert.equal(publicKeys(f).length, 0);
+    const prepared = await json(await f.prepare(view.fingerprint));
+    assert.equal(prepared.prepared, true);
+    assert.equal(prepared.payload.jsonDocument[0].imagePage.details.htmlProductDetailContent, html);
+    assert.ok(publicKeys(f).includes('quotation-public-detail/' + new URL(detail).pathname.split('/').at(-1)));
+    preserve(f, state, objects);
+  } finally { f.close(); }
+});
 test('old quotation/profile/product/settings fingerprint prevents any publication', async () => {
   for (const kind of ['quotation', 'profile', 'product', 'settings']) {
     const f = await assetApiFixture(); try {

@@ -40,7 +40,9 @@ export function OptionImageEditor({ uiReads,onBeginSourceWrite,productId, option
   const [saved, setSaved] = useState<{ scope: string; sourceKey: string; view: QuotationFieldsView } | null>(null);
   const [pending, setPending] = useState<{ scope: string; values: OptionImageDraft }>({ scope, values: {} });
   const [preview, setPreview] = useState<{ scope: string; key: string } | null>(null);
-  const [sourceCandidatesOpen, setSourceCandidatesOpen] = useState(false);
+  const [sourceCandidatesOpen, setSourceCandidatesOpen] = useState<boolean | undefined>(undefined);
+  const [allSavedOpen, setAllSavedOpen] = useState(false);
+  const [finalImages, setFinalImages] = useState<'unopened' | 'open' | 'closed'>('unopened');
   const activeDrag = useRef<ImageDrag | null>(null), liveDisabled = useRef(disabled), liveActive = useRef(active), liveSaveOnChange = useRef(saveOnChange), liveProcessingConfigured = useRef(processingConfigured);
   const [dragging, setDragging] = useState<{ token: string; key: string; target: string | null } | null>(null);
   const latestSaved = useRef<typeof saved>(null), latestDraft = useRef({ scope, values: {} as OptionImageDraft });
@@ -506,7 +508,9 @@ export function OptionImageEditor({ uiReads,onBeginSourceWrite,productId, option
     </button>
     <figcaption>{instant ? <button type="button" className="btn ghost option-additional-add" aria-label={`추가 이미지 후보 ${index + 1} 추가`} disabled={locked || selected.includes(key) || selected.length >= limit} onClick={() => addImage(key)}>{selected.includes(key) ? '추가됨' : '＋ 추가'}</button> : <label><input type="checkbox" aria-label={`선택 옵션 ${label} 후보 ${index + 1}`} checked={selected.includes(key)} disabled={locked || !mutableImage(key) || (!selected.includes(key) && selected.length >= limit)} onChange={() => toggle(key)} />이미지 {index + 1} 선택</label>}</figcaption>
   </figure>;
-  const candidateCards = instant ? additionalCandidates.map(({key,role}) => renderCandidate(key,view!.imageKeys.indexOf(key),role)) : view?.imageKeys.map((key,index)=>renderCandidate(key,index));
+  const renderCandidates = () => instant
+    ? additionalCandidates.map(({key,role}) => renderCandidate(key,view!.imageKeys.indexOf(key),role))
+    : view?.imageKeys.map((key,index)=>renderCandidate(key,index));
   const imageEditActions = (key: string, index: number) => <>
     {!instant && onEdit && <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 편집하기`} disabled={locked || !mutableImage(key) || !buffered && dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'zh', true)}>편집하기</button>}
     {!instant && onTranslate && <><button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 중국어 한국어 번역`} disabled={locked || !mutableImage(key) || !buffered && dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'zh')}>중국어 → 한국어</button>
@@ -530,6 +534,7 @@ export function OptionImageEditor({ uiReads,onBeginSourceWrite,productId, option
   const saveTools = <div className="option-image-save-tools"><button type="button" className="btn primary" aria-label={instant ? '선택 옵션 이미지 저장' : undefined} disabled={!view || busy || merging || workspaceWorking || disabled || !!bindingError || !dirty || !!issues.length} onClick={() => void save()}>{uncertain ? '이미지 저장 결과 확인' : instant ? '저장' : '선택 옵션 이미지 저장'}</button>
     {dirty && <button type="button" className="btn ghost" disabled={busy || merging || workspaceWorking || disabled} onClick={() => void load(true)}>입력 유지·최신 이미지 조회</button>}
     {instant?<details className="option-additional-refresh-tools"><summary>저장·복구 도구</summary>{reloadControl}</details>:reloadControl}</div>;
+  const finalImageDisclosure = stage === 'detail' && primaryDetailTools;
   return <section ref={editorRoot} data-additional-draft={buffered ? scope : undefined} className={`panel-stack option-image-editor option-image-editor--${stage}${instant ? ' option-additional-instant' : ''}${stage==='detail'&&primaryDetailTools?' option-detail-primary':''}`} aria-label="선택 옵션 이미지 편집" data-quotation-source-step={stage === 'additional' ? '추가 이미지' : '상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy || merging || workspaceWorking}>
     <header className="option-detail-primary-header" hidden={stage!=='detail'}><h3 hidden={!primaryDetailTools}>상세 페이지 이미지</h3><div className="option-detail-primary-actions">{stage==='detail'&&uploadControl}
       <button type="button" className="btn ghost" aria-label="상세 이미지 다운로드" hidden={!primaryDetailTools} disabled={!compositeToolbar||compositeToolbar.downloadDisabled||!view||locked||dirty||!active||saved?.sourceKey!==sourceKey} onClick={()=>{if(compositeToolbar&&liveCompositeToolbar.current===compositeToolbar&&interactive()&&!request.current&&!pendingSave.current&&!Object.keys(latestDraft.current.values).length&&saved?.sourceKey===sourceKey)compositeToolbar.download();}}>다운로드</button>
@@ -540,7 +545,10 @@ export function OptionImageEditor({ uiReads,onBeginSourceWrite,productId, option
     </div></header>
     {!(stage==='detail'&&primaryDetailTools)&&<h3>{stage === 'detail' ? '상세 페이지 이미지' : '선택 옵션 추가 이미지'}</h3>}<p className="option-image-context">{row?.optionLabel || optionId} · {row?.included === false ? '견적 제외 옵션' : '선택한 옵션'}</p>
     {(stage==='detail'&&primaryDetailTools)||instant?<details className="option-detail-guidance"><summary>사진 편집 안내·원본 ZIP</summary>{editGuidance}</details>:editGuidance}
-    {stage === 'detail' && view && <details className="option-detail-photo-tools"><summary>수집 사진으로 상세 구성</summary><div className="panel-note"><div><strong>수집 사진으로 상세 구성</strong><p>저장된 상품 사진을 직접 골라 상세 본문으로 배치할 수 있습니다. 대표·추가 이미지와 직접 작성한 HTML은 유지됩니다.</p><button type="button" className="btn ghost" disabled={locked || !active} onClick={() => setSourceCandidatesOpen(true)}>수집 사진 선택하기</button></div></div></details>}
+    {stage === 'detail' && view && <details className="option-detail-photo-tools"><summary>수집 사진으로 상세 구성</summary><div className="panel-note"><div><strong>수집 사진으로 상세 구성</strong><p>저장된 상품 사진을 직접 골라 상세 본문으로 배치할 수 있습니다. 대표·추가 이미지와 직접 작성한 HTML은 유지됩니다.</p><button type="button" className="btn ghost" disabled={locked || !active} onClick={() => {
+      setSourceCandidatesOpen(true);
+      if (finalImageDisclosure) setFinalImages('open');
+    }}>수집 사진 선택하기</button></div></div></details>}
     {stage === 'detail' && view && canEditSavedDetailInputs({ productId, optionId, profileId, view }) && <details className="option-detail-reopen-tools"><summary>저장 전 사진·HTML 구성으로 편집</summary><div className="button-row">
       <button type="button" className="btn ghost" disabled={locked || !buffered && dirty || !active || saved?.sourceKey !== sourceKey} onClick={() => void reopenDetailInputs()}>저장 전 개별 사진으로 편집</button>
       <button type="button" className="btn ghost" disabled={locked || !buffered && dirty || !active || saved?.sourceKey !== sourceKey} onClick={() => void reopenDetailInputs(true)}>저장 전 사진·HTML로 편집</button>
@@ -610,9 +618,16 @@ export function OptionImageEditor({ uiReads,onBeginSourceWrite,productId, option
       onSaved={body => { if (!current()) return; latestSaved.current = { scope, sourceKey, view: body }; setSaved(latestSaved.current); onSaved?.(); }} /></details>}
     {busy && <p role="status">옵션 이미지 처리 중…</p>}{error && <p role="alert">{error}</p>}{bindingError && <p role="alert">{bindingError}</p>}{message && <p role="status">{message}</p>}
     {dirty && saved?.sourceKey !== sourceKey && <p role="status">상품 저장 상태가 변경됐습니다. 입력은 유지했습니다. 최신 자료를 조회한 뒤 저장해주세요.</p>}
-    <details className={stage === 'detail' && primaryDetailTools ? 'option-detail-final-images' : undefined} open={stage !== 'detail' || !primaryDetailTools ? true : undefined}><summary hidden={stage !== 'detail' || !primaryDetailTools}>저장된 최종 상세 이미지 · {selected.length}장</summary>
+    <details className={finalImageDisclosure ? 'option-detail-final-images' : undefined} open={!finalImageDisclosure || finalImages === 'open'} onToggle={finalImageDisclosure ? event => {
+      if (event.target !== event.currentTarget) return;
+      const open = event.currentTarget.open;
+      setFinalImages(previous => open ? 'open' : previous === 'unopened' ? previous : 'closed');
+    } : undefined}><summary hidden={!finalImageDisclosure}>저장된 최종 상세 이미지 · {selected.length}장</summary>
+    {(!finalImageDisclosure || finalImages !== 'unopened') && <>
     {stage === 'additional' && <div className="image-edit-workspace">
-      <aside className="image-edit-library" aria-label="상품 저장 이미지 후보 목록"><div className="option-additional-library-header"><h4>{instant?'이미지 대체':`모든 이미지 ${view?.imageKeys.length??0}`}</h4></div><div className="option-additional-library-tabs"><span hidden={!instant}>모든 이미지 <small>{additionalCandidates.length}</small></span>{uploadControl&&<div className="image-library-upload">{uploadControl}</div>}</div><div className={instant?'image-asset-grid option-additional-gallery':'image-asset-grid'}>{candidateCards}{instant&&sourceLibrary&&view&&<details className="option-additional-all-saved"><summary>전체 저장 이미지 · {view.imageKeys.length}개</summary>{view.imageKeys.map((key,index)=>renderCandidate(key,index,'저장 이미지'))}</details>}</div>{view&&!view.imageKeys.length && <p>상품에 저장한 이미지를 먼저 추가해주세요.</p>}<div className="option-additional-sidebar-actions" hidden={!instant}>{sidebarActions}{instant&&saveTools}</div></aside>
+      <aside className="image-edit-library" aria-label="상품 저장 이미지 후보 목록"><div className="option-additional-library-header"><h4>{instant?'이미지 대체':`모든 이미지 ${view?.imageKeys.length??0}`}</h4></div><div className="option-additional-library-tabs"><span hidden={!instant}>모든 이미지 <small>{additionalCandidates.length}</small></span>{uploadControl&&<div className="image-library-upload">{uploadControl}</div>}</div><div className={instant?'image-asset-grid option-additional-gallery':'image-asset-grid'}>{renderCandidates()}{instant&&sourceLibrary&&view&&<details className="option-additional-all-saved" open={allSavedOpen} onToggle={event => {
+        if (event.target === event.currentTarget) setAllSavedOpen(event.currentTarget.open);
+      }}><summary>전체 저장 이미지 · {view.imageKeys.length}개</summary>{allSavedOpen && view.imageKeys.map((key,index)=>renderCandidate(key,index,'저장 이미지'))}</details>}</div>{view&&!view.imageKeys.length && <p>상품에 저장한 이미지를 먼저 추가해주세요.</p>}<div className="option-additional-sidebar-actions" hidden={!instant}>{sidebarActions}{instant&&saveTools}</div></aside>
       <section className="image-edit-canvas" aria-label="선택 옵션 이미지 미리보기"><h4>현재 {label} · {selected.length}/{limit}개</h4>
         {view&&<>
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -638,7 +653,9 @@ export function OptionImageEditor({ uiReads,onBeginSourceWrite,productId, option
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {view.imageKeys.includes(key) ? <img src={imageUrl(key)} alt={`상세 이미지 ${index + 1}`} loading="lazy" /> : <p>현재 상품에 없는 이미지</p>}
       </figure>)}{!selected.length && <p>이 옵션에 선택한 상세 이미지가 없습니다.</p>}</section>
-        <details className="option-detail-image-candidates" open={sourceCandidatesOpen || selected.every(key => knownProtection?.includes(key)) ? true : undefined}><summary>모든 이미지 {view.imageKeys.length} · 상세 이미지 선택·교체</summary><div className="option-detail-image-candidate-grid">{candidateCards}</div>
+        <details className="option-detail-image-candidates" open={sourceCandidatesOpen ?? selected.every(key => knownProtection?.includes(key))} onToggle={event => {
+          if (event.target === event.currentTarget) setSourceCandidatesOpen(event.currentTarget.open);
+        }}><summary>모든 이미지 {view.imageKeys.length} · 상세 이미지 선택·교체</summary><div className="option-detail-image-candidate-grid">{renderCandidates()}</div>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           {preview?.scope === scope && view.imageKeys.includes(preview.key) && <figure className="image-large-preview"><figcaption>이미지 {view.imageKeys.indexOf(preview.key) + 1} 미리보기</figcaption><img src={imageUrl(preview.key)} alt="상세 이미지 후보 큰 미리보기" /></figure>}
           {!view.imageKeys.length && <p>상품에 저장한 이미지를 먼저 추가해주세요.</p>}
@@ -653,6 +670,7 @@ export function OptionImageEditor({ uiReads,onBeginSourceWrite,productId, option
     </>}
     {!!issues.length && <p role="alert">{[...new Set(issues)].join(' ')}</p>}
     {!instant&&saveTools}
+    </>}
     </details>
   </section>;
 }

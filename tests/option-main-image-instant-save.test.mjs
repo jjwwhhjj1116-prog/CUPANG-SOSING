@@ -14,7 +14,7 @@ const plain=value=>JSON.parse(JSON.stringify(value));
 const section=h=>visible(h.render()).find(node=>node.props?.['aria-label']==='옵션 최종 견적 대표이미지 편집');
 const image=h=>visible(section(h)).find(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지')?.props.src;
 const protectedSource=f=>JSON.stringify({tables:['product_options','product_content','product_price_policy','collection_results','collection_jobs','collection_context'].map(table=>[table,f.backend.sqlite.prepare('SELECT * FROM '+table+' ORDER BY rowid').all()]),files:[...f.backend.objects].map(([key,value])=>[key,Buffer.from(value).toString('base64')])});
-const candidate=(h,view,key)=>h.button(`최종 대표이미지 ${view.imageKeys.indexOf(key)+1} 선택`);
+const candidate=(h,view,key)=>{h.openSavedGallery();return h.button(`최종 대표이미지 ${view.imageKeys.indexOf(key)+1} 선택`);};
 const puts=f=>f.calls.filter(call=>call.method==='PUT');
 
 for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])test(`wizard selection, blank and reset immediately save only the exact final SKU image (${company.code})`,async()=>{

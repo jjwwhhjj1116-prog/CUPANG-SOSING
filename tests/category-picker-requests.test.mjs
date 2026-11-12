@@ -24,6 +24,7 @@ function harness(request,existing=false,{initialProfiles,connectExcel=true,readP
   if(name==='react')return hooks;
   if(name==='@/app/components/category-recommendations-panel')return{CategoryRecommendationsPanel:()=>null};
   if(name==='@/app/supplier-hub-category-recommendations')return{resolveRecommendedHubCategoryChoice:()=>assert.fail('manual category fixtures must not request recommendations')};
+  if(name==='@/app/supplier-hub-extension-download')return mappingHarness.load('app/supplier-hub-extension-download.ts');
   if(name.endsWith('.css'))return{};
   if(name==='@/app/category-profiles')return{usableCategoryCode:()=>true};
   if(name==='@/app/quotation-schema')return{getQuotationSchema:()=>({fields:[],status:'observed'})};

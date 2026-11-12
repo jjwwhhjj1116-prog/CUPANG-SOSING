@@ -16,6 +16,13 @@ test('a current failed/running stage projects only its display status without mu
  assert.equal(rendered.content_summary.stages.mainImage.state,'failed');assert.match(rendered.content_summary.stages.mainImage.detail,/미확정/);assert.equal(rendered.content_summary.stages.seo.state,'complete');assert.deepEqual(p,before);
  const running=update(failed,scope,run,[p.id],event(p,'running','detailImage'));assert.equal(project([p],'owner-a',scope,running)[0].content_summary.stages.detailImage.state,'running');
 });
+test('a blocked stage shows review needed without turning verified server data into an error',()=>{
+ const p=product(),feedback=update(start(),scope,run,[p.id],event(p,'blocked','detailImage'));
+ const stage=project([p],'owner-a',scope,feedback)[0].content_summary.stages.detailImage;
+ assert.equal(stage.state,'review');
+ assert.match(stage.detail,/미확정/);
+ assert.equal(p.content_summary.stages.detailImage.state,'pending');
+});
 test('owner, source scope ABA, product version and source/image/name changes discard old display statuses',()=>{
  const p=product(),feedback=update(start(),scope,run,[p.id],event(p));
  assert.equal(project([p],'other',scope,feedback)[0],p);assert.equal(project([p],'owner-a',{},feedback)[0],p);

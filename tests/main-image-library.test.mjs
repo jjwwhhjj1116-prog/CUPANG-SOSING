@@ -40,7 +40,7 @@ test('a pending explicit image choice prevents an automatic metadata refresh fro
  const f=await fixture(),request=f.request;let quotations=0,release,held=true;const pending=new Promise(resolve=>{release=resolve;});
  f.request=async(url,init)=>{const response=await request(url,init);if(url.includes('/quotation-fields')&&++quotations===1)advanceMetadata(f,'product_content');if(url.endsWith('/content')&&held)await pending;return response;};
  const h=editor(f);try{
-  await h.idle();const view=await f.read(),frozen=snapshot(f);await h.click(candidateLabel(view,f.nextKey));held=false;release();await h.idle();
+  await h.idle();h.openSavedGallery();const view=await f.read(),frozen=snapshot(f);await h.click(candidateLabel(view,f.nextKey));held=false;release();await h.idle();
   assert.equal(quotations,1);assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(h.button('메인 이미지 보기').props.disabled,true);
   assert.ok(visible(h.render()).some(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지'&&node.props.src==='/api/files/'+f.nextKey));assert.equal(snapshot(f),frozen);assert.ok(f.calls.every(call=>call.method==='GET'));
  }finally{release();h.close();f.close();}
@@ -50,7 +50,7 @@ for(const change of ['draft','focus'])test(`an in-flight gallery recovery cannot
  const f=await fixture(),request=f.request;let quotations=0,release;const pending=new Promise(resolve=>{release=resolve;});
  f.request=async(url,init)=>{const response=await request(url,init);if(url.includes('/quotation-fields')){quotations++;if(quotations===1)advanceMetadata(f,'product_content');else if(quotations===2)await pending;}return response;};
  const h=editor(f);try{
-  await h.idle();assert.equal(quotations,2);const view=await f.read(),frozen=snapshot(f),old=h.button(candidateLabel(view,f.nextKey)).props.onClick;
+  await h.idle();h.openSavedGallery();assert.equal(quotations,2);const view=await f.read(),frozen=snapshot(f),old=h.button(candidateLabel(view,f.nextKey)).props.onClick;
   if(change==='draft'){assert.equal(h.button(candidateLabel(view,f.nextKey)).props.disabled,false);old();await h.idle();}else{h.props.focusedOptionId=view.resolved.rows.find(row=>row.optionId&&row.optionId!==f.id).optionId;await h.idle();old();}
   release();await h.idle();
   assert.equal(h.render().props['data-workspace-dirty'],change==='draft');assert.equal(h.saved.length,0);assert.equal(snapshot(f),frozen);assert.ok(f.calls.every(call=>call.method==='GET'));
@@ -63,7 +63,10 @@ test('gallery recovery does not adopt a concurrently edited final representative
  const f=await fixture(),request=f.request;let quotations=0,frozen;
  f.request=async(url,init)=>{const response=await request(url,init);if(url.includes('/quotation-fields')&&++quotations===1){advanceMetadata(f,'product_content');const latest=await f.read();await json(await f.backend.route(f.endpoint,{method:'PUT',body:{expectedRevision:latest.revision,expectedInputFingerprint:latest.inputFingerprint,changes:[{optionId:f.id,fieldKey:'mainImage',value:f.nextKey}]}}));frozen=snapshot(f);}return response;};
  const h=editor(f);try{
-  await h.idle();assert.equal(quotations,2);assert.equal(f.calls.filter(call=>call.url.endsWith('/content')).length,1);assert.equal(h.button('메인 이미지 보기').props.disabled,true);
+  await h.settled();
+  const failed=()=>text(h.render()).includes('이미지 종류를 확인하지 못했습니다.');
+  for(let pass=0;pass<20&&!failed();pass++)await h.idle();
+  assert.ok(failed());assert.equal(quotations,2);assert.equal(f.calls.filter(call=>call.url.endsWith('/content')).length,1);assert.equal(h.button('메인 이미지 보기').props.disabled,true);
   assert.ok(visible(h.render()).some(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지'&&node.props.src==='/api/files/'+f.key));assert.equal(snapshot(f),frozen);assert.ok(f.calls.every(call=>call.method==='GET'));
  }finally{h.close();f.close();}
 });

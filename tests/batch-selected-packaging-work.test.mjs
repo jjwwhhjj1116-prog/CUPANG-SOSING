@@ -100,10 +100,33 @@ test('an unknown provider result after a confirmed chunk stops later inference w
     const counts = [];
     const result = await run(f.id, await f.controls({ onProgress: (_message, count) => { if (count) counts.push([count.completed, count.total]); } }));
     assert.equal(result.status, 'incomplete'); assert.equal(result.changed, 20); assert.equal(result.estimated, 20); assert.equal(result.remaining, 21);
-    assert.deepEqual(counts, [[0, 3], [1, 3], [1, 3]]);
+    assert.deepEqual(counts, [[0, 41], [20, 41], [20, 41]]);
     assert.equal(attempts, 2); assert.equal(f.requests.filter(call => call.method === 'POST').length, 2); assert.equal(f.requests.filter(call => call.method === 'PUT').length, 1);
     assert.equal(JSON.stringify(await f.store.readProductOptions('owner', f.id)), f.optionsBefore);
   } finally { f.close(); }
+});
+
+test('the gauge counts a saved option once only after its weight and dimensions are both confirmed', async () => {
+  for (const provideWeight of [true, false]) {
+    const f = await fixture(companies[0], 1);
+    try {
+      const stored = f.h.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(f.id);
+      const options = JSON.parse(stored.payload);
+      options.rows[0].packagedWeightG = null;
+      delete options.rows[0].provenance.packagedWeightG;
+      f.h.sqlite.prepare('UPDATE product_options SET payload=? WHERE product_id=?').run(JSON.stringify(options), f.id);
+      if (!provideWeight) f.h.bindings.AI.run = async (_model, input) => {
+        const source = JSON.parse(input.messages[1].content.slice(0, -'\n/no_think'.length));
+        return qwen(source.packages.map(item => packagingItem(item, { widthMm: 60, lengthMm: 80, heightMm: 15 })));
+      };
+      const counts = [];
+      const result = await run(f.id, await f.controls({ onProgress: (_message, count) => counts.push([count.completed, count.total]) }));
+      assert.deepEqual(counts, [[0, 1], [provideWeight ? 1 : 0, 1]]);
+      assert.equal(result.changed, provideWeight ? 2 : 1);
+      assert.equal(result.remaining, provideWeight ? 0 : 1);
+      assert.equal(result.status, provideWeight ? 'draft' : 'incomplete');
+    } finally { f.close(); }
+  }
 });
 
 test('a lost confirmed chunk save ACK is read exactly before continuing disjoint later chunks', async () => {
@@ -112,7 +135,7 @@ test('a lost confirmed chunk save ACK is read exactly before continuing disjoint
     const counts = [];
     const result = await run(f.id, await f.controls({ fetcher, onProgress: (_message, count) => { if (count) counts.push([count.completed, count.total, f.requests.at(-1)?.method]); } }));
     assert.equal(result.status, 'draft'); assert.equal(result.recovered, true); assert.equal(result.changed, 41); assert.equal(result.remaining, 0);
-    assert.deepEqual(counts.map(([completed, total]) => [completed, total]), [[0, 3], [1, 3], [1, 3], [2, 3], [2, 3], [3, 3]]);
+    assert.deepEqual(counts.map(([completed, total]) => [completed, total]), [[0, 41], [20, 41], [20, 41], [40, 41], [40, 41], [41, 41]]);
     assert.equal(counts[1][2], 'GET');
     assert.deepEqual(f.requests.map(call => call.method), ['GET', 'POST', 'PUT', 'GET', 'GET', 'POST', 'PUT', 'GET', 'POST', 'PUT']); assert.equal(f.models.length, 3);
     assert.equal(new Set(f.requests.filter(call => call.method === 'POST').flatMap(call => call.body.batchOptionIds)).size, 41);
@@ -185,9 +208,12 @@ for (const company of companies) for (const complete of [20, 0]) test(`${company
     const endpoint = f.base + '/quotation-fields', view = await json(await f.h.route(endpoint)), source = await f.h.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner', f.id, null),
       plan = f.h.load('app/quotation-ai.ts').buildQuotationAiPlan(source, { optionId: null, applyToAllOptions: true }), values = new Map();
     const reviewedValue = field => field.choices?.find(choice => choice.value)?.value ?? (field.type === 'number' ? String(Math.max(field.min ?? 0, 1)) : '합성 검토값');
+    const fields = view.resolved.schema.fields;
+    const requiredHidden = f.h.load('app/current-quotation-attribute-rules.ts').currentAttributeRules(f.snapshot, fields)
+      .filter(rule => rule.hidden && (rule.generationMandatory || rule.applyRequired));
     for (const field of plan.fields) values.set(field.id, reviewedValue(field));
-    for (const field of view.resolved.schema.fields) if (field.visibility === 'hidden' && field.choices && !field.readOnly) values.set(field.id, reviewedValue(field));
-    for (const field of view.resolved.schema.fields) if (field.required && !field.readOnly && !f.h.load('app/quotation-packaging-basis.ts').isQuotationPackagingField(view.resolved.schema.fields, field.id)
+    for (const field of fields) if (requiredHidden.some(rule => rule.fieldKey === field.id) && !field.readOnly) values.set(field.id, reviewedValue(field));
+    for (const field of fields) if (field.required && !field.readOnly && !f.h.load('app/quotation-packaging-basis.ts').isQuotationPackagingField(fields, field.id)
       && !view.resolved.rows.find(row => row.included).fields[field.id].value.trim()) values.set(field.id, reviewedValue(field));
     await json(await f.h.route(endpoint, { method: 'PUT', body: { expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint,
       changes: [...values].map(([fieldKey, value]) => ({ optionId: null, fieldKey, value })) } }));

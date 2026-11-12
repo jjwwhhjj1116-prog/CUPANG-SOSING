@@ -57,6 +57,20 @@ test('a generated brand prefix is not duplicated and a similar word is not mista
  }
 });
 
+test('a Qwen title with a joined Korean brand gets one separator in SEO and its linked label',()=>{
+ const {content,job}=fixture();
+ Object.assign(job.review,{model:load('app/automation/translation.ts').WORKERS_QWEN_MODEL,instructionsVersion:'sourceflow-translation-v6'});
+ Object.assign(job.review.source,{title:'三角纱窗清洁刷',description:''});
+ Object.assign(job.result.draft,{title:'유앤채삼각 방충망 청소솔',warnings:[]});
+ const before=JSON.stringify(job),plan=adopt(content,job,version,'유앤채');
+ assert.equal(plan.input.patch.seo.title,'유앤채 삼각 방충망 청소솔');
+ assert.equal(plan.input.patch.label.productName,'유앤채 삼각 방충망 청소솔');
+ assert.equal(JSON.stringify(job),before);
+ job.review.source.title='유앤채청소AB-123 三角纱窗清洁刷';
+ job.result.draft.title='유앤채청소AB-123 방충망 청소솔';
+ assert.equal(adopt(content,job,version,'유앤채').input.patch.seo.title,job.result.draft.title);
+});
+
 test('missing or deliberately blank captured brand leaves the source draft title alone',()=>{
  for(const brand of [undefined,'','  ']){
   const {content,job}=fixture();assert.equal(adopt(content,job,version,brand).input.patch.seo.title,job.result.draft.title);

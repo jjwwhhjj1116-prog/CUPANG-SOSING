@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import {createRequire} from 'node:module';
+import {fileURLToPath} from 'node:url';
+import * as parse5 from 'parse5';
 import cvReady from '@techstark/opencv-js';
 import sharp from 'sharp';
 import {freeImageEditFixture} from './helpers/free-image-edit-api.mjs';
 const cv=await cvReady;
+const requireModule=createRequire(import.meta.url);
 
 test('v2 preserves physical product markings while editing only the separate overlay, including textured product pixels',async()=>{
  const h=fixture((x,y)=>x>=70?((x+y)%2?[0,0,0,255]:[255,255,255,255]):[220,225,230,255]),policy='product-text-preservation-v2';
@@ -81,14 +85,75 @@ function fixture(color=()=>[220,225,230,255]){
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
    {exports,Error,Date,URL,TextEncoder,Blob,Uint8ClampedArray,Uint8Array,DataView,btoa,AbortController,AbortSignal,structuredClone,document,setTimeout,clearTimeout,
     Worker:class{postMessage(request){queueMicrotask(()=>{try{const data=load('app/free-image-inpaint.ts').inpaintFreeImagePixels(cv,request);this.onmessage?.({data:{id:request.id,width:request.width,height:request.height,data}});}catch(error){this.onerror?.(error);}});}terminate(){}},
-    fetch:()=>assert.fail('cleanup must not make a translation request'),require:name=>{assert.ok(name.startsWith('@/'));return load(name.slice(2)+'.ts');}});return exports;
+    fetch:()=>assert.fail('cleanup must not make a translation request'),require:name=>{
+     if(name==='parse5')return parse5;
+     assert.ok(name.startsWith('@/'),name);
+     return name.endsWith('.mjs')?requireModule(fileURLToPath(new URL('../'+name.slice(2),import.meta.url))):load(name.slice(2)+'.ts');
+    }});return exports;
  }
  const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;canvas.pixels=new Uint8ClampedArray(width*height*4);
  for(let y=0;y<height;y++)for(let x=0;x<width;x++)canvas.pixels.set(color(x,y),(y*width+x)*4);
- return{...load('app/selected-image-purpose.ts'),...load('app/free-image-vision-style.ts'),vision:load('app/automation/workers-image-vision.ts'),contract:load('app/image-text-vision.ts'),render:load('app/free-image-translation-client.ts').renderFreeImageTranslation,
+ const client=load('app/free-image-translation-client.ts');
+ return{...load('app/selected-image-purpose.ts'),...load('app/free-image-vision-style.ts'),vision:load('app/automation/workers-image-vision.ts'),contract:load('app/image-text-vision.ts'),render:client.renderFreeImageTranslation,initializeFreeImageVisionRegions:client.initializeFreeImageVisionRegions,
   image:{source,canvas,width,height,blob:new Blob(['original'])},operations};
 }
 const region=(id,text='中文文句',box={x:20,y:20,width:40,height:16})=>({id,text,box,confidence:95,selected:true,translated:'',translationProvenance:'empty',issue:null,background:'#ffffff',foreground:'#111111',fontSize:10});
+
+function additionalOverlay(h){
+ h.image.source.role='additional';
+ Object.assign(h.image.source.quotationTarget,{input:'additionalImages',fieldKey:'additionalImages'});
+ return h.vision.parseImageVisionResponse({response:{decision:'foreign-text',blocks:[
+  {original:'中文',translated:'중국어',kind:'overlay',box:{x:20,y:20,width:40,height:16}},
+ ]}},100,60,'product-text-preservation-v2');
+}
+
+test('additional cleanup stops before rendering when a detached red bullet lies outside the OCR mask',()=>{
+ const h=fixture((x,y)=>x===15&&y>=25&&y<=29?[210,0,0,255]:[220,225,230,255]),result=additionalOverlay(h);
+ const styled=h.initializeVisionRegions(result.blocks,h.image.canvas,100,60);
+ assert.deepEqual(plain(styled.issues),[],'sparse background sampling misses the adjacent bullet');
+ Object.assign(h.image,{visionResult:result,visionStyleIssues:styled.issues});
+ assert.throws(()=>h.prepareSelectedImageCleanup(h.image,styled.regions),/문구 제거 전 영역·배경 검토/);
+ assert.deepEqual(h.operations,[]);
+});
+
+test('additional cleanup produces a seamless flat panel using the verified refined overlay edge',async()=>{
+ const background=[220,225,230,255],h=fixture((x,y)=>x>=18&&x<=24&&y>=25&&y<=29?[0,0,0,255]:background);
+ const result=additionalOverlay(h);
+ Object.assign(h.image,{visionResult:result,visionExecution:{requests:1,cached:false}});
+ const styled=h.initializeFreeImageVisionRegions(h.image,result,{freshExecution:true});
+ assert.ok(styled.regions[0].box.x<20,'the connected ink crosses the provider box');
+ const prepared=h.prepareSelectedImageCleanup(h.image,styled.regions);
+ const rendered=await h.render(h.image,prepared,new AbortController().signal);
+ const pixels=new Uint8Array(await rendered.output.arrayBuffer());
+ assert.deepEqual(pixels,new Uint8Array(Array.from({length:100*60},()=>background).flat()));
+ assert.deepEqual(plain(rendered.editDocument.regions[0].box),plain(styled.regions[0].box));
+ assert.equal(result.blocks[0].box.x,20);
+});
+
+test('additional cleanup still restores a gentle nonflat background without changing neighboring pixels',async()=>{
+ const background=x=>[195+Math.floor(x/2),200+Math.floor(x/2),205+Math.floor(x/2),255];
+ const h=fixture((x,y)=>x>=27&&x<=32&&y>=24&&y<=30?[5,5,5,255]:background(x)),result=additionalOverlay(h);
+ const styled=h.initializeVisionRegions(result.blocks,h.image.canvas,100,60);
+ Object.assign(h.image,{visionResult:result,visionStyleIssues:styled.issues});
+ const before=h.image.canvas.pixels.slice(),prepared=h.prepareSelectedImageCleanup(h.image,styled.regions);
+ const rendered=await h.render(h.image,prepared,new AbortController().signal),after=new Uint8Array(await rendered.output.arrayBuffer());
+ const pixel=(x,y)=>Array.from(after.slice((y*100+x)*4,(y*100+x)*4+4));
+ assert.ok(pixel(30,26)[0]>=195,'dark lettering is removed');
+ assert.deepEqual(pixel(19,26),background(19));
+ assert.deepEqual(pixel(60,26),background(60));
+ assert.deepEqual(h.image.canvas.pixels,before);
+ assert.ok(h.operations.some(([operation])=>operation==='restore'));
+});
+
+test('additional cleanup preserves existing alpha within an otherwise flat panel',async()=>{
+ const h=fixture((x,y)=>x===30&&y===26?[0,0,0,128]:[220,225,230,255]),result=additionalOverlay(h);
+ const styled=h.initializeVisionRegions(result.blocks,h.image.canvas,100,60);
+ Object.assign(h.image,{visionResult:result,visionStyleIssues:styled.issues});
+ const prepared=h.prepareSelectedImageCleanup(h.image,styled.regions);
+ const rendered=await h.render(h.image,prepared,new AbortController().signal);
+ const pixels=new Uint8Array(await rendered.output.arrayBuffer());
+ assert.equal(pixels[(26*100+30)*4+3],128);
+});
 
 test('actual renderer restores selected OCR pixels with pinned OpenCV without translated Korean and retains every editable original row',async()=>{
  const h=fixture(),rows=[region('chosen'),{...region('numbers','12345',{x:70,y:20,width:20,height:16}),selected:false,confidence:20},region('korean','한국어',{x:20,y:45,width:20,height:10})];

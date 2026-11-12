@@ -42,6 +42,10 @@ async function readSnapshotSource(owner: string, id: string, profileId: string |
   const company = user?.verifiedAccess && user.userId === owner ? approvedSupplierHubCompany(user.membership) : null;
   const product = await findProduct(owner, id);
   if (!product) throw new FieldsError('상품을 찾을 수 없습니다.', 404);
+  let offerId: string | null = null;
+  try { offerId = parseCollectionRequest({ urls: [product.source_url] })[0].offerId; } catch { /* Legacy non-product URLs have no inferred category. */ }
+  const capturedRead = offerId ? readQuotationCollectionSource(owner, offerId, id)
+    .then(snapshot => ({ snapshot }), error => ({ error })) : null;
   const [content, options, savedSettings, state, profile, labelsState] = await Promise.all([
     readProductContent(owner, id), readProductOptions(owner, id), getSettings(owner), readQuotationFields(owner, id),
     profileId ? getCategoryProfile(owner, profileId) : Promise.resolve(null), readProductLabels(owner, id),
@@ -56,10 +60,11 @@ async function readSnapshotSource(owner: string, id: string, profileId: string |
   let capturedTemplate:TemplateDefinition|null=null;
   if (profile) categoryContext = { source: 'profile', profileId: profile.id, categoryId: profile.categoryId || null, categoryPath: [...profile.categoryPath] };
   {
-    let offerId: string | null = null;
-    try { offerId = parseCollectionRequest({ urls: [product.source_url] })[0].offerId; } catch { /* Legacy non-product URLs have no inferred category. */ }
-    if (offerId) {
-      const source = await readQuotationCollectionSource(owner, offerId, id); collection = { offerId, snapshot: source };
+    if (offerId && capturedRead) {
+      const capturedResult = await capturedRead;
+      if ('error' in capturedResult) throw capturedResult.error;
+      const source = capturedResult.snapshot;
+      collection = { offerId, snapshot: source };
       const captured = source ? JSON.parse(source.payload) : null;
       if (source?.linked) {
         try { verifyCapturedCollectionCompany(captured, company); }

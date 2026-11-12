@@ -1,9 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import vm from 'node:vm';
-import ts from 'typescript';
-function load(file) { const exports={}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,structuredClone,Error,require:name=>load(name.slice(2)+'.ts')}); return exports; }
+import {providedOptionModule as load} from './helpers/provided-option-quotation.mjs';
 const {translationAdoptionInput}=load('app/translation-adoption.ts');
 const {emptyProductContent,applyContentPatch}=load('app/product-content.ts');
 const {translationBatchAdoption}=load('app/translation-batch-adoption.ts');
@@ -70,7 +67,9 @@ test('batch adoption saves SEO and exact label matches once while protecting man
 });
 function fixture(){
  const content=applyContentPatch(emptyProductContent('p'),{seo:{title:'수동 제목',keywords:['유지'],description:'수동 설명'},label:{material:'면'}},'before');
- const job={productId:'p',productVersion:'v',status:'completed',result:{draft:{title:'번역 제목',keywords:['번역 검색어'],description:'번역 설명'}}};
+ const job={productId:'p',productVersion:'v',status:'completed',
+  review:{instructionsVersion:'sourceflow-translation-v1',source:{title:'原文',description:'原文説明',attributes:[]}},
+  result:{draft:{title:'번역 제목',keywords:['번역 검색어'],description:'번역 설명',attributes:[],warnings:[]}}};
  return {content,job};
 }
 test('selected translation fields form one revision-bound save and preserve unselected content',()=>{

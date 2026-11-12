@@ -52,17 +52,18 @@ export async function readQuotationFields(owner: string, productId: string): Pro
   return state;
 }
 export async function readQuotationCollectionSource(owner: string, offerId: string, productId: string): Promise<QuotationCollectionSource | null> {
+  if (!productId) return null;
   const db = await database();
-  if (productId) {
-    const link = await db.prepare('SELECT job_id FROM collection_products WHERE owner_id=? AND product_id=?').bind(owner,productId).first<{job_id:string}>();
-    if (link) {
-      const captured = await db.prepare(`SELECT j.id,c.payload,j.updated_at FROM collection_jobs j JOIN collection_context c ON c.job_id=j.id
-        WHERE j.owner_id=? AND j.offer_id=? AND j.id=? AND j.status='awaiting_connector'`).bind(owner,offerId,link.job_id).first<{id:string;payload:string;updated_at:string}>();
-      if (!captured) throw new Error('상품에 연결된 카테고리 원문을 확인하지 못했습니다.');
-      return {id:captured.id,payload:captured.payload,updatedAt:captured.updated_at,linked:true};
-    }
-  }
-  return null;
+  const captured = await db.prepare(`SELECT j.id,c.payload,j.updated_at
+    FROM collection_products cp
+    LEFT JOIN collection_jobs j ON j.id=cp.job_id AND j.owner_id=cp.owner_id AND j.offer_id=? AND j.status='awaiting_connector'
+    LEFT JOIN collection_context c ON c.job_id=j.id
+    WHERE cp.owner_id=? AND cp.product_id=?`).bind(offerId, owner, productId)
+    .first<{id:string|null;payload:string|null;updated_at:string|null}>();
+  if (!captured) return null;
+  if (captured.id === null || captured.payload === null || captured.updated_at === null)
+    throw new Error('상품에 연결된 카테고리 원문을 확인하지 못했습니다.');
+  return {id:captured.id,payload:captured.payload,updatedAt:captured.updated_at,linked:true};
 }
 export function sourceGuard(owner: string, productId: string, source: QuotationSourceGuard) {
   const conditions = [

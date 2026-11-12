@@ -47,6 +47,92 @@ test('one changed option renders and relinks only its own label while exact sibl
   } finally { f.h.close(); }
 });
 
+test('linked SEO title edits reopen the label stage, and only changed plans get new PNGs', async () => {
+  const f = await fixture(); try {
+    const labels = await f.read(), options = labels.rows.filter(row => row.optionId && row.included), kept = options[0];
+    assert.equal(options[1].sources.productName, 'quotation');
+    await f.request(f.base + '/product-labels', {method:'PUT',body:JSON.stringify({
+      expectedRevision:labels.revision,expectedInputFingerprint:labels.inputFingerprint,
+      changes:Object.entries(kept.values).map(([fieldKey,value])=>({optionId:kept.optionId,fieldKey,value})),
+    })}).then(json);
+    const getProduct = () => f.h.route(f.base).then(json).then(body => body.product);
+    const summary = async () => {
+      const product = f.h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(f.product.id);
+      return (await f.h.load('db/product-content.ts').readRegistrationSummaries('owner', [product]))[f.product.id];
+    };
+    const beforeQuote = await f.quote(), target = f.h.load('app/quotation-seo-targets.ts').exactPrimaryQuotationTarget(beforeQuote.resolved.schema.fields, 'labelImages');
+    const refs = view => Object.fromEntries(view.resolved.rows.filter(row => row.optionId).map(row => [row.optionId, row.fields[target.primary].value]));
+    const before = refs(beforeQuote);
+    const initialStage = (await summary()).stages.koreanLabel;
+    assert.equal(initialStage.state, 'complete', initialStage.detail);
+    const content = (await f.h.route(f.base + '/content').then(json)).content, title = '새로 저장한 연결 상품명';
+    await f.h.route(f.base + '/content', {method: 'PATCH', body: {expectedRevision: content.revision, patch: {seo: {title}}}}).then(json);
+    const edited = await f.read();
+    assert.equal(edited.rows.find(row => row.optionId === kept.optionId).values.productName, kept.values.productName);
+    assert.ok(edited.rows.find(row => row.optionId === options[1].optionId).values.productName.startsWith(title));
+    const tables = f.tables();
+    assert.equal((await summary()).stages.koreanLabel.state, 'pending');
+    assert.equal((await getProduct()).content_summary.stages.koreanLabel.state, 'pending');
+    assert.equal(f.tables(), tables, 'freshness checks only read the attached label');
+    assert.deepEqual(refs(await f.quote()), before);
+    f.reset(); const run = await f.run(), after = refs(await f.quote());
+    assert.equal(run.status, 'draft', run.message);
+    assert.equal(run.completedOptions, options.length);
+    assert.equal(f.renders.length, options.length - 1);
+    assert.ok(f.renders.every(plan => plan.rows.some(([label, value]) => label === '제품명' && value.startsWith(title))));
+    for (const row of options) {
+      assert.equal(after[row.optionId] === before[row.optionId], row.optionId === kept.optionId);
+      assert.ok(f.h.objects.has(before[row.optionId]), 'the historical file is retained');
+    }
+    assert.equal((await getProduct()).content_summary.stages.koreanLabel.state, 'complete');
+  } finally { f.h.close(); }
+});
+
+test('listing checks unique generated label objects with one shared snapshot and preserves an unmarked legacy PNG', async t => {
+  const f = await fixture(); try {
+    const original = await f.quote(), rows = original.resolved.rows.filter(row => row.optionId);
+    const target = f.h.load('app/quotation-seo-targets.ts').exactPrimaryQuotationTarget(original.resolved.schema.fields, 'labelImages');
+    const manual = original.imageKeys.find(key => !/\/quotation-label-[a-f0-9]{64}\.png$/.test(key));
+    assert.ok(manual);
+    const select = async (generated, fallback = manual) => {
+      const view = await f.quote();
+      await f.h.route(f.base + '/quotation-fields', {method:'PUT',body:{
+        expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,
+        changes:rows.flatMap((row,index)=>target.linked.map(fieldKey=>({optionId:row.optionId,fieldKey,value:index<generated?row.fields[target.primary].value:fallback}))),
+      }}).then(json);
+    };
+    const prepare = f.h.db.prepare, head = f.h.bindings.FILES.head;
+    const measure = async () => {
+      const product = f.h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(f.product.id), counts = {sql:0,head:0};
+      f.h.db.prepare = sql => { counts.sql++; return prepare(sql); };
+      f.h.bindings.FILES.head = async key => { counts.head++; return head(key); };
+      try {
+        const result = await f.h.load('db/product-content.ts').readRegistrationSummaries('owner',[product]);
+        return {...counts,state:result[f.product.id].stages.koreanLabel.state};
+      } finally { f.h.db.prepare = prepare; f.h.bindings.FILES.head = head; }
+    };
+    const measured = [];
+    for (const count of [0,1,2]) { await select(count); measured.push(await measure()); }
+    assert.deepEqual(measured.map(row => row.head),[0,1,2]);
+    assert.deepEqual(measured.map(row => row.state),['complete','complete','complete']);
+    assert.equal(measured[1].sql,measured[2].sql,'generated options share one current quotation/label source read');
+    t.diagnostic(JSON.stringify(measured));
+
+    const generatedKey = rows[0].fields[target.primary].value, savedFile = f.h.objects.get(generatedKey);
+    assert.ok(savedFile); f.h.objects.delete(generatedKey);
+    assert.equal((await measure()).state,'pending','an absent generated-style file cannot show as complete');
+    f.h.objects.set(generatedKey,savedFile);
+
+    const form = new FormData(); form.set('file',new File([png],'sourceflow-quotation-label.png',{type:'image/png'}));
+    form.set('labelUploadId','f'.repeat(64));
+    const response = await f.request('/api/files',{method:'POST',body:form}); assert.equal(response.status,201);
+    const {key} = await response.json(), current = await f.quote();
+    await f.h.route(f.base + '/attachments',{method:'POST',body:{key,role:null,expectedVersion:current.productVersion,expectedContentRevision:current.contentRevision}}).then(json);
+    await select(0,key);
+    assert.deepEqual(await measure(),{sql:measured[0].sql,head:1,state:'complete'},'an existing unmarked file stays manual without loading label plans');
+  } finally { f.h.close(); }
+});
+
 test('reuse keeps excluded options untouched and preserves an explicitly blank manual label value', async () => {
   const f = await fixture(); try {
     const current = await json(await f.h.route(f.base + '/options')), rows = f.h.load('app/product-options.ts').optionInputs(current.options), excluded = rows.at(-1).id; rows.at(-1).included = false;
@@ -63,6 +149,8 @@ test('a company change cannot reuse or replace the original company label artifa
   const f = await fixture(); try {
     const before = f.tables(), ai = f.ai; f.h.setCompany({ code: 'A01526306', name: '유앤채' }); f.reset(); const result = await f.run();
     assert.ok(['blocked', 'failed'].includes(result.status)); assert.equal(result.completedOptions, 0); assert.equal(f.renders.length, 0); assert.equal(f.ai, ai); assert.ok(f.calls.every(call => call.method === 'GET')); assert.equal(f.tables(), before);
+    const {product} = await f.h.route(f.base).then(json);
+    assert.equal(product.content_summary.stages.koreanLabel.state, 'pending');
   } finally { f.h.close(); }
 });
 

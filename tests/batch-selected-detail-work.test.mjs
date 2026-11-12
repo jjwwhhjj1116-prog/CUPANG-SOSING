@@ -105,26 +105,54 @@ test('automatic BODY accepts only exact fresh raw-result-bound refined boxes and
 
 test('one unsafe unselected BODY block does not discard safe translations or publish an incomplete composite',async()=>{
  const h=await setup(),seen=await bodyVision(h,[safeBlock,tinyBlock]),before=plain(h.f.view),result=await h.run();
- assert.equal(result.status,'partial',result.messages.join(' '));assert.equal(result.applied,1);
+ assert.equal(result.status,'partial',result.messages.join(' '));assert.equal(result.applied,2);
  assert.deepEqual(seen.rendered.filter(row=>row.selected).map(row=>row.id),['vision-1']);
  assert.equal(seen.rendered[0].translated,'편안한 양말');assert.equal(seen.rendered[0].backgroundMode,'inpaint-telea-v1');
  assert.deepEqual(seen.rendered[1],{...seen.original[1],selected:false,translated:'',translationProvenance:'empty',issue:fitIssue});
  assert.deepEqual(seen.renderedSource,seen.source);assert.equal(seen.rendered[1].text,'柔软面料');assert.deepEqual(seen.rendered[1].box,tinyBlock.box);
  assert.deepEqual(h.f.view,before);assert.equal(Object.values(h.state.photos)[0].partial,true);
- assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,1);assert.ok(!h.calls.some(row=>row.operation==='composite-prepare'||row.operation==='composite-apply'));
+ assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,2);assert.ok(!h.calls.some(row=>row.operation==='composite-prepare'||row.operation==='composite-apply'));
  const calls=h.calls.length;assert.equal((await h.run()).status,'partial');assert.ok(!h.calls.slice(calls).some(row=>['vision','render','image-apply','composite-apply'].includes(row.operation)));
+});
+
+for(const saved of [false,true])test(`a ${saved?'previously saved':'newly saved'} partial BODY leaves later photos eligible while publication stays blocked`,async()=>{
+ const h=await setup({saved}),counts=[],recognize=h.deps.recognize,read=h.deps.readImage;
+ if(saved){
+  h.deps.readImage=async(...args)=>{
+   const image=await read(...args);
+   if(image.source.sourceKey==='owner/one.png')image.editDocument={regions:[{selected:false,issue:fitIssue,text:tinyBlock.text,translated:'',translationProvenance:'empty'}]};
+   return image;
+  };
+ }else{
+  await bodyVision(h,[safeBlock,tinyBlock]);
+  const recognizePartial=h.deps.recognize;
+  h.deps.recognize=image=>image.source.sourceKey==='owner/one.png'?recognizePartial(image):recognize(image);
+ }
+ const before=plain(h.f.view);
+ h.options.onProgress=(_message,count)=>{if(count)counts.push(plain(count));};
+ const result=await h.run();
+ assert.equal(result.status,'partial',result.messages.join(' '));
+ assert.match(result.messages.join(' '),/1\/2장.*1장.*검토/);
+ assert.deepEqual(h.calls.filter(row=>row.operation==='vision').map(row=>row.key),saved?['owner/two.png']:['owner/one.png','owner/two.png']);
+ assert.deepEqual([...new Set(counts.map(row=>row.completed))],[0,1]);
+ assert.ok(counts.every(row=>row.total===2));
+ const photos=h.f.workspace.document.photos.filter(photo=>photo.role==='body');
+ assert.equal(photos[0].key===photos[0].originKey,saved,'the previously saved editor is left alone');
+ assert.notEqual(photos[1].key,photos[1].originKey,'the later verified translation is saved');
+ assert.deepEqual(h.f.view,before);
+ assert.ok(!h.calls.some(row=>row.operation==='composite-prepare'||row.operation==='composite-apply'));
 });
 
 test('an unselected foreign overlay without a style issue remains an unresolved saved BODY draft',async()=>{
  const h=await setup(),seen=await bodyVision(h,[safeBlock,{...tinyBlock,box:{x:10,y:60,width:100,height:30}}],(_image,regions)=>{regions[1].selected=false;});
- assert.equal((await h.run()).status,'partial');assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,1);
+ assert.equal((await h.run()).status,'partial');assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,2);
  assert.equal(seen.rendered[1].selected,false);assert.equal(seen.rendered[1].translated,'');assert.equal(seen.rendered[1].translationProvenance,'empty');assert.match(seen.rendered[1].issue,/자동 번역 미완료/);
  assert.ok(!h.calls.some(row=>row.operation==='composite-apply'));
 });
 
 test('a rejected BODY translation retains its provider and localized style diagnostics in the partial draft',async()=>{
  const rejected={...tinyBlock,translated:null,issue:'번역 검증을 통과하지 못했습니다. 원문과 영역을 확인해주세요.'},h=await setup(),seen=await bodyVision(h,[safeBlock,rejected]);
- assert.equal((await h.run()).status,'partial');assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,1);
+ assert.equal((await h.run()).status,'partial');assert.equal(h.calls.filter(row=>row.operation==='image-apply').length,2);
  assert.equal(seen.rendered[1].issue,rejected.issue+' '+fitIssue);assert.equal(seen.rendered[1].selected,false);assert.equal(seen.rendered[1].translated,'');assert.equal(seen.rendered[1].translationProvenance,'empty');
  assert.ok(!h.calls.some(row=>row.operation==='composite-apply'));
 });

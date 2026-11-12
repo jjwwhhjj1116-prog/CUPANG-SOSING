@@ -39,7 +39,14 @@ test('current additional thumbnail state follows the preview without changing sa
   await h.idle();assert.deepEqual(pressed(),['추가 이미지 1 크게 보기']);assert.equal(preview(),'/api/files/owner/three.png');
   assert.equal(h.button('추가 이미지 1 크게 보기').props.type,'button');assert.equal(h.button('추가 이미지 2 크게 보기').props['aria-pressed'],false);
   await h.click('추가 이미지 2 크게 보기');assert.deepEqual(pressed(),['추가 이미지 2 크게 보기']);assert.equal(preview(),'/api/files/owner/one.png');
+  const all=()=>nodes(gallery(h)).find(node=>node.props?.className==='option-additional-all-saved');
+  assert.equal(nodes(all()).filter(node=>node.type==='figure').length,0,'closed gallery does not mount its duplicate assets');
+  const opened={open:true};all().props.onToggle({target:opened,currentTarget:opened});
+  assert.equal(nodes(all()).filter(node=>node.type==='figure').length,4);
   await h.click('상품 저장 이미지 4 크게 보기');assert.deepEqual(pressed(),[]);assert.equal(preview(),'/api/files/owner/four.png');
+  const closed={open:false};all().props.onToggle({target:closed,currentTarget:closed});
+  assert.equal(nodes(all()).filter(node=>node.type==='figure').length,0);
+  assert.equal(preview(),'/api/files/owner/four.png','the preview persists when the gallery is closed');
   assert.deepEqual(h.ordered(),['owner/three.png','owner/one.png','owner/two.png']);assert.deepEqual(plain(f.view),before);assert.equal(writes(h).length,0);assert.equal(work.length,0);
   h.select('blue');await h.idle();assert.deepEqual(pressed(),['추가 이미지 1 크게 보기']);assert.equal(preview(),'/api/files/owner/four.png');assert.equal(writes(h).length,0);assert.equal(work.length,0);
  }finally{h.close();}

@@ -90,6 +90,34 @@ test('registration layout proves the captured category without calculating quota
  }finally{h.close();}
 });
 
+test('a held content read does not delay the one owned collection lookup used by registration navigation',async()=>{
+ const f=await setup(schemaCompanies[0],{captured:true}),{h}=f,prepare=h.db.prepare;
+ const content=h.load('db/product-content.ts'),read=content.readProductContent;
+ let release,entered,lookups=0;
+ const held=new Promise(resolve=>{release=resolve;}),reading=new Promise(resolve=>{entered=resolve;});
+ content.readProductContent=async(...args)=>{entered();await held;return read(...args);};
+ h.db.prepare=sql=>{if(/FROM collection_products (?:WHERE|cp)|SELECT j.id,c.payload,j.updated_at FROM collection_jobs/u.test(sql))lookups++;return prepare(sql);};
+ const pending=f.request();
+ try{
+  await reading;
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(lookups,1,'the collection lookup is already dispatched while content is pending');
+ }finally{
+  release();
+  try{assert.equal((await json(await pending)).categoryContext.profileId,f.profile.id);}
+  finally{content.readProductContent=read;h.db.prepare=prepare;h.close();}
+ }
+});
+
+test('a broken owned collection link is rejected, while a missing explicit profile still returns 404',async()=>{
+ const f=await setup(schemaCompanies[0],{captured:true});
+ try{
+  f.h.sqlite.prepare('UPDATE collection_jobs SET offer_id=? WHERE id=?').run('999999999999',f.jobId);
+  await json(await f.request('?profileId=missing-profile'),404);
+  await json(await f.request(),503);
+ }finally{f.h.close();}
+});
+
 test('unverified production access is unavailable and does not reach the snapshot',async()=>{
  const h=seoWorkspaceHarness({authenticated:false}),api=h.load('app/api/products/[id]/registration-layout/route.ts');
  try{const before=stored(h);await json(await api.GET(new Request('https://app.test/api/products/'+h.id+'/registration-layout'),{params:Promise.resolve({id:h.id})}),503);assert.equal(stored(h),before);}

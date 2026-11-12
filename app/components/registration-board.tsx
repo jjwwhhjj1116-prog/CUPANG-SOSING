@@ -23,6 +23,10 @@ export {registrationNumber} from '@/app/product-registration';
 
 type BoardProduct = {registration_number?:string;removal_policy?:ProductRemovalDecision|null;hub_receipt?:SupplierHubReceiptSummary|null;hub_single_receipt?:NativeReceiptSummary|null;content_summary?:RegistrationContentSummary|null;source_image_key?:string|null;id:string;title:string;source_url:string;created_at:string;image_keys:string;options_count:number;registration_status:string;seo_status:string;quote_status:string;supply_price:number|null;sale_price:number|null;source_capture?:SourceInboxItem;query_source_capture?:QuerySourceCaptureSummary};
 const captured=(product:BoardProduct)=>!!(product.source_capture||product.query_source_capture);
+const noSources:SourceInboxItem[]=[];
+const noQuerySources:QuerySourceCaptureSummary[]=[];
+const noSourceJobs:CollectionJob[]=[];
+const imageCountColumns=['대표 이미지','추가 이미지','상세 이미지','표시사항'];
 export function filterRegistrationProducts<T extends BoardProduct>(products:T[],query:string,from:string|null,to:string|null) {
   return products.filter(product=>{
     const time=Date.parse(product.created_at);
@@ -111,11 +115,13 @@ export function sortRegistrationProducts<T extends BoardProduct>(products:T[],so
 
 function sourceUrl(value:string) {try{const url=new URL(value);return ['https:','http:'].includes(url.protocol)?url.href:undefined;}catch{return undefined;}}
 
-export function RegistrationBoard<T extends BoardProduct>({products,sources=[],querySources=[],sourceJobs=[],onPrepareQuerySource,sourceOwnerId,sourceCompany,sourceArchiveDisabled=false,onPrepareSource,onReviewSource,onArchiveSource,onSourceSelectionChange,selectedSourceReferences:controlledSourceReferences,selected,onSelected,onOpen,onOptions,onDelete,loading,error,onArchive}:{products:T[];sources?:SourceInboxItem[];querySources?:QuerySourceCaptureSummary[];sourceJobs?:CollectionJob[];onPrepareQuerySource?:(item:QuerySourceCaptureSummary)=>void;sourceOwnerId?:string;sourceCompany?:SupplierHubCompany|null;sourceArchiveDisabled?:boolean;onPrepareSource?:(item:SourceInboxItem)=>void;onReviewSource?:(item:SourceInboxItem)=>void;onArchiveSource?:(item:SourceInboxItem)=>Promise<void>;onSourceSelectionChange?:(references:RegistrationSourceSelectionReference[])=>void;selectedSourceReferences?:RegistrationSourceSelectionReference[];selected:Set<string>;onSelected:(value:Set<string>)=>void;onOpen:(product:T,step?:string)=>void;onOptions?:(product:T)=>void;onDelete?:(product:T)=>Promise<void>;loading:boolean;error:string;onArchive:()=>void}) {
+export function RegistrationBoard<T extends BoardProduct>({products,sources=noSources,querySources=noQuerySources,sourceJobs=noSourceJobs,onPrepareQuerySource,sourceOwnerId,sourceCompany,sourceArchiveDisabled=false,onPrepareSource,onReviewSource,onArchiveSource,onSourceSelectionChange,selectedSourceReferences:controlledSourceReferences,selected,onSelected,onOpen,onOptions,onDelete,loading,error,onArchive}:{products:T[];sources?:SourceInboxItem[];querySources?:QuerySourceCaptureSummary[];sourceJobs?:CollectionJob[];onPrepareQuerySource?:(item:QuerySourceCaptureSummary)=>void;sourceOwnerId?:string;sourceCompany?:SupplierHubCompany|null;sourceArchiveDisabled?:boolean;onPrepareSource?:(item:SourceInboxItem)=>void;onReviewSource?:(item:SourceInboxItem)=>void;onArchiveSource?:(item:SourceInboxItem)=>Promise<void>;onSourceSelectionChange?:(references:RegistrationSourceSelectionReference[])=>void;selectedSourceReferences?:RegistrationSourceSelectionReference[];selected:Set<string>;onSelected:(value:Set<string>)=>void;onOpen:(product:T,step?:string)=>void;onOptions?:(product:T)=>void;onDelete?:(product:T)=>Promise<void>;loading:boolean;error:string;onArchive:()=>void}) {
   type Entry=BoardProduct & (T|SourceRegistration|QuerySourceRegistration);
-  const captures=[...sourceRegistrationRows(sources.filter(item=>!sourceRegistrationHasProduct(item,products,sourceJobs,sourceOwnerId,sourceCompany))),...querySourceRegistrationRows(querySources.filter(item=>!sourceRegistrationHasProduct(item,products,sourceJobs,sourceOwnerId,sourceCompany)))]
-    .sort((first,second)=>Date.parse(second.created_at)-Date.parse(first.created_at));
-  const entries:Entry[]=[...captures,...products];
+  const captures=[
+    ...sourceRegistrationRows(sources.filter(item=>!sourceRegistrationHasProduct(item,products,sourceJobs,sourceOwnerId,sourceCompany))),
+    ...querySourceRegistrationRows(querySources.filter(item=>!sourceRegistrationHasProduct(item,products,sourceJobs,sourceOwnerId,sourceCompany))),
+  ].sort((first,second)=>Date.parse(second.created_at)-Date.parse(first.created_at));
+  const entries:Entry[]=captures.length?[...captures,...products]:products;
   const openEntry=(product:Entry,step?:string)=>{if(product.query_source_capture){onPrepareQuerySource?.(product.query_source_capture);}else if(product.source_capture){if(step==='옵션')onReviewSource?.(product.source_capture);else onPrepareSource?.(product.source_capture);}else if(onOptions)onOptions(product as T);else if(step===undefined)onOpen(product as T);else onOpen(product as T,step);};
   const [range,setRange]=useState<ArchiveRange>('all');const [from,setFrom]=useState('');const [to,setTo]=useState('');
   const [status,setStatus]=useState('전체'); const [query,setQuery]=useState('');const [page,setPage]=useState(0);const [pageSize,setPageSize]=useState(10);
@@ -167,10 +173,14 @@ export function RegistrationBoard<T extends BoardProduct>({products,sources=[],q
   const pinned=(column:string)=>pinnedColumn===column?' registration-pinned':'';
   let bounds:{startUtc:string|null;endUtc:string|null}={startUtc:null,endUtc:null};let dateError='';
   try{bounds=archiveDateBounds(range,from,to);}catch(cause){dateError=cause instanceof Error?cause.message:'날짜를 확인해주세요.';}
-  const baseFiltered=dateError?[]:filterRegistrationProducts(entries,query,bounds.startUtc,bounds.endUtc).filter(product=>status==='전체'||(status==='작업 중'?transmissionState(product)!=='complete'&&!['전송 가능','전송완료'].includes(product.registration_status):['검토 대기','전송 가능'].includes(status)?product.registration_status===status:registrationTransmissionLabel(product)===status));
-  const imageCounts=['대표 이미지','추가 이미지','상세 이미지','표시사항'];
-  const matches=(product:Entry,except?:string)=>columns.every(column=>column.id===except||matchesRegistrationColumnFilter(registrationColumnText(product,column.id),columnFilters[column.id],imageCounts.includes(column.id)));
-  const filtered=sortRegistrationProducts(baseFiltered.filter(product=>matches(product)),sort);
+  const {startUtc,endUtc}=bounds;
+  const filterVisible=useMemo(()=>(items:Entry[])=>dateError?[]:filterRegistrationProducts(items,query,startUtc,endUtc).filter(product=>status==='전체'||(status==='작업 중'?transmissionState(product)!=='complete'&&!['전송 가능','전송완료'].includes(product.registration_status):['검토 대기','전송 가능'].includes(status)?product.registration_status===status:registrationTransmissionLabel(product)===status)),[dateError,query,startUtc,endUtc,status]);
+  const matchingProducts=useMemo(()=>filterVisible(products),[filterVisible,products]);
+  const matchingCaptures=filterVisible(captures);
+  const baseFiltered=matchingCaptures.length?[...matchingCaptures,...matchingProducts]:matchingProducts;
+  const matches=useMemo(()=>(product:Entry,except?:string)=>columns.every(column=>column.id===except||matchesRegistrationColumnFilter(registrationColumnText(product,column.id),columnFilters[column.id],imageCountColumns.includes(column.id))),[columnFilters]);
+  const sortedProducts=useMemo(()=>sortRegistrationProducts(matchingProducts.filter(product=>matches(product)),sort),[matchingProducts,matches,sort]);
+  const filtered=matchingCaptures.length?sortRegistrationProducts(baseFiltered.filter(product=>matches(product)),sort):sortedProducts;
   const popupColumn=filterPopup&&columns.find(column=>column.id===filterPopup.columnId);
   const popupChoices=popupColumn?registrationFilterChoices(baseFiltered.filter(product=>matches(product,popupColumn.id)).map(product=>registrationColumnText(product,popupColumn.id))):[];
   const pages=Math.max(1,Math.ceil(filtered.length/pageSize));const currentPage=Math.min(page,pages-1);
