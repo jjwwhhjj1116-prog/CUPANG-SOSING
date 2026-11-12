@@ -15,7 +15,7 @@ const escape = (value: string) => value.replace(/[&<>"']/g, character => ({ '&':
 
 /** Read image references as inert HTML. Text, comments and raw/inert elements
  * cannot authorize publication; no manual URL is fetched or rewritten. */
-function manualImageSources(html: string): string[] {
+export function manualImageSources(html: string): string[] {
   const values = new Set<string>(), nodes: DefaultTreeAdapterMap['node'][] = [parseFragment(html)];
   while (nodes.length) {
     const node = nodes.pop()!;

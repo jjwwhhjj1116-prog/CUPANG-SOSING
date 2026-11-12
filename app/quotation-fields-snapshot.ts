@@ -158,7 +158,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   const checked=parseSavedQuotationValidation(state.savedValidation);
   if(checked&&validationBinding&&state.savedValidation?.sourceBinding===validationBinding){view.savedValidation=checked;if(!currentSavedQuotationValidation(view,id))delete view.savedValidation;}
   if(generatedProfileFence&&!await quotationSourcesCurrent(owner,id,generatedProfileFence))throw changed();
-  return { view, source, options, labelsState, registrationLayout,state,validationBinding,validationActor:actor,...(generatedAdoption&&generatedProfileFence?{mappedGenerated:{adoption:generatedAdoption,source:generatedProfileFence}}:{}) };
+  return { view, source, options, labelsState, labelInputs:{product,content,settings}, registrationLayout,state,validationBinding,validationActor:actor,...(generatedAdoption&&generatedProfileFence?{mappedGenerated:{adoption:generatedAdoption,source:generatedProfileFence}}:{}) };
 }
 export async function stableQuotationFieldsView(owner: string, id: string, profileId: string | null) {
   const saved = await snapshot(owner, id, profileId);

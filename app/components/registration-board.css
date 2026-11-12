@@ -1,6 +1,7 @@
 .registration-board .registration-stage-badge,.option-board .registration-stage-badge,.registration-board .registration-state{display:inline-flex;align-items:center;justify-content:center;min-width:48px;min-height:25px;padding:3px 9px;border:0;border-radius:3px;font-size:12px;font-weight:500;line-height:1.4;white-space:nowrap;background:#ff8a3d;color:#fff}
 .registration-board .registration-stage-complete,.option-board .registration-stage-complete{background:#30b777;color:#fff}
 .registration-board .registration-stage-failed,.option-board .registration-stage-failed{background:#ef5b60;color:#fff}
+.registration-board .registration-stage-review,.option-board .registration-stage-review{background:#fff0cd;color:#78511d}
 .registration-board .registration-stage-running,.option-board .registration-stage-running{background:#4195e8;color:#fff}
 .registration-stage-work{display:grid;justify-items:center;gap:3px}
 .registration-work-progress{display:block;width:56px;height:4px;margin:0;accent-color:#246fbd}

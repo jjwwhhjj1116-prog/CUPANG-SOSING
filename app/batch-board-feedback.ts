@@ -14,7 +14,7 @@ export function batchBoardSource(product:SourceProduct):BatchBoardSource|null{
 }
 export type BatchBoardActivity={runId:string;attempt:number;kind:'start'}|{runId:string;attempt:number;kind:'finish'}|{runId:string;attempt:number;kind:'stage';productId:string;result:SelectedBatchStageResult};
 type Run={id:string;ownerId:string;stages:readonly AutomationStageId[]};
-type Entry={source:BatchBoardSource;state:'running'|'failed';detail:string;progress?:RegistrationWorkProgress};
+type Entry={source:BatchBoardSource;state:'running'|'failed'|'review';detail:string;progress?:RegistrationWorkProgress};
 export type BatchBoardFeedback={scope:object;runId:string;attempt:number;ownerId:string;products:readonly string[];stages:readonly AutomationStageId[];entries:Record<string,Partial<Record<AutomationStageId,Entry>>>};
 export function updateBatchBoardFeedback(previous:BatchBoardFeedback|null,scope:object,run:Run,products:readonly string[],event:BatchBoardActivity):BatchBoardFeedback|null{
  if(event.runId!==run.id||!Number.isSafeInteger(event.attempt)||event.attempt<1)return previous;
@@ -34,7 +34,8 @@ export function updateBatchBoardFeedback(previous:BatchBoardFeedback|null,scope:
   if(['running','blocked','failed'].includes(result.status)&&source&&Number.isFinite(Date.parse(source.productVersion))&&typeof source.sourceFingerprint==='string'&&source.sourceFingerprint.length<=85000){
    const progress=result.status==='running'?result.progress:undefined;
    const measured=progress&&Number.isSafeInteger(progress.completed)&&Number.isSafeInteger(progress.total)&&progress.total>0&&progress.completed>=0&&progress.completed<=progress.total;
-   values[result.id]={source:{...source},state:result.status==='running'?'running':'failed',detail:((result.status==='blocked'?'자료·검토 필요: ':'')+result.message).slice(0,2000),...(measured?{progress:{...progress}}:{})};
+   const state=result.status==='running'?'running':result.status==='blocked'?'review':'failed';
+   values[result.id]={source:{...source},state,detail:result.message.slice(0,2000),...(measured?{progress:{...progress}}:{})};
   }
   entries[event.productId]=values;
  }

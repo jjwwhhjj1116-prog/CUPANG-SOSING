@@ -60,11 +60,12 @@ export async function runSelectedPackagingWork(productId: string, controls: Cont
   // Freeze the finite original worklist. An abstention stays missing, but must
   // never re-enter a later batch or replace another option's source context.
   const eligible = [...new Set(missing(before).filter(item => item.draftable).map(item => item.optionId!))];
-  const total = Math.ceil(eligible.length / PACKAGING_DRAFT_MAX_OPTIONS);
+  const totalBatches = Math.ceil(eligible.length / PACKAGING_DRAFT_MAX_OPTIONS);
   let view = before, completed = 0;
+  const progress = (message: string) => controls.onProgress?.(message, { completed, total: eligible.length });
   for (let start = 0; start < eligible.length; start += PACKAGING_DRAFT_MAX_OPTIONS) {
     const batch = Math.floor(start / PACKAGING_DRAFT_MAX_OPTIONS) + 1;
-    controls.onProgress?.(`포장 규격 초안 ${batch}/${total}묶음 준비 중`, { completed, total });
+    progress(`포장 규격 초안 ${batch}/${totalBatches}묶음 준비 중`);
     const fresh = await request<QuotationFieldsView>(endpoint, 'GET');
     if (JSON.stringify(fresh) !== JSON.stringify(view)) throw invalid();
     const scope: PackagingDraftScope = { optionId: null, applyToAllOptions: true, batchOptionIds: eligible.slice(start, start + PACKAGING_DRAFT_MAX_OPTIONS) };
@@ -99,8 +100,9 @@ export async function runSelectedPackagingWork(productId: string, controls: Cont
     estimated += result.proposals.filter(item => item.origin === 'ai-estimate').length;
     fallback += result.proposals.filter(item => item.origin === 'couplus-fallback').length;
     await current();
-    completed++;
-    controls.onProgress?.(`포장 규격 초안 ${batch}/${total}묶음 저장 확인 · 누적 ${changed}개`, { completed, total });
+    const stillMissing = new Set(missing(view).map(item => item.optionId));
+    completed = eligible.filter(optionId => !stillMissing.has(optionId)).length;
+    progress(`포장 규격 초안 ${batch}/${totalBatches}묶음 저장 확인 · 누적 ${changed}개`);
   }
   await current(); return outcome(view);
 }

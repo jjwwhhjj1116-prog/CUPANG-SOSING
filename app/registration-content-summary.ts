@@ -14,7 +14,7 @@ import type {QuotationFieldsState} from '@/db/quotation-fields';
 import type {ImageOriginalPreservationProof} from '@/app/image-no-text-proof';
 import {sizeChartRequiredFromSchemaString} from '@/app/registration-layout';
 export type RegistrationContentSummary = { seo: boolean; seoTitle: string | null; mainImageKey: string | null; main: number; additional: number; detail: number; label: number; missingImages: boolean; stages?:RegistrationStageSummary };
-type RegistrationContentObservation={summary:RegistrationContentSummary;finalImageKeys:RegistrationFinalImageKeys};
+type RegistrationContentObservation={summary:RegistrationContentSummary;finalImageKeys:RegistrationFinalImageKeys;finalLabelKeys:string[]};
 export type RegistrationQuotationLabels = { ownerId:string;settings?:unknown;profileId?:string|null;categoryId:string|null;categoryPath:string[];hubSchema?:HubSchemaSnapshot;template?:TemplateDefinition|null;
   options:{revision:number;rows:{id:string;included:boolean;imageKey?:string|null}[]};state:{overrides:QuotationOverrides;categoryOverrides?:Record<string,QuotationOverrides>} };
 function finalContentSummary(product:RegistrationPricingProduct&{image_keys:string},content:ProductContent|null,input:RegistrationQuotationLabels,summary:RegistrationContentSummary,noTextProofs:readonly ImageOriginalPreservationProof[]){
@@ -54,7 +54,7 @@ function finalContentSummary(product:RegistrationPricingProduct&{image_keys:stri
  // upload pool or superseded global assignments. Keep this internal evidence
  // out of the listing DTO; the store uses it for bounded sidecar review reads.
  return {summary:{seoTitle,seo,mainImageKey,main:images.main.size,additional:images.additional.size,detail:images.detail.size,label:images.label.size,missingImages,stages},
-  finalImageKeys:{main:[...images.main],additional:[...images.additional],detail:[...images.detail]}};
+  finalImageKeys:{main:[...images.main],additional:[...images.additional],detail:[...images.detail]},finalLabelKeys:[...images.label]};
 }
 /** Reads final included title/image references only. A reference count is never an
  * image-byte check, generated-plan freshness proof or Hub registration status. */
@@ -74,11 +74,11 @@ export function registrationContentObservation(product: RegistrationPricingProdu
   const mainImageKey=content?.assets?.main?.value?.find(key=>keys.includes(key))??null;
   const additional=count(['additional']),detail=count(['detailTop','detail','detailBottom']);
   const summary={seoTitle,mainImageKey,seo:typeof content?.seo?.title?.value==='string'&&!!content.seo.title.value.trim(),main,additional,detail,label:count(['label']),missingImages,stages:registrationStagesFromSavedContent(product,content,null,keys,null,noTextProofs,sizeChartRequiredFromSchemaString(finalLabels?.hubSchema?.schemaString))};
-  const finalImageKeys={main:[],additional:[],detail:[]};
-  if(finalLabels===undefined)return {summary,finalImageKeys};
-  if(finalLabels===null)return {summary:{...summary,missingImages:true},finalImageKeys};
+  const unconfirmed={summary,finalImageKeys:{main:[],additional:[],detail:[]},finalLabelKeys:[]};
+  if(finalLabels===undefined)return unconfirmed;
+  if(finalLabels===null)return {...unconfirmed,summary:{...summary,missingImages:true}};
   try{return finalContentSummary(product,content,finalLabels,summary,noTextProofs);}
-  catch{return {summary:{...summary,missingImages:true},finalImageKeys};}
+  catch{return {...unconfirmed,summary:{...summary,missingImages:true}};}
 }
 export function registrationContentSummary(product: RegistrationPricingProduct&{image_keys:string}, content: ProductContent | null, finalLabels?:RegistrationQuotationLabels|null,noTextProofs:readonly ImageOriginalPreservationProof[]=[]): RegistrationContentSummary {
  return registrationContentObservation(product,content,finalLabels,noTextProofs).summary;

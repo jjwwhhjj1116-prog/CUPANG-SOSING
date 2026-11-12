@@ -10,6 +10,9 @@ import {readImageNoTextReceipts} from '@/db/image-no-text-receipts';
 import {isFreeImageEditOutputKey,readFreeImageEditReviews,type FreeImageEditReview} from '@/app/free-image-edit-review';
 import {quotationValidationEnvironment,savedQuotationValidationForListing,type QuotationValidationListingRow} from '@/db/quotation-save-validation';
 import {savedQuotationValidationStage} from '@/app/quotation-save-validation';
+import {stableQuotationFieldsView} from '@/app/quotation-fields-snapshot';
+import {productLabelsSnapshotFromSource} from '@/app/product-labels-source-snapshot';
+import {inspectGeneratedProductLabels,PRODUCT_LABEL_PROOF_RECIPE} from '@/app/product-label-proof';
 
 type ContentRow = { payload: string; revision: number };
 type ListingLabelRow=QuotationValidationListingRow;
@@ -115,6 +118,8 @@ export async function readRegistrationSummaries(ownerId: string, products: {id:s
       LEFT JOIN category_profiles vp ON vp.owner_id=p.owner_id AND vp.id=CASE WHEN json_valid(q.payload) THEN json_extract(q.payload,'$.savedValidation.requestedProfileId') ELSE NULL END
       WHERE p.owner_id=? AND p.id IN (${chunk.map(()=>'?').join(',')})`).bind(ownerId,...chunk.map(product=>product.id)).all<ListingLabelRow>();labelRecords=new Map(source.results.map(row=>[row.product_id,row]));}
     catch{/* Older partial databases retain content counts with a connection warning. */}
+    const labelChecks: (()=>Promise<void>)[] = [];
+    const labelObjects = new Map<string, R2Object | null>();
     for(const product of chunk) {
       try {
         const row=records.get(product.id);
@@ -138,9 +143,39 @@ export async function readRegistrationSummaries(ownerId: string, products: {id:s
           const checked=await savedQuotationValidationForListing(ownerId,product,content,validationRow,await validationEnvironment);
           summary.stages.quotation=checked?savedQuotationValidationStage(checked):{state:'pending',detail:'저장본 검사 이후 상품·옵션·설정·양식 또는 회원 회사가 바뀌었습니다. 저장본 입력 검사를 다시 확인해주세요.'};
         }
+        const stages=summary.stages;
+        // A generated PNG is attached through an ordinary quotation override.
+        // Its filename only locates a proof. Keep manual and legacy attachments
+        // classified by their saved references unless marked by the renderer.
+        const labelCandidates=stages?.koreanLabel.state==='complete'?observed.finalLabelKeys.filter(key=>/\/quotation-label-[a-f0-9]{64}\.png$/.test(key)):[];
+        if(stages&&validationRow&&labelCandidates.length){
+          for(const key of labelCandidates)labelObjects.set(key,null);
+          labelChecks.push(async()=>{
+            try{
+              if(labelCandidates.some(key=>!labelObjects.get(key)))throw Error('Label file not confirmed');
+              if(!labelCandidates.some(key=>labelObjects.get(key)?.customMetadata?.productLabelRecipe===PRODUCT_LABEL_PROOF_RECIPE))return;
+              const saved=await stableQuotationFieldsView(ownerId,product.id,null);
+              if(saved.source.productVersion!==validationRow.product_version||saved.source.imageKeys!==validationRow.image_keys
+                ||saved.source.contentRevision!==(validationRow.content_revision??0)||saved.options.revision!==(validationRow.option_revision??0)
+                ||saved.labelsState.revision!==(validationRow.label_revision??0)||saved.state.revision!==(validationRow.quotation_revision??0)
+                ||saved.source.settingsPayload!==validationRow.settings_payload
+                ||saved.source.collection?.snapshot?.linked&&saved.source.collection.snapshot.payload!==validationRow.context_payload)
+                throw Error('Label source changed');
+              const {view}=await productLabelsSnapshotFromSource({owner:ownerId,id:product.id,profileId:null,...saved.labelInputs,options:saved.options,state:saved.labelsState,source:saved.source,quotation:saved.view});
+              const [issue]=await inspectGeneratedProductLabels({ownerId,productId:product.id,profileId:view.categoryContext.profileId,resolved:saved.view.resolved,
+                head:async key=>labelObjects.get(key)??null,readView:async()=>view});
+              if(issue)stages.koreanLabel={state:'pending',detail:issue.message};
+            }catch{stages.koreanLabel={state:'pending',detail:'한글표시사항 PNG와 현재 저장값의 일치를 확인하지 못했습니다. 표시사항에서 저장본을 다시 확인해주세요.'};}
+          });
+        }
         summaries[product.id]=summary;
       } catch { summaries[product.id]=null; }
     }
+    const labelKeys=[...labelObjects.keys()];
+    for(let start=0;start<labelKeys.length;start+=6)await Promise.all(labelKeys.slice(start,start+6).map(async key=>{
+      try{labelObjects.set(key,await env.FILES.head(key));}catch{/* An unreadable object cannot confirm this label. */}
+    }));
+    for(let start=0;start<labelChecks.length;start+=4)await Promise.all(labelChecks.slice(start,start+4).map(check=>check()));
   }
   return summaries;
 }

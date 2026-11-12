@@ -2,7 +2,7 @@ import { fingerprint } from '@/app/automation/model';
 import { isOwnedImageKey, imageFileType, MAX_IMAGE_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import { imageDimensions } from '@/app/image-dimensions';
 import { imageSizeGuidance } from '@/app/image-size-guidance';
-import { PUBLIC_DETAIL_FORMAT, PUBLIC_DETAIL_PREFIX, publishPublicDetail, type PublicDetailConfig, type PublicDetailImage } from '@/app/quotation-public-detail';
+import { PUBLIC_DETAIL_FORMAT, PUBLIC_DETAIL_PREFIX, manualImageSources, publishPublicDetail, type PublicDetailConfig, type PublicDetailImage } from '@/app/quotation-public-detail';
 import { SINGLE_PROJECTION_OUTPUT_LIMIT, type projectSupplierHubSingleDocument } from '@/app/supplier-hub-single-projection';
 import type { BundleAsset } from '@/app/exports/review-bundle';
 import type { SubmissionIssue } from '@/app/submission-review';
@@ -144,6 +144,30 @@ export async function buildSingleAssetPlan(input: { projection: Projection; owne
       if (targets.length !== 1) throw new SingleAssetError('Single 한글표시사항 이름 연결이 모호합니다.', 'SINGLE_IMAGE_WIRE');
       targets[0][item.wire.valueKey!] = value;
     } else node[item.wire.path.at(-1)!] = value;
+  }
+  if (!input.nativeReadOnly && input.config) {
+    const origin = input.config.origin;
+    const detailFilesByOption = new Map(manifest.filter(item => item.role === 'detail').map(item => [item.optionId, item.files]));
+    for (const [index, document] of payload.jsonDocument.entries()) {
+      const html = (document.imagePage as { details?: { htmlProductDetailContent?: unknown } } | undefined)?.details?.htmlProductDetailContent;
+      if (typeof html !== 'string' || !html) continue;
+      const { optionId } = rows[index];
+      const detailFiles = detailFilesByOption.get(optionId) ?? [];
+      const invalid = manualImageSources(html).some(src => {
+        let url: URL;
+        try { url = new URL(src, origin); }
+        catch { return src.startsWith('/media/quotation/'); }
+        if (!url.pathname.startsWith('/media/quotation/')) return false;
+        const selected = detailFiles.find(file => url.pathname === `/media/quotation/${file.token}`);
+        if (url.origin !== origin && !selected) return false;
+        return !/^(?:https:)?\/\//i.test(src) || selected?.url !== url.href;
+      });
+      if (invalid) {
+        const field = input.projection.review.fields.find(field => field.optionId === optionId && samePath(field.path, ['imagePage', 'details', 'htmlProductDetailContent']));
+        issues.push({ code: 'SINGLE_DETAIL_HTML_REFERENCE', level: 'error', optionId, ...(field ? { fieldId: field.fieldId } : {}),
+          message: '상세 HTML의 이미지 주소를 이 옵션에 선택한 상세 이미지의 공개 주소와 일치시켜주세요.' });
+      }
+    }
   }
   const publicImages = files.map(file => ({ key: file.key, token: file.token, url: file.url }));
   issues.push({ code: 'SINGLE_REMOTE_UNVERIFIED', level: 'review', message: '공개 파일의 저장 바이트는 검증하지만 Supplier Hub 외부 접근·접수·동의는 별도 확인이 필요합니다.' });

@@ -6,13 +6,13 @@ import type {FreeImageEditReview} from '@/app/free-image-edit-review';
 import {isReferenceSizeChart} from '@/app/manual-size-chart';
 
 export const registrationStageIds = ['seo','pricing','mainImage','additionalImages','detailImage','sizeChart','koreanLabel','quotation'] as const;
-export type RegistrationStageState = 'pending' | 'complete' | 'failed' | 'running' | 'unused';
+export type RegistrationStageState = 'pending' | 'complete' | 'failed' | 'running' | 'unused' | 'review';
 export type RegistrationWorkProgress = { completed:number; total:number };
 export type RegistrationStageStatus = { state: RegistrationStageState; detail: string;updatedAt?:string;sourceProofAt?:string;imageReview?:'unresolved'|'unconfirmed';originalImage?:true;progress?:RegistrationWorkProgress };
 export type RegistrationStageSummary = Record<AutomationStageId, RegistrationStageStatus>;
 export type RegistrationFinalImageKeys=Record<'main'|'additional'|'detail',string[]>;
 export const registrationStepIds:Record<string,AutomationStageId> = { SEO:'seo',가격:'pricing','대표 이미지':'mainImage','추가 이미지':'additionalImages','상세 이미지':'detailImage',옵션:'sizeChart',사이즈표:'sizeChart',표시사항:'koreanLabel',견적서:'quotation' };
-export function registrationStageLabel(state:RegistrationStageState) {return {pending:'대기',complete:'완료',failed:'오류',running:'진행 중',unused:'미사용'}[state];}
+export function registrationStageLabel(state:RegistrationStageState) {return {pending:'대기',complete:'완료',failed:'오류',running:'진행 중',unused:'미사용',review:'검토 필요'}[state];}
 export function pendingRegistrationStages(sizeUsed=false):RegistrationStageSummary {
   return Object.fromEntries(registrationStageIds.map(id=>[id,{state:id==='sizeChart'&&!sizeUsed?'unused':'pending',detail:id==='sizeChart'&&!sizeUsed?'사용 중인 사이즈표가 없습니다.':'현재 단계의 완료 근거가 없습니다.'}])) as RegistrationStageSummary;
 }

@@ -15,9 +15,10 @@ function brandedIntakeTitle(title: string, brand = '',qwen=false): string {
   if(qwen&&prefix&&name.startsWith(prefix)){
     const rest=name.slice(prefix.length).trimStart();
     if(rest===prefix||rest.startsWith(prefix+' '))throw Error('Qwen 상품명에 브랜드가 반복되었습니다. 위치 title. 결과를 적용하지 않았습니다.');
-    // A missing separator must not append the same captured brand twice.
-    // Keep the received text and every model/code character unchanged.
-    return name;
+    // Separate a Korean brand from a joined Korean product word. Leave
+    // ambiguous letter/number model prefixes and existing spacing intact.
+    return /\p{Script=Hangul}$/u.test(prefix) && /^\p{Script=Hangul}+(?:\s|$)/u.test(name.slice(prefix.length))
+      ? `${prefix} ${rest}` : name;
   }
   if (!name || !prefix || name === prefix ||
     (name.startsWith(prefix) && /^\s/u.test(name.slice(prefix.length)))) return name;

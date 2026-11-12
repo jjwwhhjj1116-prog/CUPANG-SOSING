@@ -280,11 +280,19 @@ export async function processSelectedDetailWork(productId: string, options: Opti
     const photos = current.saved.workspace!.document.photos.filter(row => row.role === 'body');
     let completed = 0;
     const progress = (message: string) => options.onProgress?.(message, photos.length ? { completed, total: photos.length } : undefined);
-    const photoConfirmed = () => { completed++; progress(`상세 본문 사진 ${completed}/${photos.length}장 확인`); };
+    const reportPhoto = (photo: PhotoState, index: number) => {
+      if (photo.partial) {
+        progress(`상세 본문 사진 ${index + 1}/${photos.length} · 개별 검토 필요`);
+      } else {
+        completed++;
+        progress(`상세 본문 사진 ${completed}/${photos.length}장 확인`);
+      }
+    };
     for (const [photoIndex,photo] of photos.entries()) {
-      if (state.photos[photo.id]) {
-        if (state.photos[photo.id].key !== photo.key || state.photos[photo.id].partial) return finish('partial','미완료 본문 번역을 원문과 함께 개별 편집에서 검토해주세요. 자동 재번역하지 않았습니다.');
-        photoConfirmed();
+      const savedPhoto = state.photos[photo.id];
+      if (savedPhoto) {
+        if (savedPhoto.key !== photo.key) throw changed();
+        reportPhoto(savedPhoto, photoIndex);
         continue;
       }
       await exact(); const bound = context(photo.id); let image: FreeImageLoaded | undefined;
@@ -302,9 +310,9 @@ export async function processSelectedDetailWork(productId: string, options: Opti
         if (!file || (image.source.editorSource?.resultSha256 ?? image.source.sourceSha256) !== file.sha256
           || !image.source.editorSource && (image.width !== file.width || image.height !== file.height || image.source.width !== file.width || image.source.height !== file.height)) throw changed();
         if (image.editDocument) {
-          if (image.editDocument.regions.some(region => region.issue?.trim() || region.selected && !region.erase && region.text.trim()
-            && (!region.translated.trim() || region.translationProvenance === 'empty'))) return finish('partial','보관한 본문 사진에 미완료 번역이 있습니다. 편집 문서를 유지하고 개별 검토가 필요합니다.');
-          state.photos[photo.id] = { status: 'preserved', key: photo.key }; continue;
+          const partial = image.editDocument.regions.some(region => region.issue?.trim() || region.selected && !region.erase && region.text.trim()
+            && (!region.translated.trim() || region.translationProvenance === 'empty'));
+          state.photos[photo.id] = { status: 'preserved', key: photo.key, partial }; continue;
         }
         if(image.visionTransport==='workers-ai-batch-v1')image.visionTextStyle=await createImageTextStyle(state.settings!);
         const configuration = parseImageTextVisionConfiguration(image.visionConfiguration);
@@ -342,16 +350,23 @@ export async function processSelectedDetailWork(productId: string, options: Opti
         try { const reply = await (deps.applyImage ?? applyDetailWorkspaceImage)(rendered,bound,controller.signal,fetcher); await guard(); adopt(reply);
           state.photos[photo.id] = { status: 'applied', key: reply.key, partial }; delete state.image; delete state.inference; }
         catch (cause) { if (cause instanceof FreeImageApplyError && !cause.uncertain) delete state.image; throw cause; }
-        if (partial) return finish('partial','검증된 일부 본문 문구만 편집 가능한 초안으로 보관했습니다. 미완료 원문은 개별 검토가 필요해 통합 저장하지 않았습니다.');
-        if (recovered) { result.recovered = true; return finish('partial','원래 Vision 요청의 번역과 해당 본문 사진 저장을 확인했습니다. 새 추론이나 다음 사진 작업은 하지 않았습니다.'); }
+        if (recovered) {
+          result.recovered = true;
+          return finish('partial',partial
+            ? '원래 Vision 요청의 확인된 문구를 보관했습니다. 이 사진의 남은 문구는 개별 검토가 필요합니다.'
+            : '원래 Vision 요청의 번역과 해당 본문 사진 저장을 확인했습니다. 새 추론이나 다음 사진 작업은 하지 않았습니다.');
+        }
       } finally {
         clearTimeout(timer); signal.removeEventListener('abort',abort);
         if (image?.canvas) { image.canvas.width = 0; image.canvas.height = 0; }
         const confirmed = state.photos[photo.id];
-        if (confirmed && !confirmed.partial && !controller.signal.aborted && !signal.aborted) photoConfirmed();
+        if (confirmed && !controller.signal.aborted && !signal.aborted) reportPhoto(confirmed, photoIndex);
       }
     }
     await exact();
+    const needsReview = photos.filter(photo => state.photos[photo.id]?.partial).length;
+    if (needsReview)
+      return finish('partial',`상세 본문 사진 ${completed}/${photos.length}장 확인 · ${needsReview}장 개별 검토 필요. 편집 초안을 보관하고 통합 상세 저장은 보류했습니다.`);
     if (state.reviewRequired || !state.shared || manualOutput(view) || content.detail?.altText?.provenance === 'manual' || content.detail?.description?.provenance === 'manual')
       return finish('partial','본문 번역은 보관했습니다. 옵션별 구성 또는 직접 저장한 상세 이미지·HTML·대체 설명·공란을 보존하기 위해 전체 옵션 통합 저장은 하지 않았습니다. 상세 편집에서 적용 범위를 검토해주세요.');
     for (const peer of state.peers!) if (peer !== current && !same(await readDetailWorkspace(peer.selection,signal,fetcher),peer.saved)) throw changed();
