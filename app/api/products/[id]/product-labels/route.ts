@@ -18,7 +18,7 @@ import { parseCollectionRequest } from '@/app/sourcing';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import {readQuotationFieldsForRequest} from '@/app/quotation-fields-read';
-import {QuotationFieldsSnapshotError} from '@/app/quotation-fields-snapshot';
+import {QuotationFieldsSnapshotError,stableQuotationFieldsView} from '@/app/quotation-fields-snapshot';
 import {PublicDetailError} from '@/app/quotation-public-detail';
 import {applyAllProductLabelValues,planAllProductLabels,verifyAllProductLabelTextSave} from '@/app/product-label-all-options';
 import type {ProductLabelValues} from '@/app/product-label';
@@ -40,8 +40,19 @@ function selection(request: Request) {
   if (profileId !== null && !/^[A-Za-z0-9_-]{1,100}$/.test(profileId)) throw new LabelError('카테고리 양식 선택을 확인해주세요.', 400);
   return profileId;
 }
-async function snapshot(owner: string, id: string, profileId: string | null, request: Request) {
+function checkProductId(id: string) {
   if (!/^\w[\w-]{0,99}$/.test(id)) throw new LabelError('상품 식별값을 확인해주세요.', 400);
+}
+async function readLabelQuotation<T>(read: () => Promise<T>) {
+  try { return await read(); }
+  catch (error) {
+    if (error instanceof QuotationFieldsSnapshotError) throw new LabelError(error.message, error.status, error.code);
+    if (error instanceof PublicDetailError) throw new LabelError(error.message, error.status);
+    throw new LabelError('견적서 자동 입력 자료와 수정값을 읽거나 저장하지 못했습니다.', 503);
+  }
+}
+async function snapshot(owner: string, id: string, profileId: string | null, request: Request) {
+  checkProductId(id);
   const product = await findProduct(owner, id); if (!product) throw new LabelError('상품을 찾을 수 없습니다.', 404);
   const [content, options, savedSettings, state, profile] = await Promise.all([
     readProductContent(owner, id), readProductOptions(owner, id), getSettings(owner), readProductLabels(owner, id),
@@ -61,13 +72,7 @@ async function snapshot(owner: string, id: string, profileId: string | null, req
   // or maintaining a competing schema/default initialization path.
   const url = new URL(`/api/products/${encodeURIComponent(id)}/quotation-fields`, request.url);
   if (profileId) url.searchParams.set('profileId', profileId);
-  let quotation:QuotationFieldsView;
-  try{quotation=await readQuotationFieldsForRequest(new Request(url,{headers:request.headers}),{params:Promise.resolve({id})});}
-  catch(error){
-    if(error instanceof QuotationFieldsSnapshotError)throw new LabelError(error.message,error.status,error.code);
-    if(error instanceof PublicDetailError)throw new LabelError(error.message,error.status);
-    throw new LabelError('견적서 자동 입력 자료와 수정값을 읽거나 저장하지 못했습니다.',503);
-  }
+  const quotation: QuotationFieldsView = await readLabelQuotation(() => readQuotationFieldsForRequest(new Request(url,{headers:request.headers}),{params:Promise.resolve({id})}));
   return productLabelsSnapshotFromSource({owner,id,profileId,product,content,options,settings,state,quotation,source:{productVersion:product.updated_at,imageKeys:product.image_keys,pricingPolicy:product.pricing_policy??null,contentRevision:content.revision,optionRevision:options.revision,settingsPayload:savedSettings?.payload??null,profile:profile?{id:profile.id,revision:profile.revision}:null,collection}});
 }
 function failure(error: unknown) {
@@ -76,7 +81,18 @@ function failure(error: unknown) {
   return json({ error: '표시사항 저장본을 읽거나 저장하지 못했습니다. 기존 내용과 입력은 유지됩니다.' }, 503);
 }
 export async function GET(request: Request, context: Context) {
-  try { const owner = await ownerId(), { id } = await context.params; return json((await snapshot(owner, id, selection(request), request)).view); }
+  try {
+    const owner = await ownerId(), { id } = await context.params, profileId = selection(request);
+    checkProductId(id);
+    const saved = await readLabelQuotation(() => stableQuotationFieldsView(owner, id, profileId));
+    const source = { ...saved.source };
+    // The existing label fingerprint seals its revision separately. Keep that
+    // same input for ordinary reads, writes and previously prepared PNGs.
+    delete source.labelRevision;
+    const { view } = await productLabelsSnapshotFromSource({ owner, id, profileId, ...saved.labelInputs,
+      options: saved.options, state: saved.labelsState, source, quotation: saved.view });
+    return json(view);
+  }
   catch (error) { return failure(error); }
 }
 export async function PUT(request: Request, context: Context) {

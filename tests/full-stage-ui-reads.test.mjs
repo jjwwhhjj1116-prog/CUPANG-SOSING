@@ -119,6 +119,68 @@ test('R10 actual focused SEO→price→main→quotation first views share one ge
  }finally{for(const item of gates)item.wait.resolve();if(h)await h.close();api.close();}
 });
 
+for(const failFirstCatalog of [false,true])test(`price warms labels and ordinary quotation opens during a ${failFirstCatalog?'retryable':'successful'} live catalog read`,async()=>{
+ const api=mobileIntakeHarness(),label=gate(),profiles=gate(),calls=[];let h,phase='setup',profilesFinished=false,profileReads=0;
+ try{
+  await api.intake();
+  const product=await api.load('db/queries.ts').findProduct('owner',api.latest.product_id),base='/api/products/'+product.id;
+  const profile=await api.load('db/category-profiles.ts').createCategoryProfile('owner',api.context.category,api.context.category.id);
+  const options=await api.load('db/product-options.ts').readProductOptions('owner',product.id),focusedOptionId=options.rows.find(row=>row.included).id;
+  const modules=['option-seo-editor','product-options-editor','option-quotation-prices','product-label-editor','quotation-panel','quotation-fields-editor'];
+  h=await stageDOM(async(url,init={})=>{
+   assert.equal(init.method??'GET','GET');
+   const proof=new Error().stack.includes('readProductLabelReferences');
+   calls.push({url,phase,proof});
+   if(url==='/api/category-profiles'){
+    const first=profileReads++===0;
+    await profiles.promise;
+    profilesFinished=true;
+    if(first&&failFirstCatalog)return Response.json({error:'일시적 목록 오류'},{status:503});
+    return Response.json({profiles:[profile]});
+   }
+   assert.ok(url.startsWith(base+'/'),url);
+   const response=await api.route(url);
+   if(url===base+'/product-labels'&&!proof)await label.promise;
+   return response;
+  },{components:Object.fromEntries(modules.map(name=>[name,true]))});
+  const Detail=h.load('app/components/dashboard-client.tsx').DetailPanel;
+  const uiReadScope={company:{code:'A01464742',name:'와이홉'},settingsEpoch:0,profileEpoch:0,profileCatalog:{profiles:[profile]}};
+  const props={product,workspaceOwnerId:'owner',focusedOptionId,settings:api.settings,uiReadScope,canAdminTools:true,onSaved(){assert.fail('navigation must stay read-only');},onUpload(){assert.fail('no upload');},onSavePrice:async()=>assert.fail('no price write'),onManageCategories(){},onProfileSelected(){},onBeforeFreeImageApply:()=>true,onBeforeSeoGenerate:()=>true,onPrepareSubmission(){assert.fail('must not submit');},onReviewPackaging(){},onReceiptSaved(){}};
+  const visit=async tab=>{phase=tab;await h.render(Detail,{...props,tab});for(let i=0;i<5;i++)await h.settle();};
+  const labelReads=()=>calls.filter(call=>call.url===base+'/product-labels'&&!call.proof);
+  await visit('SEO');await visit('가격');
+  assert.equal(labelReads().length,1,'begin one label read before its stage opens');
+  assert.ok(['SEO','가격'].includes(labelReads()[0].phase));
+  await visit('표시사항');
+  assert.equal(labelReads().length,1,'the label editor joins the pending read');
+  await h.React.act(async()=>label.resolve());
+  for(let i=0;i<20&&!h.container.querySelector('.product-label-rows, .product-label-result-first');i++)await h.settle();
+  assert.ok(h.container.querySelector('.product-label-rows, .product-label-result-first'),h.container.querySelector('.product-label-editor')?.textContent);
+  await visit('견적서');
+  assert.ok(h.container.querySelector('.quotation-fields'),'genuine quotation fields mounted');
+  assert.equal(h.container.querySelector('.quotation-fields').getAttribute('aria-busy'),'false');
+  assert.equal(profilesFinished,false,'known catalog identity opens fields during the fresh list read');
+  assert.equal(calls.filter(call=>call.url==='/api/category-profiles').length,1);
+  const admin=[...h.container.querySelectorAll('button')].find(node=>node.textContent==='관리자 모드');
+  assert.ok(admin);
+  await h.React.act(async()=>admin.click());
+  const submit=()=>[...h.container.querySelectorAll('button')].find(node=>node.textContent==='저장한 견적 전송 준비');
+  assert.equal(submit()?.disabled,true,'submission remains locked until the live catalog is verified');
+  await h.React.act(async()=>profiles.resolve());
+  for(let i=0;i<5;i++)await h.settle();
+  if(failFirstCatalog){
+   assert.equal(submit()?.disabled,true,'failed verification still keeps submission locked');
+   const retry=[...h.container.querySelectorAll('button')].find(node=>node.textContent==='카테고리 설정 다시 확인');
+   assert.ok(retry);
+   await h.React.act(async()=>retry.click());
+   for(let i=0;i<5;i++)await h.settle();
+   assert.equal(profileReads,2);
+  }
+  assert.equal(submit()?.disabled,false,'the fresh matching catalog enables the original next step');
+  assert.equal(calls.filter(call=>call.url===base+'/quotation-fields'&&!call.proof).length,1,'quote shares the exact initial DTO with price and SEO');
+ }finally{label.resolve();profiles.resolve();if(h)await h.close();api.close();}
+});
+
 test('workspace header offers the current Chrome extension without opening an editor',async()=>{
  const h=await stageDOM(async(url,init={})=>{
   assert.equal(init.method??'GET','GET');

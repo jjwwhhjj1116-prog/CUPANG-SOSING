@@ -63,6 +63,35 @@ test('stage-seven review remains valid without display metadata and retains the 
  }finally{h.sqlite.close();}
 });
 
+test('stage-seven starts reading option display numbers while detail fields are still resolving', async () => {
+ const h=await harness();try{
+  const optionModel=h.load('app/product-options.ts');
+  const options=optionModel.applyOptionRows(optionModel.emptyProductOptions('product'),[{...optionModel.emptyOptionInput('one'),unitCostCny:4,included:true}],version);
+  h.sqlite.prepare('INSERT INTO product_options VALUES(?,?,?,?,?)').run('product','owner',1,JSON.stringify(options),version);
+  h.sqlite.prepare('INSERT INTO product_registration_options VALUES(?,?,?,?)').run('product','owner','one',1);
+  const number=h.sqlite.prepare('SELECT registration_number FROM product_registration_numbers WHERE product_id=?').get('product').registration_number;
+  const detail=h.load('app/quotation-public-detail.ts'),resolvePublicDetail=detail.resolvePublicDetail;
+  const db=h.env.DB,prepare=db.prepare;
+  let numberReadStarted=false;
+  db.prepare=sql=>{
+   const query=prepare(sql);
+   if(sql.includes('JOIN product_registration_options m')){
+    const all=query.all;
+    query.all=()=>{numberReadStarted=true;return all();};
+   }
+   return query;
+  };
+  detail.resolvePublicDetail=async (...args)=>{
+   await Promise.resolve();
+   assert.ok(numberReadStarted,'display metadata query should already be in flight');
+   return resolvePublicDetail(...args);
+  };
+  const {view}=await h.load('app/quotation-fields-snapshot.ts').stableQuotationFieldsView('owner','product',null);
+  assert.deepEqual(Object.keys(view.optionRegistrationNumbers),['one']);
+  assert.equal(view.optionRegistrationNumbers.one,number.slice(0,9)+'001');
+ }finally{h.sqlite.close();}
+});
+
 test('fresh automatic ALT follows saved SEO while explicit blank ALT and quotation overrides remain blank',async()=>{
  const h=await harness();try{
   const model=h.load('app/product-content.ts'),content=await patchContent(h,{seo:{title:'검토한 한국어 상품명'}});

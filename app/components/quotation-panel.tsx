@@ -19,12 +19,13 @@ type Preview = {
   submissionReview?: QuotationPreviewReviewData;
   report:{dataStartRow:number;mappingCoverage?:QuotationMappingFinding[];rowCount:number;missingRequired:{row:number;column:number;header:string}[];warnings:string[];contentRevision:number;optionRevision:number;profileRevision:number};
 };
-type QuotationPanelProps = {uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;submissionActive?:boolean;onPrepareSubmission?:(profileId?:string)=>void;onProfilePrepared?:(profile:CategoryProfile,source:CategoryProfile)=>void;onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;onReceiptSaved?:()=>void;onEditSeo?:()=>void;navigationTarget?:QuotationNavigationTarget;navigationSequence?:number;initialOptionId?:string;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string;canAdminTools?:boolean;adminExtras?:ReactNode};
+type QuotationPanelProps = {uiReads?:RegistrationUiReads;initialProfiles?:CategoryProfile[];onBeginSourceWrite?:()=>UiMutation|undefined;submissionActive?:boolean;onPrepareSubmission?:(profileId?:string)=>void;onProfilePrepared?:(profile:CategoryProfile,source:CategoryProfile)=>void;onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;onReceiptSaved?:()=>void;onEditSeo?:()=>void;navigationTarget?:QuotationNavigationTarget;navigationSequence?:number;initialOptionId?:string;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string;canAdminTools?:boolean;adminExtras?:ReactNode};
 export function QuotationPanel(props: QuotationPanelProps) {
   return <QuotationPanelContent key={JSON.stringify([props.productId,props.preferredProfileId ?? '',props.navigationTarget?.categoryId,props.initialOptionId])} {...props}/>;
 }
-function QuotationPanelContent({uiReads,onBeginSourceWrite,submissionActive=true,onPrepareSubmission,onProfilePrepared,onProfileChange,onSaved,onReceiptSaved,onEditSeo,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget,navigationSequence=0,initialOptionId,canAdminTools=false,adminExtras}: QuotationPanelProps) {
-  const uiReadRef=useRef(uiReads);useLayoutEffect(()=>{uiReadRef.current=uiReads;},[uiReads]);
+function QuotationPanelContent({uiReads,initialProfiles,onBeginSourceWrite,submissionActive=true,onPrepareSubmission,onProfilePrepared,onProfileChange,onSaved,onReceiptSaved,onEditSeo,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget,navigationSequence=0,initialOptionId,canAdminTools=false,adminExtras}: QuotationPanelProps) {
+  const initialContext=useRef({uiReads,initialProfiles});
+  useLayoutEffect(()=>{initialContext.current={uiReads,initialProfiles};},[uiReads,initialProfiles]);
   const [profiles,setProfiles]=useState<CategoryProfile[]>([]);
   const [profileId,setProfileId]=useState('');const [startRow,setStartRow]=useState(2);
   const [useSavedRow,setUseSavedRow]=useState(true);
@@ -44,12 +45,15 @@ function QuotationPanelContent({uiReads,onBeginSourceWrite,submissionActive=true
   const dirtyRef=useRef(false);
   const [overrideProfileId,setOverrideProfileId]=useState<string|undefined>();
   const [contextLoaded,setContextLoaded]=useState(false);
+  const [catalogReady,setCatalogReady]=useState(false);
+  const [warmQuotation,setWarmQuotation]=useState(false);
   const [contextError,setContextError]=useState('');
   const [connectionWarning,setConnectionWarning]=useState('');
   const [loadAttempt,setLoadAttempt]=useState(0);
   const [capturedCategoryId,setCapturedCategoryId]=useState<string|null>(null);
   const [capturedProfileId,setCapturedProfileId]=useState<string|null>(null);
   const [capturedCategoryPath,setCapturedCategoryPath]=useState<string[]>([]);
+  const initialCategory=useRef<QuotationFieldsView['categoryContext']|null>(null);
   const activeRequest=useRef<AbortController|null>(null);
   const profileRequest=useRef<AbortController|null>(null);
   const [refreshingProfiles,setRefreshingProfiles]=useState(false);
@@ -88,34 +92,62 @@ function QuotationPanelContent({uiReads,onBeginSourceWrite,submissionActive=true
   const closeLocked=reportedLock?.scope===submissionScope&&reportedLock.close;
   const sourceActionCurrent=()=>submissionCurrent.current.mounted&&submissionCurrent.current.scope===submissionScope&&!submissionCurrent.current.source&&versionRef.current===refreshToken;
   const manageCategories=()=>{if(sourceActionCurrent()&&!dirtyRef.current)onManageCategories();};
+  const applyInitialProfiles=useCallback((savedProfiles:CategoryProfile[],categoryContext:QuotationFieldsView['categoryContext'])=>{
+    const selection=selectQuotationProfile(savedProfiles,categoryContext,preferredProfileId,navigationTarget?.categoryId);
+    const savedId=selection.profileId;
+    const capturedDefault=preferredProfileId!==savedId&&categoryContext.source==='collection'&&savedId===categoryContext.profileId;
+    const override=capturedDefault?undefined:savedId||undefined;
+    setConnectionWarning(selection.warning);
+    setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(override);profileChangeRef.current?.(override);
+    setCapturedCategoryId(categoryContext.categoryId);
+    setCapturedProfileId(categoryContext.source==='collection'?categoryContext.profileId:null);
+    setCapturedCategoryPath(categoryContext.source==='collection'?categoryContext.categoryPath:[]);
+    setStartRow(quotationStartRow(savedProfiles.find(profile=>profile.id===savedId)?.template));
+    setCatalogReady(true);
+  },[preferredProfileId,navigationTarget?.categoryId]);
   useEffect(()=>()=>{profileRequest.current?.abort();},[]);
   useEffect(()=>()=>{activeRequest.current?.abort();},[refreshToken]);
   useEffect(()=>{
-    const controller=new AbortController(),initialReads=loadAttempt===0?uiReadRef.current:undefined;
-
-    Promise.all([
-      loadCategoryProfiles(controller.signal),
-      initialReads?initialReads.quotation(`/api/products/${encodeURIComponent(productId)}/quotation-fields`,controller.signal):fetch(`/api/products/${encodeURIComponent(productId)}/quotation-fields`,{cache:'no-store',signal:controller.signal}).then(async response=>{const body=await response.json() as QuotationFieldsView & {error?:string};if(!response.ok)throw new Error(body.error||'수집 당시 카테고리를 읽지 못했습니다.');return body;}),
-    ]).then(([savedProfiles,data])=>{
+    const controller=new AbortController(),initialReads=loadAttempt===0?initialContext.current.uiReads:undefined;
+    const catalog=initialReads&&!preferredProfileId&&navigationTarget?.categoryId===undefined?initialContext.current.initialProfiles:undefined;
+    const readProfiles=loadCategoryProfiles(controller.signal);
+    const endpoint=`/api/products/${encodeURIComponent(productId)}/quotation-fields`;
+    setWarmQuotation(initialReads?.hasQuotation(endpoint)===true);
+    const readContext=initialReads?initialReads.quotation(endpoint,controller.signal):fetch(endpoint,{cache:'no-store',signal:controller.signal}).then(async response=>{
+      const body=await response.json() as QuotationFieldsView & {error?:string};
+      if(!response.ok)throw new Error(body.error||'수집 당시 카테고리를 읽지 못했습니다.');
+      return body;
+    });
+    let openedFromCatalog=false,profileFailure:unknown;
+    void readProfiles.catch(cause=>{profileFailure=cause;});
+    if(catalog?.length)void readContext.then(({categoryContext})=>{
+      if(controller.signal.aborted||initialReads?.canRead?.()===false)return;
+      const captured=catalog.find(profile=>profile.id===categoryContext.profileId);
+      if(categoryContext.source!=='collection'||!captured||captured.categoryId!==categoryContext.categoryId
+        ||JSON.stringify(captured.categoryPath)!==JSON.stringify(categoryContext.categoryPath))return;
+      // Only the immutable queryless form can open early. Workbook and
+      // submission controls still wait for the fresh saved profile list.
+      openedFromCatalog=true;
+      initialCategory.current=categoryContext;
+      setCapturedCategoryId(categoryContext.categoryId);
+      setCapturedProfileId(categoryContext.profileId);
+      setCapturedCategoryPath(categoryContext.categoryPath);
+      setContextLoaded(true);
+      if(profileFailure)setProfileRefreshError(profileFailure instanceof Error?profileFailure.message:'카테고리 연결 확인 실패');
+    }).catch(()=>{});
+    Promise.all([readProfiles.catch(()=>null),readContext]).then(([savedProfiles,data])=>{
       if(controller.signal.aborted)return;
-      const selection=selectQuotationProfile(savedProfiles,data.categoryContext,preferredProfileId,navigationTarget?.categoryId);
-      const savedId=selection.profileId;
-      const selectedProfile=savedProfiles.find(profile=>profile.id===savedId);
-      // Queryless readers already use this product's immutable collection
-      // context. Resolving that default is not a new selection in other stages.
-      const capturedDefault=preferredProfileId!==savedId&&data.categoryContext.source==='collection'&&savedId===data.categoryContext.profileId
-        &&selectedProfile!==undefined&&selectedProfile.categoryId===data.categoryContext.categoryId
-        &&JSON.stringify(selectedProfile.categoryPath)===JSON.stringify(data.categoryContext.categoryPath);
-      setConnectionWarning(selection.warning);
-      setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(capturedDefault?undefined:savedId||undefined);profileChangeRef.current?.(capturedDefault?undefined:savedId||undefined);
-      setCapturedCategoryId(data?.categoryContext.categoryId ?? null);
-      setCapturedProfileId(data.categoryContext.source==='collection'?data.categoryContext.profileId:null);
-      setCapturedCategoryPath(data.categoryContext.source==='collection'?data.categoryContext.categoryPath:[]);
-      setStartRow(quotationStartRow(savedProfiles.find(profile=>profile.id===savedId)?.template));
-    }).catch(cause=>{if(!controller.signal.aborted)setContextError(cause instanceof Error?cause.message:'카테고리 연결 확인 실패');})
+      if(catalog&&initialReads?.canRead?.()===false)throw Error('상품 또는 카테고리 설정이 변경되었습니다. 최신 자료를 다시 확인해주세요.');
+      if(!savedProfiles)throw profileFailure;
+      applyInitialProfiles(savedProfiles,data.categoryContext);
+    }).catch(cause=>{
+      if(controller.signal.aborted)return;
+      const message=cause instanceof Error?cause.message:'카테고리 연결 확인 실패';
+      if(openedFromCatalog)setProfileRefreshError(message);else setContextError(message);
+    })
       .finally(()=>{if(!controller.signal.aborted)setContextLoaded(true);});
     return()=>controller.abort();
-  },[productId,preferredProfileId,loadAttempt,navigationTarget?.categoryId]);
+  },[productId,preferredProfileId,loadAttempt,navigationTarget?.categoryId,applyInitialProfiles]);
   async function request(action:'preview'|'export'|'download') {
     if(!sourceActionCurrent()||activeRequest.current||profileRequest.current||dirtyRef.current||!contextLoaded||!selected?.template||(action!=='preview'&&(!preview||previewRef.current!==preview)))return;
     const controller=new AbortController();activeRequest.current=controller;
@@ -158,6 +190,10 @@ function QuotationPanelContent({uiReads,onBeginSourceWrite,submissionActive=true
     try {
       const body={profiles:await loadCategoryProfiles(controller.signal)};
       if(controller.signal.aborted)return;
+      if(!catalogReady&&initialCategory.current){
+        applyInitialProfiles(body.profiles,initialCategory.current);
+        return;
+      }
       const current=body.profiles.find(profile=>profile.id===profileId);
       setProfiles(body.profiles);
       if(profileId&&(!current||current.categoryId!==selected?.categoryId
@@ -181,7 +217,8 @@ function QuotationPanelContent({uiReads,onBeginSourceWrite,submissionActive=true
       {canAdminTools && <button type="button" className="btn ghost quotation-admin-toggle" aria-expanded={adminTools==='visible'} disabled={busy||closeLocked} onClick={()=>setAdminMode(mode=>mode==='visible'?'hidden':'visible')}>관리자 모드</button>}
     </div>
     {connectionWarning && <p role="status" className="panel-note">{connectionWarning}</p>}
-    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor adminTools={adminTools} initialOptionId={initialOptionId} uiReads={uiReads} onBeginSourceWrite={onBeginSourceWrite} key={`${navigationSequence}:${currentReviewTarget?.sequence??0}`} submissionActive={submissionActive} navigationTarget={currentReviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onSubmissionLockChange={reportSubmissionLock} onEditSeo={onEditSeo?()=>{if(sourceActionCurrent())onEditSeo();}:undefined} onDirtyChange={value=>{
+    {profileRefreshError&&!catalogReady&&<p role="alert" className="panel-note">{profileRefreshError} <button type="button" className="btn ghost" disabled={sourceLocked||busy||dirty||refreshingProfiles} onClick={()=>void refreshProfiles()}>카테고리 설정 다시 확인</button></p>}
+    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor adminTools={adminTools} initialOptionId={initialOptionId} uiReads={uiReads} warmInitialQuotation={warmQuotation&&!overrideProfileId} onBeginSourceWrite={onBeginSourceWrite} key={`${navigationSequence}:${currentReviewTarget?.sequence??0}`} submissionActive={submissionActive} navigationTarget={currentReviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onSubmissionLockChange={reportSubmissionLock} onEditSeo={onEditSeo?()=>{if(sourceActionCurrent())onEditSeo();}:undefined} onDirtyChange={value=>{
       if(!submissionCurrent.current.mounted||lockScope.current!==submissionScope)return;
       dirtyRef.current=value;
       if(value){profileRequest.current?.abort();activeRequest.current?.abort();setPreview(null);setMessage('');}
@@ -193,7 +230,7 @@ function QuotationPanelContent({uiReads,onBeginSourceWrite,submissionActive=true
     {selected&&!selected.template&&(selected.hubSchema?.metadata.scopeType??selected.hubSchema?.metadata.scope)==='Retail_Categorized_Single'&&<div className="panel-note"><p>별도 Excel 상세 양식을 읽을 수 없다면 공식 파일의 열·선택값으로 연결할 수 있습니다. 현재 회사와 카테고리를 다시 확인하며, Excel JSON 미확인 상태와 기존 전송 검사는 유지됩니다.</p><button type="button" className="btn ghost" disabled={sourceLocked||busy||dirty||refreshingProfiles||!contextLoaded} onClick={()=>void prepareOfficialTemplate('workbook')}>공식 파일 기준으로 연결</button></div>}
     {selected?.template?.workbookEvidence&&<p role="status" className="panel-note">공식 XLSX 파일 기준 연결 · 별도 Excel JSON 양식 미확인. 필수값·미연결 항목·첨부 검사는 그대로 적용됩니다.</p>}
     {templateError&&<p role="alert">{templateError} 상품 초안과 직접 수정한 값은 유지됩니다.</p>}{templateMessage&&<p role="status">{templateMessage}</p>}
-    <a className={`btn primary${sourceLocked||dirty||!contextLoaded?' disabled':''}`} aria-disabled={sourceLocked||dirty||!contextLoaded} tabIndex={sourceLocked||dirty||!contextLoaded?-1:undefined} onClick={event=>{if(!sourceActionCurrent()||dirtyRef.current||!contextLoaded)event.preventDefault();}} href={sourceLocked||dirty||!contextLoaded?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
+    <a className={`btn primary${sourceLocked||dirty||!catalogReady?' disabled':''}`} aria-disabled={sourceLocked||dirty||!catalogReady} tabIndex={sourceLocked||dirty||!catalogReady?-1:undefined} onClick={event=>{if(!sourceActionCurrent()||dirtyRef.current||!catalogReady)event.preventDefault();}} href={sourceLocked||dirty||!catalogReady?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
     <p className="panel-note">ZIP 압축을 푼 뒤 supplier-hub-upload.html을 열면 상품 이미지와 라벨을 구분해서 확인할 수 있습니다. 옵션별 연결과 누락 라벨을 확인한 뒤, 공식 견적서 및 서류를 별도로 검토해주세요.</p>
     {dirty&&<small>편집 내용을 저장하면 다운로드에 반영됩니다.</small>}
     <div className="quotation-workbook-settings"><h4>Excel 원본 양식에 출력하기</h4>

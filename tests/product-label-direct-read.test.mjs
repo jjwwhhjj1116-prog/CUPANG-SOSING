@@ -8,13 +8,23 @@ import {assetApiFixture,companies,plain} from './helpers/supplier-hub-single-ass
 const tables=f=>JSON.stringify(f.h.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(({name})=>[name,f.h.sqlite.prepare('SELECT * FROM '+name+' ORDER BY rowid').all()]));
 for(const company of companies)test(company.code+': product-label GET reuses the authenticated stable view without the internal quotation HTTP JSON roundtrip or any writes',async()=>{
  const f=await assetApiFixture(company,undefined,{populate:false});try{
+  const {h}=f;
+  const source=h.sqlite.prepare('SELECT payload FROM collection_context WHERE job_id=?').get('job');
+  const captured={...JSON.parse(source.payload),company,category:f.profile};
+  h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(captured),'job');
+  h.sqlite.prepare('UPDATE products SET source_url=? WHERE id=?').run(h.sourceUrl,f.id);
+  h.sqlite.prepare('INSERT INTO collection_products VALUES(?,?,?,?)').run('job','owner',f.id,new Date().toISOString());
   const raw=f.h.load('app/quotation-fields-read.ts'),fields=f.h.load('app/api/products/[id]/quotation-fields/route.ts'),label=f.base+'/product-labels'+f.query;
   const before=tables(f),objects=f.objectState(),context={params:Promise.resolve({id:f.id})},quoteRequest=new Request('https://app.test'+f.base+'/quotation-fields'+f.query);
   const direct=await raw.readQuotationFieldsForRequest(quoteRequest,context),publicReply=await fields.GET(quoteRequest,context);
   assert.equal(direct instanceof Response,false);assert.equal(publicReply.status,200);assert.deepEqual(await publicReply.json(),plain(direct));
-  let calls=0;const original=raw.readQuotationFieldsForRequest;raw.readQuotationFieldsForRequest=async(...args)=>{calls++;return original(...args);};
+  const reads={};
+  for(const [file,names] of Object.entries({'db/queries.ts':['findProduct','getSettings'],'db/product-content.ts':['readProductContent'],'db/product-options.ts':['readProductOptions'],'db/product-labels.ts':['readProductLabels','productLabelsSourcesCurrent'],'db/category-profiles.ts':['getCategoryProfile'],'db/quotation-fields.ts':['readQuotationCollectionSource','quotationSourcesCurrent']})){
+   const db=f.h.load(file);for(const name of names){const read=db[name];reads[name]=0;db[name]=(...args)=>{reads[name]++;return read(...args);};}
+  }
   fields.GET=()=>assert.fail('An internal label read must not build and parse the whole quotation HTTP response');
-  const response=await f.h.route(label),view=await response.json();assert.equal(response.status,200);assert.equal(calls,1);assert.equal(view.rows.filter(row=>row.optionId).length,3);
+  const response=await f.h.route(label),view=await response.json();assert.equal(response.status,200);assert.equal(view.rows.filter(row=>row.optionId).length,3);
+  for(const [name,count] of Object.entries(reads))assert.equal(count,1,`${name} reads each label source or verifies its own fence once`);
   assert.equal(view.quotationInputFingerprint,direct.inputFingerprint);assert.equal(view.quotationRevision,direct.revision);assert.equal(view.productVersion,direct.productVersion);assert.deepEqual(view.categoryContext,plain(direct.categoryContext));
   assert.equal(tables(f),before);assert.equal(f.objectState(),objects);assert.equal(f.h.network.length,0);
  }finally{f.close();}
@@ -28,7 +38,39 @@ test('the direct read retains quotation final-source fencing and the same catego
   db.quotationSourcesCurrent=check;f.h.setCompany(companies[1]);
   const company=await f.h.route(endpoint);assert.equal(company.status,409);assert.equal((await company.json()).code,'QUOTATION_COMPANY_MISMATCH');assert.equal(tables(f),before);
   f.h.setCompany(companies[0]);const invalid=await f.h.route(f.base+'/product-labels?profileId=invalid!');assert.equal(invalid.status,400);assert.equal(tables(f),before);
-  const missing=await f.h.route(f.base+'/product-labels?profileId=missing-profile');assert.equal(missing.status,404);assert.equal(tables(f),before);assert.equal(f.h.network.length,0);
+  const missing=await f.h.route(f.base+'/product-labels?profileId=missing-profile');assert.equal(missing.status,404);assert.match((await missing.json()).error,/카테고리/);
+  const missingProduct=await f.h.route('/api/products/missing/product-labels?profileId=missing-profile');assert.equal(missingProduct.status,404);assert.match((await missingProduct.json()).error,/상품을 찾을 수 없습니다/);
+  assert.equal(tables(f),before);assert.equal(f.h.network.length,0);
+ }finally{f.close();}
+});
+
+test('label GET rejects unverified access before reading and scopes verified access to its owner',async()=>{
+ const f=await assetApiFixture(undefined,undefined,{populate:false});try{
+  const {h}=f,endpoint=f.base+'/product-labels'+f.query,db=h.load('db/queries.ts'),find=db.findProduct;
+  const owners=[];
+  db.findProduct=(owner,...args)=>{owners.push(owner);return find(owner,...args);};
+  h.auth.getChatGPTUser=async()=>({verifiedAccess:false,userId:'owner'});
+  const denied=await h.route(endpoint);assert.equal(denied.status,503);assert.equal((await denied.json()).code,'AUTH_REQUIRED');assert.deepEqual(owners,[]);
+  h.auth.getChatGPTUser=async()=>({verifiedAccess:true,userId:'another-owner'});
+  const foreign=await h.route(endpoint);assert.equal(foreign.status,404);assert.deepEqual(owners,['another-owner']);
+ }finally{f.close();}
+});
+
+test('label GET does not return its reused quotation sources when the label revision changes before its own final proof',async()=>{
+ const f=await assetApiFixture(undefined,undefined,{populate:false});try{
+  const h=f.h,db=h.load('db/product-labels.ts'),read=db.productLabelsSourcesCurrent;
+  const saved=await db.readProductLabels('owner',f.id);
+  let verified=false;
+  db.productLabelsSourcesCurrent=async(owner,id,source,revision)=>{
+   assert.equal(id,f.id);assert.equal(revision,saved.revision);verified=true;
+   const at=new Date().toISOString();
+   const changed={...saved,revision:revision+1,overrides:{common:{...saved.overrides.common,material:'동시 수정 재질'},options:saved.overrides.options},updatedAt:at};
+   h.sqlite.prepare('UPDATE product_labels SET revision=?,payload=?,updated_at=? WHERE product_id=? AND owner_id=?').run(changed.revision,JSON.stringify(changed),at,id,owner);
+   return read(owner,id,source,revision);
+  };
+  const response=await f.h.route(f.base+'/product-labels'+f.query),body=await response.json();
+  assert.equal(verified,true);assert.equal(response.status,409);assert.equal(body.code,'PRODUCT_LABELS_CONFLICT');
+  assert.equal(Object.hasOwn(body,'rows'),false);assert.equal(h.network.length,0);
  }finally{f.close();}
 });
 

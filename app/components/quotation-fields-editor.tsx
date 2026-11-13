@@ -45,7 +45,7 @@ type Row = QuotationFieldsView['resolved']['rows'][number];
 type Cell = Row['fields'][string];
 type Conflict = { key: string; change: QuotationEditorChange; before: string | null; saved: string | null; unavailable: boolean; schemaChanged?: boolean; packagingChanged?:boolean;linked?: string[] };
 type BulkPreview = { mode?: 'restore'; sourceOptionId?:string|null;base: string; changes: QuotationEditorChange[]; skipped?: string[]; rows: { optionId: string; optionLabel: string; fieldKey: string; label: string; before: string; after: string; beforeDisplay: string; afterDisplay: string; manualBefore: boolean }[] };
-type Props = { uiReads?:RegistrationUiReads;onBeginSourceWrite?:()=>UiMutation|undefined;navigationTarget?: QuotationNavigationTarget; initialOptionId?: string; productId: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onReceiptSaved?:()=>void; onDirtyChange?: (dirty: boolean) => void; onSubmissionLockChange?: (sourceLocked: boolean, closeLocked?: boolean) => void; submissionActive?: boolean; onEditSeo?: () => void; adminTools?: 'visible' | 'hidden' };
+type Props = { uiReads?:RegistrationUiReads;warmInitialQuotation?:boolean;onBeginSourceWrite?:()=>UiMutation|undefined;navigationTarget?: QuotationNavigationTarget; initialOptionId?: string; productId: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onReceiptSaved?:()=>void; onDirtyChange?: (dirty: boolean) => void; onSubmissionLockChange?: (sourceLocked: boolean, closeLocked?: boolean) => void; submissionActive?: boolean; onEditSeo?: () => void; adminTools?: 'visible' | 'hidden' };
 const sections = [
   { id: 'start', title: '시작 페이지', english: 'Start', description: '상품명과 선택한 카테고리를 확인합니다.' },
   { id: 'product', title: '상품 페이지', english: 'Product', description: '기본 정보, 판매 가격과 카테고리 속성을 편집합니다.' },
@@ -487,7 +487,7 @@ function verifyQuotationRegistrationDisplay(view: QuotationFieldsView) {
 }
 
 export function QuotationFieldsEditor(props: Props) { return <QuotationFieldsForm key={`${props.productId}:${props.profileId ?? ''}`} {...props} />; }
-function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, initialOptionId, productId, profileId, refreshToken, onSaved, onReceiptSaved, onDirtyChange, onSubmissionLockChange, submissionActive = true, onEditSeo, adminTools }: Props) {
+function QuotationFieldsForm({ uiReads,warmInitialQuotation,onBeginSourceWrite,navigationTarget, initialOptionId, productId, profileId, refreshToken, onSaved, onReceiptSaved, onDirtyChange, onSubmissionLockChange, submissionActive = true, onEditSeo, adminTools }: Props) {
   const uiMutation=useRef<UiMutation|null>(null),splitUiMutation=useRef<UiMutation|null>(null);
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const [view, setView] = useState<QuotationFieldsView | null>(null);
@@ -558,7 +558,11 @@ function QuotationFieldsForm({ uiReads,onBeginSourceWrite,navigationTarget, init
   useEffect(() => {
     if (!submissionActive || view) return;
     const controller = new AbortController(); const id = ++requests.current;
-    (uiReads?uiReads.quotation(endpoint,controller.signal).then(saved=>{verifyQuotationRegistrationDisplay(saved);return saved;}):fetchView(endpoint, controller.signal)).then(saved => { if (!controller.signal.aborted && id === requests.current) {
+    (uiReads?uiReads.quotation(endpoint,controller.signal).then(saved=>{
+      verifyQuotationRegistrationDisplay(saved);
+      // An early edit basis does not establish the latest inspection result.
+      return warmInitialQuotation&&saved.savedValidation?{...saved,savedValidation:undefined}:saved;
+    }):fetchView(endpoint, controller.signal)).then(saved => { if (!controller.signal.aborted && id === requests.current) {
         observedRefresh.current = refreshToken; setView(saved);
         if (initialTarget.current) {
           const destination = resolveQuotationEditorNavigation(saved.resolved, initialTarget.current);

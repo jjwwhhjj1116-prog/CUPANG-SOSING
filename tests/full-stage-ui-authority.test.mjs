@@ -32,3 +32,32 @@ test('control: zero subscribers during a pure handoff do not lose the in-flight 
   const {createRegistrationUiReads}=h.load('app/registration-ui-reads.tsx'),reads=createRegistrationUiReads(f.scope,new Set(),async(url,init)=>{calls.push(init);const response=await f.api.route(url);await gate.promise;return response;}),a=new AbortController(),first=reads.content(a.signal),cancelled=assert.rejects(first,{name:'AbortError'});a.abort();await cancelled;await h.settle();const second=reads.content();assert.equal(calls.length,1);assert.equal(calls[0].signal.aborted,false);gate.resolve();assert.equal((await second).content.productId,f.product.id);
  }finally{gate.resolve();await h.close();f.api.close();}
 });
+
+test('focus invalidation discards only the earlier label snapshot, including an in-flight response',async()=>{
+ const f=await fixture(),first=hold(),calls=[];
+ const label=f.base+'/product-labels',quote=f.base+'/quotation-fields';
+ const h=await stageDOM(async url=>{
+  calls.push(url);
+  const response=await f.api.route(url);
+  if(url===label&&calls.filter(path=>path===label).length===1)await first.promise;
+  return response;
+ });
+ let reads;
+ try{
+  const {usePriceMainUiReads}=h.load('app/registration-ui-reads.tsx');
+  function Probe(){reads=usePriceMainUiReads(f.scope);return null;}
+  await h.render(Probe,{});
+  await reads.quotation(quote);
+  const initial=reads.productLabels(label);
+  const discarded=assert.rejects(initial,/저장 상태/);
+  assert.equal(reads.hasProductLabels(label),true);
+  reads.forgetProductLabels();
+  assert.equal(reads.hasProductLabels(label),false);
+  const current=await reads.productLabels(label);
+  assert.equal(current.productId,f.product.id);
+  first.resolve();
+  await discarded;
+  await reads.quotation(quote);
+  assert.deepEqual(calls,[quote,label,label]);
+ }finally{first.resolve();await h.close();f.api.close();}
+});

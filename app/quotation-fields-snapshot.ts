@@ -126,12 +126,16 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     }
   }
   const detailConfig = publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
-  const detailVersion=detailConfig?await publicDetailVersion(detailConfig):null;
   const overrides = scopedQuotationOverrides(state, categoryContext.categoryId);
   const packagingBasis=scopedQuotationPackagingBasis(state,categoryContext.categoryId),optionPackQuantities=quotationPackQuantities(options.rows);
   const pair = resolveQuotationFieldsPair({ ...inputs, overrides, generatedAdoption,...(packagingBasis?{packagingBasis}:{}) });
-  const automatic = (await resolvePublicDetail(pair.automatic,content,owner,imageKeys,detailConfig)).resolved;
-  const resolved = (await resolvePublicDetail(pair.resolved,content,owner,imageKeys,detailConfig)).resolved;
+  // Display identifiers use the same saved option UUIDs and stay outside the operation fingerprint.
+  const [optionRegistrationNumbers, detailVersion, { resolved: automatic }, { resolved }] = await Promise.all([
+    readOptionRegistrationNumbers(owner, product, options),
+    publicDetailVersion(detailConfig),
+    resolvePublicDetail(pair.automatic, content, owner, imageKeys, detailConfig),
+    resolvePublicDetail(pair.resolved, content, owner, imageKeys, detailConfig),
+  ]);
   if (categoryContext.categoryId && hasLegacyQuotationOverrides(state)) resolved.issues.push('분류가 기록되지 않은 이전 수정값은 자동 적용하지 않았습니다. 자료 다운로드의 quotation-saved-scopes.json에 보존됩니다.');
   const fingerprintInputs = { ...inputs }; delete (fingerprintInputs as Partial<typeof inputs>).labelSettingsPayload; if (!quotationLabelsHaveBindings(labelsState)) delete (fingerprintInputs as Partial<typeof inputs>).labelsState;
   const inputFingerprint = await fingerprint({ inputs: { ...fingerprintInputs, product: productFingerprintSource(inputs.product), settings: savedProductFingerprintSettings(inputs.settings) }, schema: automatic.schema, categoryContext, profileRevision: profile?.revision ?? null, settingsPayload: source.settingsPayload, collection,
@@ -140,9 +144,6 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     ...quotationPackagedWeightBindingFingerprint(overrides, resolved, () => automatic),
     ...optionPriceCalculationRevision(product, options.rows, settings),
     ...(detailVersion ? { detailHtml: detailVersion } : {}) });
-  // Response-only identifiers follow the saved option UUIDs. Read them after
-  // calculating the operation fingerprint and before the source-clock check.
-  const optionRegistrationNumbers = product.registration_number ? await readOptionRegistrationNumbers(owner, product, options) : undefined;
   const view: QuotationFieldsView = { revision: state.revision, inputFingerprint, ...(generatedAdoption ? { generatedAdoption } : {}), overrides, legacyOverrides: categoryContext.categoryId ? state.overrides : undefined, resolved, automatic, categoryContext,
     ...(optionRegistrationNumbers === undefined ? {} : { optionRegistrationNumbers }),
     protectedDetailImageKeys: [...new Set([...content.assets.detailTop.value, ...content.assets.detailBottom.value])].filter(key => imageKeys.includes(key)),
