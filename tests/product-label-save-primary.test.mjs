@@ -63,6 +63,31 @@ test('unchanged reviewed defaults can be saved explicitly with zero text PUT and
  }finally{close();}
 });
 
+test('a reopened cached label with a PNG disables saving if its fresh proof cannot be read',async()=>{
+ const {f,view,close}=await setup();
+ let browser;
+ try{
+  const {stageDOM}=await import('./helpers/cold-price-main-dom.mjs');
+  const cacheView={...view,imageKeys:[...view.imageKeys,'owner/quotation-label-'+'a'.repeat(64)+'.png']};
+  let proofReads=0,discarded=0;
+  browser=await stageDOM(async(url,init={})=>{
+   assert.equal(init.method??'GET','GET');
+   assert.match(url,/\/product-labels/);
+   proofReads++;
+   return Response.json({error:'확인할 수 없습니다.'},{status:503});
+  });
+  const Editor=browser.load('app/components/product-label-editor.tsx').ProductLabelEditor;
+  await browser.render(Editor,{productId:f.product.id,optionId:f.selected.optionId,profileId:f.profile.id,version:view.productVersion,resultFirst:true,
+   uiReads:{hasProductLabels:()=>true,productLabels:async()=>cacheView,forgetProductLabels:()=>discarded++}});
+  for(let i=0;i<6;i++)await browser.settle();
+  assert.ok(proofReads>0);
+  assert.equal(discarded,1);
+  const save=[...browser.container.querySelectorAll('button')].find(button=>button.textContent==='정보 저장하기');
+  assert.ok(save?.disabled,'previous display values cannot be saved after the fresh proof request fails');
+  assert.match(browser.container.textContent,/최신 표시사항을 확인하지 못했습니다/);
+ }finally{if(browser)await browser.close();close();}
+});
+
 for(const failure of ['upload','quotation'])test(`partial ${failure} failure preserves saved text, stays incomplete, and explicit primary retry reuses saved recipe`,async()=>{
  let fail=true;const {f,h,close}=await setup(companies[0],async(url,init,fixture,send)=>{
   if(fail&&(failure==='upload'?url==='/api/files'&&init.method==='POST':url.includes('/quotation-fields')&&init.method==='PUT')){fail=false;return Response.json({error:'local '+failure+' unavailable'},{status:503});}return send();

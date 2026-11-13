@@ -25,7 +25,7 @@ import { ProductArchive } from '@/app/components/product-archive';
 import { ProductManagementWorkspace } from '@/app/components/product-management-workspace';
 import HistoricalAiRegistrationsPanel from '@/app/components/historical-ai-registrations-panel';
 import { ProductContentEditor } from '@/app/components/product-content-editor';
-import {usePriceMainUiReads,type RegistrationUiReads} from '@/app/registration-ui-reads';
+import {createLabelWorkspaceRead,usePriceMainUiReads,type LabelWorkspaceRead,type RegistrationUiReads} from '@/app/registration-ui-reads';
 import { OptionSeoEditor } from '@/app/components/option-seo-editor';
 import { SeoWorkspaceGenerator } from '@/app/components/seo-workspace-generator';
 import type { SeoGeneratedDraft } from '@/app/seo-generated-draft';
@@ -276,6 +276,7 @@ export default function DashboardClient({ userName, workspaceOwnerId, canAdminTo
   const [lastRegistrationStep, setLastRegistrationStep] = useState('SEO');
   const detailBody = useRef<HTMLDivElement>(null);
   const detailUiReads=useRef<RegistrationUiReads|null>(null);
+  const [labelWorkspace]=useState(createLabelWorkspaceRead);
   const [uiReadSettingsEpoch,setUiReadSettingsEpoch]=useState(0),[uiReadProfileEpoch,setUiReadProfileEpoch]=useState(0);
   const [closeNotice, setCloseNotice] = useState('');
   const [sourceSupplementBusy,setSourceSupplementBusy]=useState(false);
@@ -327,9 +328,11 @@ export default function DashboardClient({ userName, workspaceOwnerId, canAdminTo
     if(!settingsOperationRef.current.mounted||settingsOperationRef.current.ownerId!==workspaceOwnerId||detailNavigation!==productNavigation.current)return false;
     if(busyRef.current){setCloseNotice('작업이 진행 중입니다. 현재 작업을 마친 뒤 닫아주세요.');return false;}
     if(sourceSupplementBusyRef.current){setCloseNotice('상세 원문 보완을 마친 뒤 닫아주세요.');return false;}
-    const result = requestWorkspaceClose(detailBody.current, () => window.confirm('저장하지 않은 입력이 있습니다. 입력을 버리고 상품 작업창을 닫을까요?'));
+    let discarded=false;
+    const result = requestWorkspaceClose(detailBody.current, () => {discarded=window.confirm('저장하지 않은 입력이 있습니다. 입력을 버리고 상품 작업창을 닫을까요?');return discarded;});
     if (result === 'busy') { setCloseNotice('작업이 진행 중입니다. 현재 작업을 마친 뒤 닫아주세요.'); return false; }
     if (result === 'cancel') return false;
+    if(discarded||manageCategories)labelWorkspace.clear();else detailUiReads.current?.retainProductLabels();
     const origin=optionWorkspaceReturn.current;
     const operation=settingsOperationRef.current;
     const restoreOptions=!manageCategories&&origin&&detail&&origin.productId===detail.id&&origin.generation===productNavigation.current
@@ -434,6 +437,16 @@ export default function DashboardClient({ userName, workspaceOwnerId, canAdminTo
     &&catalogCompany!==null&&verifiedProfileCatalog.company.code===catalogCompany.code&&verifiedProfileCatalog.company.name===catalogCompany.name;
   const uiReadProfileCatalog=useMemo(()=>({profiles:profileCatalogCurrent?categoryProfiles:undefined}),[categoryProfiles,profileCatalogCurrent]);
   const categoryProfilesEpochRef=useRef(0);
+  useLayoutEffect(()=>()=>labelWorkspace.clear(),[labelWorkspace,workspaceOwnerId,catalogCompany?.code,catalogCompany?.name,uiReadSettingsEpoch,uiReadProfileEpoch,uiReadProfileCatalog]);
+  useEffect(()=>{
+    if(typeof document==='undefined')return;
+    window.addEventListener('focus',labelWorkspace.clear);
+    document.addEventListener('visibilitychange',labelWorkspace.clear);
+    return()=>{
+      window.removeEventListener('focus',labelWorkspace.clear);
+      document.removeEventListener('visibilitychange',labelWorkspace.clear);
+    };
+  },[labelWorkspace]);
   const intakeDraft = useIntakeDraft(workspaceOwnerId);
   const { rows: intakeRows, setRows: setIntakeRows, goal: intakeGoal, setGoal: setIntakeGoal } = intakeDraft;
   const [categoryOpen, setCategoryOpen] = useState(false);
@@ -504,12 +517,21 @@ export default function DashboardClient({ userName, workspaceOwnerId, canAdminTo
     const focusLabel=typeof document==='undefined'?undefined:document.activeElement?.getAttribute('aria-label')??document.activeElement?.textContent?.trim();
     const controller=new AbortController();optionNavigation.current=controller;setOptionNavigationBusy(true);setOptionNavigationFailure(null);
     try{
-      const response=await fetch(`/api/products/${encodeURIComponent(optionBoardProduct.id)}`,{cache:'no-store',signal:controller.signal});
+      const productPath=`/api/products/${encodeURIComponent(optionBoardProduct.id)}`;
+      const labelEntry=step==='표시사항';
+      const productRequest=fetch(productPath+(labelEntry?`?view=label-workspace&version=${encodeURIComponent(optionBoardProduct.updated_at)}`:''),{cache:'no-store',signal:controller.signal});
+      const company=querySourceCompany.scope===sourceReviewScope?querySourceCompany.company:null;
+      if(labelEntry&&company&&workspaceOwnerId===optionBoardProduct.owner_id&&workspaceOwnerId){
+        labelWorkspace.prefetch({ownerId:workspaceOwnerId,company,productId:optionBoardProduct.id,productVersion:optionBoardProduct.updated_at,sourceUrl:optionBoardProduct.source_url,settingsEpoch:uiReadSettingsEpoch,settingsKey:JSON.stringify(settings),profileEpoch:uiReadProfileEpoch,profileId:null,refresh:0});
+      }
+      const response=await productRequest;
       const result=await readCategoryJsonResponse<{product:Product&{owner_id?:string};error?:string}>(response,'옵션 작업용 상품 조회 (GET /api/products/:id)');
       if(controller.signal.aborted||!current())return;
       if(!response.ok)throw Error(requestErrorMessage(result));
       if(!result.product||result.product.id!==scope.productId||(workspaceOwnerId&&result.product.owner_id!==workspaceOwnerId))throw Error('선택한 계정의 상품 자료를 확인하지 못했습니다. 목록을 다시 불러와주세요.');
-      openProduct(result.product,step,undefined,step==='견적서'&&optionId?{optionId,fieldId:'title'}:undefined,optionId,true,focusLabel);
+      const sameDisplaySource=labelEntry&&result.product.owner_id===optionBoardProduct.owner_id&&result.product.updated_at===optionBoardProduct.updated_at;
+      const observed=sameDisplaySource?{...result.product,content_summary:optionBoardProduct.content_summary}:result.product;
+      openProduct(observed,step,undefined,step==='견적서'&&optionId?{optionId,fieldId:'title'}:undefined,optionId,true,focusLabel);
       if(remove)setInitialOptionAction('remove');
     }catch(error){if(!controller.signal.aborted&&current())setOptionNavigationFailure({owner:optionNavigationOwner,productId:scope.productId,message:error instanceof Error?error.message:'옵션 자료를 불러오지 못했습니다.'});}
     finally{if(optionNavigation.current===controller){optionNavigation.current=null;setOptionNavigationBusy(false);}}
@@ -1126,7 +1148,7 @@ useEffect(()=>{
         <nav className="registration-steps" aria-label={`상품 등록 ${registrationSteps.length}단계`} aria-busy={registrationLayout.loading}>{registrationSteps.map((value,index)=><button type="button" key={value} disabled={!registrationLayoutReady} onClick={()=>selectDetailTab(value)} aria-current={tab===value?'step':undefined} className={[tab===value?'active':'',index<=progressStepIndex?'reached':''].filter(Boolean).join(' ')}><span>{index+1}</span><strong>{({SEO:'SEO 설정',가격:'가격 설정',표시사항:'한글 표시사항',견적서:'견적서 작업'} as Record<string,string>)[value]??value}</strong></button>)}</nav>
         {registrationLayout.error&&<div className="registration-layout-error" role="alert"><p>{registrationLayout.error} 입력은 유지했습니다. 카테고리의 필수 단계를 다시 확인해주세요.</p><button type="button" className="btn ghost" onClick={()=>{if(registrationLayout.retry())setCloseNotice('');}}>등록 단계 다시 확인</button></div>}
         {tab==='상세 이미지'&&!focusedOptionId&&<div className="panel-note"><div><strong>수집 사진으로 옵션별 상세 구성</strong><p>편집할 옵션을 선택하면 저장된 상품 사진으로 상세 본문을 구성하고 번역·순서·삭제를 편집할 수 있습니다. 대표·추가 사진 배치는 유지됩니다.</p></div><button type="button" className="btn primary" disabled={busy||sourceSupplementBusy} onClick={()=>openOptionBoard(detail)}>옵션별 상세 편집</button></div>}
-        <div className="detail-body" data-registration-stage={tab} ref={detailBody} inert={sourceSupplementBusy}><DetailPanel canAdminTools={canAdminTools} imageReview={batchImageReview} imageReviewTarget={batchImageReviewTarget} workspaceOwnerId={workspaceOwnerId} uiReadScope={querySourceCompany.scope===sourceReviewScope&&querySourceCompany.company?{company:querySourceCompany.company,settingsEpoch:uiReadSettingsEpoch,profileEpoch:uiReadProfileEpoch,profileCatalog:uiReadProfileCatalog}:undefined} uiReadSuspended={busy||sourceSupplementBusy||settingsBusy} onUiReadsChange={(value,retired)=>{if(value)detailUiReads.current=value;else if(detailUiReads.current===retired)detailUiReads.current=null;}} onEditSeo={()=>{if(detailNavigation===productNavigation.current&&settingsOperationRef.current.ownerId===workspaceOwnerId)selectDetailTab('SEO');}} onReceiptSaved={()=>void refreshReceiptStatus(detail.id,detail.updated_at)} key={detail.id} onBeforeSeoGenerate={()=>{
+        <div className="detail-body" data-registration-stage={tab} ref={detailBody} inert={sourceSupplementBusy}><DetailPanel canAdminTools={canAdminTools} imageReview={batchImageReview} imageReviewTarget={batchImageReviewTarget} workspaceOwnerId={workspaceOwnerId} labelWorkspace={labelWorkspace} uiReadScope={querySourceCompany.scope===sourceReviewScope&&querySourceCompany.company?{company:querySourceCompany.company,settingsEpoch:uiReadSettingsEpoch,profileEpoch:uiReadProfileEpoch,profileCatalog:uiReadProfileCatalog}:undefined} uiReadSuspended={busy||sourceSupplementBusy||settingsBusy} onUiReadsChange={(value,retired)=>{if(value)detailUiReads.current=value;else if(detailUiReads.current===retired)detailUiReads.current=null;}} onEditSeo={()=>{if(detailNavigation===productNavigation.current&&settingsOperationRef.current.ownerId===workspaceOwnerId)selectDetailTab('SEO');}} onReceiptSaved={()=>void refreshReceiptStatus(detail.id,detail.updated_at)} key={detail.id} onBeforeSeoGenerate={()=>{
           if(sourceSupplementBusyRef.current||busyRef.current||detailNavigation!==productNavigation.current)return false;
           const pending=workspaceEditState(detailBody.current,false,true);
           if(pending.busy||pending.dirty){setCloseNotice('저장하지 않은 수정이나 진행 중인 작업이 있습니다. 먼저 저장한 뒤 SEO 초안을 작성해주세요.');return false;}
@@ -1181,7 +1203,7 @@ useEffect(()=>{
 function Modal({ title, subtitle, onClose, children, wide=false,closeDisabled=false }: { title:string; subtitle:string; onClose:()=>void; children:React.ReactNode; wide?:boolean;closeDisabled?:boolean }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className={`modal ${wide?'wide':''}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={e=>e.stopPropagation()}><header><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-close" disabled={closeDisabled} onClick={onClose}>×</button></header>{children}</section></div>;
 }
-function DetailPanel({ imageReview, imageReviewTarget, workspaceOwnerId, canAdminTools = false, uiReadScope,uiReadSuspended=false,onUiReadsChange, onEditSeo, onReceiptSaved, onBeforeSeoGenerate, onBeforeFreeImageApply, onBeforeSourceWrite, onPrepareSubmission, onProfilePrepared, onProfileSelected, onReviewPackaging, tab, product, settings, onUpload, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { imageReview?:SelectedImageReview; imageReviewTarget?:SelectedImageReviewTarget; workspaceOwnerId?:string;canAdminTools?:boolean;uiReadScope?:{company:{code:string;name:string};settingsEpoch:number;profileEpoch?:number;profileCatalog?:{profiles?:CategoryProfile[]}};uiReadSuspended?:boolean;onUiReadsChange?:(value:RegistrationUiReads|null,retired?:RegistrationUiReads|null)=>void;onEditSeo?:()=>void;onReceiptSaved:()=>void; onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:(owner?:HTMLElement|null,producer?:HTMLElement|null)=>boolean; onBeforeSourceWrite?:(source:WorkspaceSourceWrite,owner?:HTMLElement|null,producer?:HTMLElement|null)=>boolean; onPrepareSubmission:(profileId?:string)=>void; onProfilePrepared:(profile:CategoryProfile,source:CategoryProfile)=>void; onProfileSelected:(id?:string)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy, options?:PriceSaveOptions)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
+function DetailPanel({ imageReview, imageReviewTarget, workspaceOwnerId, canAdminTools = false, uiReadScope,labelWorkspace,uiReadSuspended=false,onUiReadsChange, onEditSeo, onReceiptSaved, onBeforeSeoGenerate, onBeforeFreeImageApply, onBeforeSourceWrite, onPrepareSubmission, onProfilePrepared, onProfileSelected, onReviewPackaging, tab, product, settings, onUpload, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { imageReview?:SelectedImageReview; imageReviewTarget?:SelectedImageReviewTarget; workspaceOwnerId?:string;canAdminTools?:boolean;uiReadScope?:{company:{code:string;name:string};settingsEpoch:number;profileEpoch?:number;profileCatalog?:{profiles?:CategoryProfile[]}};labelWorkspace?:LabelWorkspaceRead;uiReadSuspended?:boolean;onUiReadsChange?:(value:RegistrationUiReads|null,retired?:RegistrationUiReads|null)=>void;onEditSeo?:()=>void;onReceiptSaved:()=>void; onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:(owner?:HTMLElement|null,producer?:HTMLElement|null)=>boolean; onBeforeSourceWrite?:(source:WorkspaceSourceWrite,owner?:HTMLElement|null,producer?:HTMLElement|null)=>boolean; onPrepareSubmission:(profileId?:string)=>void; onProfilePrepared:(profile:CategoryProfile,source:CategoryProfile)=>void; onProfileSelected:(id?:string)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy, options?:PriceSaveOptions)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
   const [quotationRefresh, setQuotationRefresh] = useState(0);
   const quotationWorkspaceScope=JSON.stringify([workspaceOwnerId??product.owner_id??null,product.id]);
   const [quotationVisit,setQuotationVisit]=useState({scope:quotationWorkspaceScope,visited:tab==='견적서'});
@@ -1265,7 +1287,8 @@ function DetailPanel({ imageReview, imageReviewTarget, workspaceOwnerId, canAdmi
   const priceFilesFree=()=>!imageProcessingRefs.current.paid&&!imageProcessingRefs.current.free&&!imageProcessingRefs.current.additionalBatch&&!imageProcessingRefs.current.detailBatch&&!imageProcessingRefs.current.detailFamily&&!imageProcessingRefs.current.mainUpload&&!imageProcessingRefs.current.additionalUpload&&!imageProcessingRefs.current.detailUpload&&!imageProcessingRefs.current.sizeChart;
   const imageUploadFilesFree=(stage:'main'|'additional'|'detail',owner?:HTMLElement|null,producer?:HTMLElement|null)=>{const allowed=!imageProcessingRefs.current.paid&&!imageProcessingRefs.current.free&&!imageProcessingRefs.current.additionalBatch&&!imageProcessingRefs.current.detailBatch&&!imageProcessingRefs.current.detailFamily&&!imageProcessingRefs.current.sizeChart&&(stage==='main'||!imageProcessingRefs.current.mainUpload)&&(stage==='additional'||!imageProcessingRefs.current.additionalUpload)&&(stage==='detail'||!imageProcessingRefs.current.detailUpload)&&onBeforeSourceWrite?.(`${stage}-upload`,owner,producer)!==false;if(allowed)suspendUiReads();return allowed;};
   const sizeChartFilesFree=()=>!imageProcessingRefs.current.paid&&!imageProcessingRefs.current.free&&!imageProcessingRefs.current.additionalBatch&&!imageProcessingRefs.current.detailBatch&&!imageProcessingRefs.current.detailFamily&&!imageProcessingRefs.current.mainUpload&&!imageProcessingRefs.current.additionalUpload&&!imageProcessingRefs.current.detailUpload&&onBeforeSourceWrite?.('size-chart')!==false;
-  function sourceSaved() { rawUiReads?.retire();setQuotationRefresh(value => value + 1); onSaved(); }
+  const lastSavedSourceVersion=useRef<string|null>(null);
+  function sourceSaved() { labelWorkspace?.clear();rawUiReads?.retire();lastSavedSourceVersion.current=product.updated_at;setQuotationRefresh(value => value + 1); onSaved(); }
   const isImageStep=imageSteps.includes(tab);
   const contentSection = isImageStep ? '이미지' : tab==='표시사항' ? '표시사항' : 'SEO';
   const focusedAssetRole=tab==='대표 이미지'?'main':tab==='추가 이미지'?'additional':tab==='상세 이미지'?'detail':undefined;
@@ -1370,7 +1393,7 @@ function DetailPanel({ imageReview, imageReviewTarget, workspaceOwnerId, canAdmi
   function translateMainImage(sourceKey:string,role:'main',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest,quotationView?:QuotationFieldsView){translateFinalImage(sourceKey,role,sourceLanguage,quotationTarget,undefined,quotationView);}
   const ordinaryUiStage=allRegistrationSteps.some(step=>step===tab)||tab==='옵션';
   const uiReadEnabled=ordinaryUiStage&&!uiReadSuspended&&!detailImageEditOpen&&!imageAiToolsOpen&&!mainProcessingActive&&!mainResultActive&&!mainUploadBusy&&!additionalUploadBusy&&!detailUploadBusy;
-  const rawUiReads=usePriceMainUiReads(workspaceOwnerId&&product.owner_id===workspaceOwnerId&&uiReadScope?{ownerId:workspaceOwnerId,company:uiReadScope.company,productId:product.id,productVersion:product.updated_at,sourceUrl:product.source_url,settingsEpoch:uiReadScope.settingsEpoch,settingsKey:JSON.stringify(settings),profileEpoch:uiReadScope.profileEpoch??0,profileId:pricingProfileId??null,refresh:quotationRefresh}:null,uiReadScope?.profileCatalog);
+  const rawUiReads=usePriceMainUiReads(workspaceOwnerId&&product.owner_id===workspaceOwnerId&&uiReadScope?{ownerId:workspaceOwnerId,company:uiReadScope.company,productId:product.id,productVersion:product.updated_at,sourceUrl:product.source_url,settingsEpoch:uiReadScope.settingsEpoch,settingsKey:JSON.stringify(settings),profileEpoch:uiReadScope.profileEpoch??0,profileId:pricingProfileId??null,refresh:quotationRefresh}:null,uiReadScope?.profileCatalog,labelWorkspace);
   const optionalToolHold=useRef<ReturnType<RegistrationUiReads['beginMutation']>|null>(null);
   function suspendUiReads(){rawUiReads?.retire();optionalToolHold.current??=rawUiReads?.beginMutation()??null;}
   const [,renderUiReadState]=useState(0);
@@ -1392,7 +1415,8 @@ function DetailPanel({ imageReview, imageReviewTarget, workspaceOwnerId, canAdmi
     };
   },[rawUiReads]);
   useEffect(()=>{
-    if(!uiReads||(tab!=='SEO'&&tab!=='가격'&&tab!=='사이즈표'&&!isImageStep))return;
+    const refreshedAfterSave=tab==='견적서'&&lastSavedSourceVersion.current!==null&&lastSavedSourceVersion.current!==product.updated_at;
+    if(!uiReads||(tab!=='SEO'&&tab!=='가격'&&tab!=='사이즈표'&&!isImageStep&&!refreshedAfterSave))return;
     const base=`/api/products/${encodeURIComponent(product.id)}`;
     const query=pricingProfileId?`?profileId=${encodeURIComponent(pricingProfileId)}`:'';
     const prefetch=()=>{
@@ -1405,7 +1429,7 @@ function DetailPanel({ imageReview, imageReviewTarget, workspaceOwnerId, canAdmi
     }
     const timer=setTimeout(prefetch,0);
     return()=>clearTimeout(timer);
-  },[tab,isImageStep,uiReads,product.id,pricingProfileId]);
+  },[tab,isImageStep,uiReads,product.id,product.updated_at,pricingProfileId]);
   const handledImageReview=useRef(imageReviewContext);
   useEffect(()=>{
     if(!imageReviewContext||handledImageReview.current===imageReviewContext||!priceFilesFree()||freeImageEditState.current.dirty||detailImageEditOpenRef.current||!quotationImageContext

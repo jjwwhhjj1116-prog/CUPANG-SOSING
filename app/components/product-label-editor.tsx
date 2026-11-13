@@ -166,8 +166,13 @@ export function ProductLabelEditor({ uiReads,onBeginSourceWrite,productId, optio
         invalidateLabelSnapshot(snapshot);
         return;
       }
+      if(warmedLabel.current?.view===snapshot)warmedLabel.current.needsCheck=false;
       setSavedResult({token,scope,view:snapshot,value});setResultError(null);
-    }catch(cause){if(valid())setResultError({token,message:cause instanceof Error?cause.message:'저장된 생성 라벨을 확인하지 못했습니다.'});}})();
+    }catch(cause){if(valid()){
+      if(warmedLabel.current?.view===snapshot&&warmedLabel.current.needsCheck){
+        invalidateLabelSnapshot(snapshot,'최신 표시사항을 확인하지 못했습니다. 입력을 유지하고 다시 조회해주세요.');
+      }else setResultError({token,message:cause instanceof Error?cause.message:'저장된 생성 라벨을 확인하지 못했습니다.'});
+    }}})();
     return()=>{listening=false;controller.abort();};
     // Read-only completion never locks local editing. The token invalidates
     // pending reads on edits, child reference activity and source transitions.
@@ -289,7 +294,7 @@ export function ProductLabelEditor({ uiReads,onBeginSourceWrite,productId, optio
         if(!controller.signal.aborted&&!request.current&&current())invalidateLabelSnapshot(view,'최신 표시사항을 확인하지 못했습니다. 입력을 유지하고 다시 조회해주세요.');
       }).finally(()=>{pending=false;});
     };
-    if(adopted.needsCheck){adopted.needsCheck=false;if(!canCheckResult)check();}
+    if(adopted.needsCheck&&!canCheckResult){adopted.needsCheck=false;check();}
     const onVisible=()=>{if(document.visibilityState==='visible')check();};
     window.addEventListener('focus',check);
     document.addEventListener('visibilitychange',onVisible);

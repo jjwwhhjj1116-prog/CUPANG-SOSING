@@ -181,6 +181,75 @@ for(const failFirstCatalog of [false,true])test(`price warms labels and ordinary
  }finally{label.resolve();profiles.resolve();if(h)await h.close();api.close();}
 });
 
+test('closing and reopening a clean label drawer paints the same saved values before a fresh proof read returns',async()=>{
+ const api=mobileIntakeHarness(),held=gate();let h,ordinaryReads=0,block=false;
+ try{
+  await api.intake();
+  const product=await api.load('db/queries.ts').findProduct('owner',api.latest.product_id),base='/api/products/'+product.id;
+  const {rows}=await api.load('db/product-options.ts').readProductOptions('owner',product.id),optionId=rows.find(row=>row.included).id;
+  const labelsResponse=await api.route(base+'/product-labels'),labelView=await labelsResponse.json();assert.equal(labelsResponse.status,200);
+  h=await stageDOM(async(url,init={})=>{
+   assert.equal(init.method??'GET','GET');
+   if(url==='/api/products')return Response.json({products:[product]});
+   if(url==='/api/settings')return Response.json({settings:api.settings,scope:{ownerId:'owner',company:{code:'A01464742',name:'와이홉'}}});
+   if(url==='/api/category-profiles')return Response.json({profiles:[]});
+   if(url==='/api/collection-jobs')return Response.json({jobs:[]});
+   if(url===base+'/product-labels'){
+    if(!new Error().stack.includes('readProductLabelReferences'))ordinaryReads++;
+    if(block)await held.promise;
+    return Response.json(labelView);
+   }
+   if(url.startsWith(base+'/'))return api.route(url);
+   return Response.json({error:'unexpected synthetic request'},{status:404});
+  },{components:{'product-label-editor':true}});
+  const Dashboard=h.load('app/components/dashboard-client.tsx').default;
+  await h.render(Dashboard,{userName:'합성 테스트',workspaceOwnerId:'owner'});
+  const open=async()=>{await h.React.act(async()=>h.records.get('registration-board').onOpen(product,'표시사항',undefined,undefined,optionId));for(let i=0;i<6;i++)await h.settle();};
+  const title=()=>h.container.querySelector('.product-label-editor [aria-label="선택 옵션 제품명"]')?.value??h.container.querySelector('.product-label-draft-table')?.textContent;
+  await open();const expected=title();assert.ok(expected,h.container.querySelector('.detail-body')?.textContent);assert.equal(ordinaryReads,1);
+  await h.React.act(async()=>h.container.querySelector('[aria-label="상품 작업 공간 닫기"]').click());
+  assert.equal(title(),undefined);
+  block=true;await open();assert.equal(title(),expected,'verified saved data can paint across a clean close while fresh checks wait');
+  assert.equal(ordinaryReads,2,'the cached first paint still starts a fresh background read');
+ }finally{held.resolve();if(h)await h.close();api.close();}
+});
+
+test('direct option label open starts the label request alongside the owned product read and retries a failed warm request',async()=>{
+ const api=mobileIntakeHarness(),heldProduct=gate(),heldLabel=gate(),calls=[];let h,labelReads=0;
+ try{
+  await api.intake();
+  const product=await api.load('db/queries.ts').findProduct('owner',api.latest.product_id),base='/api/products/'+product.id,productRead=base+'?view=label-workspace&version='+encodeURIComponent(product.updated_at);
+  const {rows}=await api.load('db/product-options.ts').readProductOptions('owner',product.id),optionId=rows.find(row=>row.included).id;
+  const labelResponse=await api.route(base+'/product-labels'),labelView=await labelResponse.json();assert.equal(labelResponse.status,200);
+  h=await stageDOM(async(url,init={})=>{
+   assert.equal(init.method??'GET','GET');calls.push(url);
+   if(url==='/api/products')return Response.json({products:[product]});
+   if(url==='/api/settings')return Response.json({settings:api.settings,scope:{ownerId:'owner',company:{code:'A01464742',name:'와이홉'}}});
+   if(url==='/api/category-profiles')return Response.json({profiles:[]});
+   if(url==='/api/collection-jobs')return Response.json({jobs:[]});
+   if(url===productRead){await heldProduct.promise;return Response.json({product});}
+   if(url===base+'/product-labels'){
+    if(!new Error().stack.includes('readProductLabelReferences')&&++labelReads===1){await heldLabel.promise;return Response.json({error:'synthetic transient failure'},{status:503});}
+    return Response.json(labelView);
+   }
+   if(url.startsWith(base+'/'))return api.route(url);
+   return Response.json({error:'unexpected synthetic request'},{status:404});
+  },{components:{'product-label-editor':true}});
+  await h.render(h.load('app/components/dashboard-client.tsx').default,{userName:'합성 테스트',workspaceOwnerId:'owner'});
+  await h.React.act(async()=>h.records.get('registration-board').onOptions(product));
+  await h.React.act(async()=>h.records.get('product-option-board').onStage(optionId,'표시사항'));
+  assert.deepEqual(calls.filter(url=>url.startsWith(base)).slice(0,2),[productRead,base+'/product-labels']);
+  assert.equal(h.container.querySelector('.product-label-editor'),null,'only the authenticated product read can admit the editor');
+  await h.React.act(async()=>heldProduct.resolve());
+  await h.settle();
+  assert.equal(labelReads,1,'the editor joins the already running label request');
+  await h.React.act(async()=>heldLabel.resolve());
+  for(let i=0;i<6;i++)await h.settle();
+  assert.ok(h.container.querySelector('.product-label-draft-table'),'the ordinary editor recovers from a rejected speculative read');
+  assert.ok(labelReads>=2);
+ }finally{heldProduct.resolve();heldLabel.resolve();if(h)await h.close();api.close();}
+});
+
 test('workspace header offers the current Chrome extension without opening an editor',async()=>{
  const h=await stageDOM(async(url,init={})=>{
   assert.equal(init.method??'GET','GET');

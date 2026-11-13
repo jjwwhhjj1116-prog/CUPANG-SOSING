@@ -128,6 +128,44 @@ test('production image/file routes and generic product PATCH reject unauthentica
   assert.deepEqual(context.storageCalls, [], 'Unauthenticated product reads, updates and removals must not touch any enrichment or removal storage.');
 });
 
+test('label workspace uses the same authenticated product lookup and skips dashboard summaries', async () => {
+  const context = runtime([await signedHeaders()]);
+  const calls = [];
+  const storage = summaryStorage(context.storageCalls);
+  storage['@/db/product-content'].readRegistrationSummaries = async (owner, products) => {
+    context.storageCalls.push({name:'registration',owner,products:Array.from(products)});
+    return Object.fromEntries(products.map(product=>[product.id,{seoTitle:''}]));
+  };
+  const saved = { id: 'synthetic', updated_at: '2026-11-13T00:00:00Z', image_keys: '[]' };
+  const product = load('app/api/products/[id]/route.ts', {
+    '@/app/chatgpt-auth': context.auth,
+    '@/db/queries': { findProduct: async (owner, id, activeOnly) => { calls.push({owner, id, activeOnly}); return id === saved.id ? {...saved, owner_id:owner} : null; } },
+    ...storage,
+  });
+  const url = 'http://localhost/api/products/synthetic';
+  const params = { params: Promise.resolve({ id: saved.id }) };
+  const denied = route('app/api/products/[id]/route.ts', runtime([new Headers()]), {findProduct:()=>assert.fail('unauthenticated product read')});
+  assert.equal((await denied.GET(new Request(url+'?view=label-workspace'), params)).status, 503);
+  const compact = await product.GET(new Request(url+'?view=label-workspace&version='+encodeURIComponent(saved.updated_at)), params);
+  assert.equal(compact.status, 200);
+  assert.equal(compact.headers.get('cache-control'), 'no-store');
+  const owner = calls[0].owner;
+  assert.match(owner, /^cf:[a-f0-9]{64}$/);
+  assert.deepEqual(calls, [{owner,id:saved.id,activeOnly:true}]);
+  assert.deepEqual(await compact.json(), {product:{...saved,owner_id:owner}});
+  assert.deepEqual(context.storageCalls, []);
+  const changed = await product.GET(new Request(url+'?view=label-workspace&version=old'), params);
+  assert.equal(changed.status, 200);
+  assert.deepEqual((await changed.json()).product.content_summary, {seoTitle:''});
+  assert.deepEqual(context.storageCalls.splice(0), [{name:'registration',owner,products:[{...saved,owner_id:owner}]}]);
+  const missing = await product.GET(new Request(url+'?view=label-workspace'), {params:Promise.resolve({id:'missing'})});
+  assert.equal(missing.status, 404);
+  assert.deepEqual(context.storageCalls, []);
+  const regular = await product.GET(new Request(url), params);
+  assert.equal(regular.status, 200);
+  assert.equal(context.storageCalls.length, 5);
+});
+
 test('production login reports a safe authentication reason while keeping access closed', async () => {
   let diagnostic;
   const auth = runtime([new Headers()]).auth;

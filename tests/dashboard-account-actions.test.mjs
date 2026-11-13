@@ -81,7 +81,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
    return replyDelete(decodeURIComponent(url.split('/').at(-1)),init);
   }
   if(url.startsWith('/api/products/')){
-   const id=decodeURIComponent(url.split('/').at(-1));
+   const parsed=new URL(url,'https://app.test'),id=decodeURIComponent(parsed.pathname.split('/').at(-1));
    if(nextProduct&&nextProduct.id===id){const pending=nextProduct;nextProduct=null;return pending.promise;}
    if(replyProduct)return replyProduct(id,init);
    return Response.json({product:products.find(row=>row.id===id)});
@@ -103,7 +103,8 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
  }
  function load(file){
   if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,URL,URLSearchParams,Date,Intl,TextEncoder,TextDecoder,structuredClone,crypto,fetch:request,window:{location:{search:initialSearch},addEventListener(){},removeEventListener(){},confirm:()=>typeof confirmClose==='function'?confirmClose():confirmClose,setTimeout:()=>0},require(name){
+  const browser=file==='app/components/dashboard-client.tsx'?{document:{visibilityState:'hidden',addEventListener(){},removeEventListener(){}},setTimeout:()=>0,clearTimeout(){}}:{};
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,URL,URLSearchParams,Date,Intl,TextEncoder,TextDecoder,structuredClone,crypto,fetch:request,...browser,window:{location:{search:initialSearch},addEventListener(){},removeEventListener(){},confirm:()=>typeof confirmClose==='function'?confirmClose():confirmClose,setTimeout:()=>0},require(name){
    if(name==='react')return hooks;
    if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};
    if(name.endsWith('.css'))return{};
@@ -653,7 +654,13 @@ test('every typed option stage opens the intended product workspace and retains 
    if(step==='가격')assert.equal(h.component('product-options-editor').pricingView,true);
    if(step==='대표 이미지')assert.equal(h.component('product-options-editor').imageView,true);
    if(step==='견적서')assert.deepEqual(plain(h.component('quotation-panel').navigationTarget),{optionId,fieldId:'title'});
-   assertProductNavigation(h.requests.slice(initialReads),selectedProduct.id);assert.ok(h.requests.every(request=>request.method==='GET'));
+   const reads=h.requests.slice(initialReads);
+   if(step==='표시사항'){
+    const base='/api/products/'+selectedProduct.id,productRead=reads.find(request=>request.url===base+'?view=label-workspace&version='+encodeURIComponent(selectedProduct.updated_at));
+    assert.ok(productRead);assert.ok(reads.some(request=>request.url===base+'/product-labels'));
+    assertProductNavigation([{...productRead,url:base},...reads.filter(request=>request.url===base+'/registration-layout')],selectedProduct.id);
+   }else assertProductNavigation(reads,selectedProduct.id);
+   assert.ok(h.requests.every(request=>request.method==='GET'));
   }finally{h.close();}
  }
 });

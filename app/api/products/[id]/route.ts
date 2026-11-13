@@ -12,12 +12,18 @@ import { readSingleReceiptSummaries } from '@/db/supplier-hub-single-receipts';
 import { readProductRemovalPolicies, removeProduct, restoreProduct } from '@/db/product-removals';
 import { unconfirmedProductRemovalDecision } from '@/app/product-removal-policy';
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   if(process.env.NODE_ENV==='production' && !(await getChatGPTUser())?.verifiedAccess) return NextResponse.json({error:'운영 인증 연결 후 사용할 수 있습니다.'},{status:503});
   try {
     const ownerId=await getWorkspaceOwnerId();const {id}=await context.params;
-    const product=await findProduct(ownerId,id);
+    const query=new URL(request.url).searchParams;
+    const labelWorkspace=query.get('view')==='label-workspace';
+    const product=await findProduct(ownerId,id,labelWorkspace);
     if (!product) return NextResponse.json({error:'상품을 찾을 수 없습니다.'},{status:404});
+    if (labelWorkspace) {
+      const summaries=query.get('version')===product.updated_at?null:await readRegistrationSummaries(ownerId,[product]).catch(()=>null);
+      return NextResponse.json({product:summaries?{...product,content_summary:summaries[id]??null}:product},{headers:{'cache-control':'no-store'}});
+    }
     const [summaries,sourceImages,receipts,removalPolicies,singleReceipts]=await Promise.all([
       readRegistrationSummaries(ownerId,[product]).catch(()=>null),
       readRegistrationSourceImages(ownerId,[product]).catch(()=>null),
